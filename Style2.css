@@ -154,7 +154,7 @@ img {
 }
 .para {
   position: relative;
-  left: 120px;
+  justify-content: center;
 }
 
 .meto {
