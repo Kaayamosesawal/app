@@ -58,7 +58,7 @@
     position: relative;
     justify-content: center;
     text-align: center;
-    display: block;
+    align-items: center;
     background-color: white;
     width: 50%;
   }
