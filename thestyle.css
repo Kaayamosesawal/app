@@ -1,0 +1,196 @@
+
+
+*{
+    margin: 0%;
+    padding: 0%;
+    font-weight: 500;
+    font-size: 1.0em;
+}
+body{
+    background:linear-gradient(to right,rgb(228, 230, 251),rgb(178, 178, 213));
+    display: grid;
+    place-items: center;
+    font-weight: 450;
+    opacity: 1;
+}
+.ash {
+    text-transform: uppercase;
+    font-size: 20px;
+}
+.name {
+    font-size: 1.02em;
+    font-weight: 100;
+}
+.post {
+    font-size: 1.0em;
+    font-weight: 100;
+}
+
+.none
+{
+    display: none;
+}
+.resume
+{
+    margin-top: 20px;
+    width: 800px;
+}
+#print
+{
+    background-color: #fff;
+    padding: 30px 50px;
+    height:595px*842px;
+    
+}
+
+.head
+{
+    display: grid;
+    grid-template-columns: 3fr 1.5fr;
+}
+.head
+{
+    font-size: 1.05em;
+    font-family: 'Raleway', sans-serif;
+}
+
+
+.head .main .post
+{
+font-family: 'Barlow', sans-serif;
+}
+.head .contacts
+{
+    text-align: right;
+    padding-top: 7px;
+}
+.head .contacts .content
+{
+    font-weight: 100;
+    padding-right: 5px;
+}
+.head .contacts .symbol
+{
+    margin-right: 5px;
+    font-size: 15px;
+    width: 17px;
+    height: 17px;
+}
+.line
+{
+    height: 0.5px;
+    background-color: rgb(29, 29, 118);
+    margin: 25px 0;
+    margin-bottom: 50px;
+}
+.rightside
+{
+    table-layout: auto;
+}
+.symbol, .symbol2, .symbol3, .symbol4 {
+    font-style: italic;
+    font-weight: 500;
+}
+.mainbody
+{
+    display: grid;
+    grid-template-columns: 10fr 1fr 17fr;
+    height: 900px;
+}
+.mainbody .border
+{
+    background-color: rgb(29, 29, 118);
+    width: 3px;
+    opacity: 1;
+}
+.mainbody .rightside
+{
+    padding-left: 15px;
+}
+.title, .tik, p
+{
+    font-weight: 700;
+    font-size: 18px;
+    color: rgb(29, 29, 129);
+    font-style: italic;
+    border: none;
+    padding-bottom: 3px;
+    border-bottom: 2px rgb(29, 28, 118);
+}
+.skill
+{
+    margin-bottom: 6px;
+}
+button
+{
+    width: 14px;
+    background: white;
+    opacity: 0.1;
+    color: white;
+}
+a {
+    text-decoration: none;
+    color: black;
+}
+.language
+{
+    margin-bottom:6px;
+}
+.language span:nth-child(odd)
+{
+    font-weight: 700;
+}
+.edublock{
+    margin-bottom: 10px;
+}
+.edublock .head
+{
+    font-weight: 700;
+    font-size: 17px;
+}
+.nav {
+    overflow-x: hidden;
+    width: 200px;
+}
+
+.navbtn
+{
+opacity: 2;
+position: relative;
+left: 4%;
+transform: translate(-40%,-4%);
+height: 60px;
+width: 70px;
+color: rgb(29, 29, 118);
+border-radius: 50%;
+border:#fff;
+transition: 300ms ease-in-out;
+box-shadow: rgb(29, 28, 118);
+}
+.navbtn:nth-child(2)
+{
+top: 50%;
+left: 4.4%;
+transform: translate(-50%,-4.4%);
+}
+.navbtn:nth-child(3)
+{
+top: 60%;
+left: 4.8%;
+transform: translate(-60%,-4.8%);
+}
+.navbtn:hover
+{
+    background-color: rgb(178, 178, 213);
+    color: #fff;
+    border: #000 2px solid;
+    height: 65px;
+    width: 65px;
+}
+.input-checkbox{
+    margin-right: 10px;
+}
+.education-head{
+    font-weight: 500;
+    font-size: 15px;
+}
