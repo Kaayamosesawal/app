@@ -4,12 +4,11 @@
   }
     
   [class*="col-"] {
-    float: center;
+    float: left;
     padding: 15px;
   }
   
   html, body {
-    justify-content: center;
     text-align: center;
     align-items: center;
     font-family: Georgia, 'Times New Roman', Times, serif;
