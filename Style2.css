@@ -9,6 +9,8 @@
   }
   
   html, body {
+    justify-content: center;
+    text-align: center;
     align-items: center;
     font-family: Georgia, 'Times New Roman', Times, serif;
     font-size: 1em;
@@ -134,7 +136,7 @@ figure {
 img {
   height: 120px;
   width: 100px;
-  border-radius: 50px;
+  border-radius: 50%;
 }
 
 
