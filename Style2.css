@@ -4,7 +4,7 @@
   }
     
   [class*="col-"] {
-    float: left;
+    float: center;
     padding: 15px;
   }
   
@@ -20,6 +20,7 @@
   
   /* For mobile phones:*/ 
   [class*="col-"] {
+    float: center;
     width: 100%;
   }
   
