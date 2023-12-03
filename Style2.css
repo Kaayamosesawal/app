@@ -21,7 +21,6 @@
   
   /* For mobile phones:*/ 
   [class*="col-"] {
-    float: center;
     width: 100%;
   }
   
@@ -63,7 +62,6 @@
     align-items: center;
     background-color: white;
     width: 50%;
-    float: center;
   }
 
   footer {
