@@ -194,3 +194,8 @@ transform: translate(-60%,-4.8%);
     font-weight: 500;
     font-size: 15px;
 }
+#output {
+    border-radius: 50%;
+    width: 90px;
+    height: 110px;
+}
