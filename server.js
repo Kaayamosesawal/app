@@ -5,34 +5,34 @@
  *  - /api/send-email   → Sends transactional emails via Nodemailer + Mailtrap API
  *                        Called by Apply.jsx (on submission) and Admin.jsx (on status change)
  *  - Firebase (Firestore) is the database — this server has NO SQLite / file uploads.
- *
- * Mailtrap API key: a42b246827ddfb94583a1d28a30f06e7
  */
 
-import express   from 'express';
+import 'dotenv/config';
+import express    from 'express';
 import nodemailer from 'nodemailer';
-import cors      from 'cors';
+import cors       from 'cors';
 
 const app = express();
 
-// ─── CORS ────────────────────────────────────────────────────────────────────
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: [
+    'http://localhost:5173',          // Vite dev server
     'http://localhost:3000',
     'https://slirus.web.app',
-    'https://slirus.firebaseapp.com'
-  ]
+    'https://slirus.firebaseapp.com',
+    process.env.CLIENT_ORIGIN,
+  ].filter(Boolean),
 }));
 app.use(express.json());
 
-// ─── Mailtrap SMTP transport (sending API) ────────────────────────────────────
-// Uses Mailtrap's sending domain via their SMTP API endpoint.
+// ─── Mailtrap SMTP transport ──────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
-  host: 'live.smtp.mailtrap.io',
-  port: 587,
+  host: process.env.MAILTRAP_HOST,
+  port: Number(process.env.MAILTRAP_PORT),
   auth: {
-    user: 'api',
-    pass: 'a42b246827ddfb94583a1d28a30f06e7',
+    user: process.env.MAILTRAP_USER,
+    pass: process.env.MAILTRAP_PASS,
   },
 });
 
@@ -87,15 +87,6 @@ const buildEmailHtml = (title, bodyHtml) => `
 </html>`;
 
 // ─── /api/send-email ──────────────────────────────────────────────────────────
-//
-// Expected body:
-// {
-//   type:     'application_received' | 'shortlisted' | 'unqualified' | 'position_closed',
-//   to:       'applicant@email.com',
-//   name:     'Full Name',
-//   program:  'Software Developer',
-// }
-//
 app.post('/api/send-email', async (req, res) => {
   const { type, to, name, program } = req.body;
 
@@ -105,7 +96,6 @@ app.post('/api/send-email', async (req, res) => {
 
   let subject, title, bodyHtml;
 
-  // ── 1. Application received ──────────────────────────────────────────────
   if (type === 'application_received') {
     subject  = 'Application Received – Slirus Holding';
     title    = 'Application Received Successfully';
@@ -117,24 +107,16 @@ app.post('/api/send-email', async (req, res) => {
         We appreciate the time and effort you have invested in your application.
       </p>
       <p>
-        Our hiring team is currently conducting a thorough review of all submitted profiles to
-        ensure each candidate's qualifications align with our current organisational requirements.
-        This review process may take several business days.
-      </p>
-      <p>
+        Our hiring team is currently conducting a thorough review of all submitted profiles.
         Should your background meet our specific needs, a member of our Human Resources team
         will reach out to you directly via email or telephone to discuss the next steps.
       </p>
       <p style="margin-top:20px;">
-        Thank you for your patience and for considering a career with Slirus Holding.<br/>
-        We wish you the very best in your professional endeavours.
+        Thank you for your patience and for considering a career with Slirus Holding.
       </p>
-      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">
-        — Slirus HR Team
-      </p>`;
+      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">— Slirus HR Team</p>`;
   }
 
-  // ── 2. Shortlisted / Nominated ────────────────────────────────────────────
   else if (type === 'shortlisted') {
     subject  = 'Congratulations – You Have Been Nominated | Slirus Holding';
     title    = 'Congratulations!';
@@ -145,23 +127,13 @@ app.post('/api/send-email', async (req, res) => {
         <strong>${program}</strong> position at Slirus Holding.
       </p>
       <p>
-        After a comprehensive review of your qualifications, our hiring team has identified
-        your profile as a strong match for the requirements and values of our organisation.
+        A member of our Human Resources team will contact you shortly to discuss the next
+        steps in our recruitment process, including scheduling an interview.
       </p>
-      <p>
-        A member of our Human Resources team will contact you shortly via email or telephone
-        to discuss the next steps in our recruitment process, including scheduling an interview.
-      </p>
-      <p style="margin-top:20px;">
-        Thank you for your continued interest in Slirus Holding. We look forward to speaking
-        with you soon.
-      </p>
-      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">
-        — Slirus HR Team
-      </p>`;
+      <p style="margin-top:20px;">We look forward to speaking with you soon.</p>
+      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">— Slirus HR Team</p>`;
   }
 
-  // ── 3. Unqualified / Passed Over ──────────────────────────────────────────
   else if (type === 'unqualified') {
     subject  = 'Update on Your Application | Slirus Holding';
     title    = 'Update on Your Application';
@@ -173,21 +145,12 @@ app.post('/api/send-email', async (req, res) => {
         application will be <strong>Passed Over</strong> at this time.
       </p>
       <p>
-        This decision was made because your current background does not fully align with the
-        specific technical or operational requirements we are seeking for this role.
+        We truly appreciate the interest you have shown in our organisation and wish you
+        the very best in your future professional endeavours.
       </p>
-      <p>
-        We truly appreciate the interest you have shown in our organisation and the effort
-        you put into your application. We wish you the very best in your future professional
-        endeavours and hope you will consider Slirus Holding for future openings that may be
-        a better match for your expertise.
-      </p>
-      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">
-        — Slirus HR Team
-      </p>`;
+      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">— Slirus HR Team</p>`;
   }
 
-  // ── 4. Position closed (submitted to a closed track) ─────────────────────
   else if (type === 'position_closed') {
     subject  = 'Application Update | Slirus Holding';
     title    = 'Position Currently Closed';
@@ -195,28 +158,20 @@ app.post('/api/send-email', async (req, res) => {
       <p>Dear <strong>${name}</strong>,</p>
       <p>
         Thank you for your interest in the <strong>${program}</strong> position at Slirus
-        Holding. We genuinely appreciate the time, effort, and professional consideration
-        you invested in your application.
+        Holding. We are currently no longer accepting applications for this role as the
+        recruitment process has been closed.
       </p>
       <p>
-        Please be advised that we are currently no longer accepting applications for this
-        specific role, as the recruitment process for this position has been closed.
+        We encourage you to monitor our careers page for future openings that may align
+        with your expertise.
       </p>
-      <p>
-        We were impressed by your background and encourage you to continue monitoring our
-        careers page for future openings that may align with your expertise.
-      </p>
-      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">
-        — Slirus HR Team
-      </p>`;
+      <p style="color:#94a3b8;font-size:13px;margin-top:24px;">— Slirus HR Team</p>`;
   }
 
-  // ── Unknown type ───────────────────────────────────────────────────────────
   else {
     return res.status(400).json({ success: false, message: `Unknown email type: "${type}"` });
   }
 
-  // ── Send ───────────────────────────────────────────────────────────────────
   try {
     await transporter.sendMail({
       from:    '"Slirus HR Team" <hr@slirus.com>',
@@ -224,7 +179,6 @@ app.post('/api/send-email', async (req, res) => {
       subject,
       html:    buildEmailHtml(title, bodyHtml),
     });
-
     console.log(`[Email] "${type}" sent to ${to}`);
     return res.json({ success: true });
   } catch (err) {
