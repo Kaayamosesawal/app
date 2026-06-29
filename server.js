@@ -11,11 +11,11 @@
  * Environment variables (set in Render dashboard, never commit to git):
  *   PORT              – HTTP port (Render sets this automatically)
  *   CLIENT_ORIGIN     – Production frontend URL (e.g. https://slirus.web.app)
- *   MAILTRAP_HOST     – SMTP host  (sandbox.smtp.mailtrap.io | live.smtp.mailtrap.io)
- *   MAILTRAP_PORT     – SMTP port  (2525 for sandbox | 587 for live)
- *   MAILTRAP_USER     – SMTP user  (inbox username for sandbox | "api" for live)
- *   MAILTRAP_PASS     – SMTP pass  (inbox password for sandbox | API key for live)
- *   MAILTRAP_FROM     – Sender address (e.g. hr@slirus.com — must match verified domain)
+ *   MAILTRAP_HOST     – SMTP host  (live.smtp.mailtrap.io)
+ *   MAILTRAP_PORT     – SMTP port  (587 for live)
+ *   MAILTRAP_USER     – Always literally "api" for Mailtrap Live SMTP
+ *   MAILTRAP_PASS     – Your Mailtrap API key / SMTP password
+ *   MAILTRAP_FROM     – Sender address (must match your verified sending domain)
  *   RENDER_EXTERNAL_URL – Set automatically by Render; used for keep-alive pings
  */
 
@@ -30,7 +30,7 @@ const missingEnv   = REQUIRED_ENV.filter(key => !process.env[key]);
 if (missingEnv.length > 0) {
   console.error(`[Server] ❌ Missing required environment variables: ${missingEnv.join(', ')}`);
   console.error('[Server] Set them in your Render dashboard under Environment.');
-  process.exit(1); // crash early so Render marks the deploy as failed
+  process.exit(1);
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -57,38 +57,44 @@ const EMAIL_TYPES = new Set([
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
 
+// IMPORTANT: Allow preflight OPTIONS requests for all routes (required for CORS)
+app.options('*', cors());
+
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow server-to-server requests (no origin) and whitelisted origins
+    // Allow server-to-server requests (no origin header) and whitelisted origins
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     console.warn(`[CORS] Blocked request from: ${origin}`);
     callback(new Error(`CORS: origin "${origin}" is not allowed`));
   },
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
 }));
 
-app.use(express.json({ limit: '16kb' })); // guard against oversized payloads
+app.use(express.json({ limit: '16kb' }));
 
 // ─── Nodemailer transporter ───────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
   host: process.env.MAILTRAP_HOST,
   port: Number(process.env.MAILTRAP_PORT),
-  secure: false, // STARTTLS — works for both sandbox (2525) and live (587)
+  // secure: false uses STARTTLS — correct for port 587
+  secure: false,
   auth: {
-    user: process.env.MAILTRAP_USER,
+    user: process.env.MAILTRAP_USER, // Must be "api" for Mailtrap Live SMTP
     pass: process.env.MAILTRAP_PASS,
   },
-  pool: true,           // reuse connections for throughput
+  pool: true,
   maxConnections: 5,
-  rateDelta: 1000,      // max 5 messages per second
+  rateDelta: 1000,
   rateLimit: 5,
 });
 
-// Verify transport on startup so a bad config fails immediately
+// Verify transport on startup
 transporter.verify((err) => {
   if (err) {
     console.error('[Email] ❌ SMTP connection failed:', err.message);
     console.error('[Email] Check MAILTRAP_HOST / PORT / USER / PASS in Render environment.');
+    console.error('[Email] Reminder: MAILTRAP_USER must be "api" (not your email address) for Mailtrap Live SMTP.');
   } else {
     console.log(`[Email] ✅ SMTP connected — ${process.env.MAILTRAP_HOST}:${process.env.MAILTRAP_PORT}`);
   }
@@ -302,7 +308,6 @@ const buildEmailContent = (type, name, program) => {
 app.post('/api/send-email', async (req, res) => {
   const { type, to, name, program } = req.body ?? {};
 
-  // Input validation
   if (!type || !to || !name || !program) {
     return res.status(400).json({
       success: false,
@@ -317,7 +322,6 @@ app.post('/api/send-email', async (req, res) => {
     });
   }
 
-  // Basic email format guard
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
     return res.status(400).json({ success: false, message: `Invalid recipient email: "${to}"` });
   }
@@ -385,11 +389,9 @@ app.listen(PORT, () => {
 });
 
 // ─── Render free-tier keep-alive ──────────────────────────────────────────────
-// Render spins down free services after 15 min of inactivity, causing a cold
-// start delay on the next request. This self-ping every 14 min prevents that.
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_URL) {
-  const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
+  const PING_INTERVAL = 14 * 60 * 1000;
   setInterval(async () => {
     try {
       const res = await fetch(`${RENDER_URL}/api/health`);
