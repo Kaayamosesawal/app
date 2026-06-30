@@ -40,6 +40,7 @@ const NODE_ENV          = process.env.NODE_ENV           || 'development';
 const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://slirus.com',
   'https://slirus.web.app',
   'https://slirus.firebaseapp.com',
   process.env.CLIENT_ORIGIN,
