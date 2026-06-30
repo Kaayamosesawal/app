@@ -34,9 +34,11 @@ if (missingEnv.length > 0) {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const PORT         = process.env.PORT         || 3001;
-const FROM_ADDRESS = process.env.MAILTRAP_FROM || '"Slirus HR Team" <hr@slirus.com>';
-const NODE_ENV     = process.env.NODE_ENV      || 'development';
+const PORT              = process.env.PORT              || 3001;
+const FROM_ADDRESS      = process.env.MAILTRAP_FROM      || '"Slirus HR Team" <hr@slirus.com>';
+// Project requests are sent on behalf of the general Slirus inbox, not HR.
+const PROJECTS_FROM     = process.env.MAILTRAP_FROM_PROJECTS || '"Slirus Holding" <info@slirus.com>';
+const NODE_ENV          = process.env.NODE_ENV           || 'development';
 
 const ALLOWED_ORIGINS = [
   'http://localhost:3000',
@@ -52,6 +54,18 @@ const EMAIL_TYPES = new Set([
   'shortlisted',
   'unqualified',
   'position_closed',
+  // Project / proposal request lifecycle
+  'project_request_received',
+  'project_accepted',
+  'project_declined',
+]);
+
+// Email types that should be sent from the general Slirus inbox (info@)
+// rather than the HR inbox, since they relate to client/business inquiries.
+const PROJECT_EMAIL_TYPES = new Set([
+  'project_request_received',
+  'project_accepted',
+  'project_declined',
 ]);
 
 // ─── Express app ──────────────────────────────────────────────────────────────
@@ -101,7 +115,7 @@ transporter.verify((err) => {
 });
 
 // ─── Email HTML template ──────────────────────────────────────────────────────
-const buildEmailHtml = (title, bodyHtml) => `<!DOCTYPE html>
+const buildEmailHtml = (title, bodyHtml, department = 'HR Department') => `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -162,7 +176,7 @@ const buildEmailHtml = (title, bodyHtml) => `<!DOCTYPE html>
                      background:#f8fafc;border-top:1px solid #f1f5f9;">
             <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
               &copy; ${new Date().getFullYear()} Slirus Holding Limited &nbsp;&middot;&nbsp;
-              HR Department<br />
+              ${department}<br />
               <span style="font-size:11px;color:#cbd5e1;">
                 This is an automated message — please do not reply directly to this email.
               </span>
@@ -299,6 +313,94 @@ const buildEmailContent = (type, name, program) => {
           </p>`,
       };
 
+    // ── Project / Proposal Requests ─────────────────────────────────────────
+
+    case 'project_request_received':
+      return {
+        subject: `We've Received Your Project Request — ${program} | Slirus Holding`,
+        title:   'Thank You for Trusting Slirus',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          <p>
+            Thank you for reaching out and choosing <strong>Slirus Holding</strong> to
+            help bring <strong>${program}</strong> to life. We have successfully received
+            your project request, and we sincerely appreciate the trust you've placed in
+            our team to support your goals.
+          </p>
+          <p>
+            Your submission is now with our project review team, who will carefully assess
+            the scope, timeline, and requirements you've shared. We take every request
+            seriously and aim to respond with a tailored proposal as quickly as possible,
+            typically within 2–3 business days.
+          </p>
+          <p>
+            In the meantime, if you'd like to share any additional details, references, or
+            documents that could help us better understand your vision, feel free to reply
+            to this email at any time.
+          </p>
+          <p style="margin-top:24px;">
+            We're genuinely excited about the possibility of working together and thank you
+            once again for considering Slirus for your project.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+          </p>`,
+      };
+
+    case 'project_accepted':
+      return {
+        subject: `Your Project Has Been Accepted — ${program} | Slirus Holding`,
+        title:   'Great News — We\'re On Board! 🎉',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          <p>
+            We're delighted to let you know that after reviewing your request, our team
+            has accepted <strong>${program}</strong> and we're excited to begin working
+            with you.
+          </p>
+          <p>
+            A member of our team will be in touch shortly to discuss next steps, including
+            scope confirmation, timeline alignment, and contract details, so we can get
+            started on delivering the best possible outcome for your business.
+          </p>
+          <p style="margin-top:24px;">
+            Thank you again for trusting Slirus Holding with your project. We look forward
+            to a successful partnership.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+          </p>`,
+      };
+
+    case 'project_declined':
+      return {
+        subject: `Update on Your Project Request — ${program} | Slirus Holding`,
+        title:   'Update on Your Project Request',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          <p>
+            Thank you for considering Slirus Holding for <strong>${program}</strong>, and
+            for taking the time to share the details of your project with us.
+          </p>
+          <p>
+            After careful review, we've determined that we're not able to take on this
+            particular project at this time, whether due to current capacity, scope
+            alignment, or other internal factors. This decision is in no way a reflection
+            of the value of your project.
+          </p>
+          <p>
+            We genuinely appreciate the opportunity to learn about your goals and would
+            welcome the chance to work together on future projects that may be a better
+            fit.
+          </p>
+          <p style="margin-top:24px;">
+            Thank you again for your interest and trust in Slirus Holding.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Kind regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+          </p>`,
+      };
+
     default:
       return null;
   }
@@ -331,15 +433,21 @@ app.post('/api/send-email', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to build email content.' });
   }
 
+  // Project-related emails come from the general inbox (info@) with a
+  // matching footer label; recruitment emails keep the existing HR sender.
+  const isProjectEmail = PROJECT_EMAIL_TYPES.has(type);
+  const senderAddress  = isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
+  const department     = isProjectEmail ? 'Client Relations' : 'HR Department';
+
   try {
     const info = await transporter.sendMail({
-      from:    FROM_ADDRESS,
+      from:    senderAddress,
       to,
       subject: content.subject,
-      html:    buildEmailHtml(content.title, content.body),
+      html:    buildEmailHtml(content.title, content.body, department),
     });
 
-    console.log(`[Email] ✅ "${type}" → ${to} | messageId: ${info.messageId}`);
+    console.log(`[Email] ✅ "${type}" → ${to} | from: ${senderAddress} | messageId: ${info.messageId}`);
     return res.status(200).json({ success: true, messageId: info.messageId });
 
   } catch (err) {
@@ -384,7 +492,8 @@ app.listen(PORT, () => {
   console.log(`  Environment : ${NODE_ENV}`);
   console.log(`  Port        : ${PORT}`);
   console.log(`  SMTP host   : ${process.env.MAILTRAP_HOST}:${process.env.MAILTRAP_PORT}`);
-  console.log(`  From        : ${FROM_ADDRESS}`);
+  console.log(`  From (HR)   : ${FROM_ADDRESS}`);
+  console.log(`  From (Proj) : ${PROJECTS_FROM}`);
   console.log('─────────────────────────────────────────');
 });
 
