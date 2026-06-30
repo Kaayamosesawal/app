@@ -5,27 +5,24 @@
  * emails for the Slirus Holdings recruitment platform.
  *
  * Endpoints:
- *   POST /api/send-email  – Dispatch recruitment emails via Mailtrap SMTP
+ *   POST /api/send-email  – Dispatch recruitment emails via Resend
  *   GET  /api/health      – Health check for uptime monitors & Render keep-alive
  *
  * Environment variables (set in Render dashboard, never commit to git):
  *   PORT              – HTTP port (Render sets this automatically)
  *   CLIENT_ORIGIN     – Production frontend URL (e.g. https://slirus.web.app)
- *   MAILTRAP_HOST     – SMTP host  (live.smtp.mailtrap.io)
- *   MAILTRAP_PORT     – SMTP port  (587 for live)
- *   MAILTRAP_USER     – Always literally "api" for Mailtrap Live SMTP
- *   MAILTRAP_PASS     – Your Mailtrap API key / SMTP password
- *   MAILTRAP_FROM     – Sender address (must match your verified sending domain)
+ *   RESEND_API_KEY    – Your Resend API key
+ *   RESEND_FROM       – Sender address (must match your verified sending domain)
  *   RENDER_EXTERNAL_URL – Set automatically by Render; used for keep-alive pings
  */
 
 import 'dotenv/config';
 import express    from 'express';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import cors       from 'cors';
 
 // ─── Validate required environment variables on startup ───────────────────────
-const REQUIRED_ENV = ['MAILTRAP_HOST', 'MAILTRAP_PORT', 'MAILTRAP_USER', 'MAILTRAP_PASS'];
+const REQUIRED_ENV = ['RESEND_API_KEY'];
 const missingEnv   = REQUIRED_ENV.filter(key => !process.env[key]);
 if (missingEnv.length > 0) {
   console.error(`[Server] ❌ Missing required environment variables: ${missingEnv.join(', ')}`);
@@ -35,9 +32,9 @@ if (missingEnv.length > 0) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PORT              = process.env.PORT              || 3001;
-const FROM_ADDRESS      = process.env.MAILTRAP_FROM      || '"Slirus HR Team" <hr@slirus.com>';
+const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@slirus.com>';
 // Project requests are sent on behalf of the general Slirus inbox, not HR.
-const PROJECTS_FROM     = process.env.MAILTRAP_FROM_PROJECTS || '"Slirus Holding" <info@slirus.com>';
+const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holding <info@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
 
 const ALLOWED_ORIGINS = [
@@ -87,32 +84,9 @@ app.use(cors({
 
 app.use(express.json({ limit: '16kb' }));
 
-// ─── Nodemailer transporter ───────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  host: process.env.MAILTRAP_HOST,
-  port: Number(process.env.MAILTRAP_PORT),
-  // secure: false uses STARTTLS — correct for port 587
-  secure: false,
-  auth: {
-    user: process.env.MAILTRAP_USER, // Must be "api" for Mailtrap Live SMTP
-    pass: process.env.MAILTRAP_PASS,
-  },
-  pool: true,
-  maxConnections: 5,
-  rateDelta: 1000,
-  rateLimit: 5,
-});
-
-// Verify transport on startup
-transporter.verify((err) => {
-  if (err) {
-    console.error('[Email] ❌ SMTP connection failed:', err.message);
-    console.error('[Email] Check MAILTRAP_HOST / PORT / USER / PASS in Render environment.');
-    console.error('[Email] Reminder: MAILTRAP_USER must be "api" (not your email address) for Mailtrap Live SMTP.');
-  } else {
-    console.log(`[Email] ✅ SMTP connected — ${process.env.MAILTRAP_HOST}:${process.env.MAILTRAP_PORT}`);
-  }
-});
+// ─── Resend client ────────────────────────────────────────────────────────────
+const resend = new Resend(process.env.RESEND_API_KEY);
+console.log('[Email] ✅ Resend client initialized');
 
 // ─── Email HTML template ──────────────────────────────────────────────────────
 const buildEmailHtml = (title, bodyHtml, department = 'HR Department') => `<!DOCTYPE html>
@@ -440,15 +414,19 @@ app.post('/api/send-email', async (req, res) => {
   const department     = isProjectEmail ? 'Client Relations' : 'HR Department';
 
   try {
-    const info = await transporter.sendMail({
+    const { data, error } = await resend.emails.send({
       from:    senderAddress,
       to,
       subject: content.subject,
       html:    buildEmailHtml(content.title, content.body, department),
     });
 
-    console.log(`[Email] ✅ "${type}" → ${to} | from: ${senderAddress} | messageId: ${info.messageId}`);
-    return res.status(200).json({ success: true, messageId: info.messageId });
+    if (error) {
+      throw new Error(error.message || 'Resend API error');
+    }
+
+    console.log(`[Email] ✅ "${type}" → ${to} | from: ${senderAddress} | messageId: ${data.id}`);
+    return res.status(200).json({ success: true, messageId: data.id });
 
   } catch (err) {
     console.error(`[Email] ❌ Failed to send "${type}" → ${to}:`, err.message);
@@ -491,7 +469,7 @@ app.listen(PORT, () => {
   console.log(`  Slirus Email API`);
   console.log(`  Environment : ${NODE_ENV}`);
   console.log(`  Port        : ${PORT}`);
-  console.log(`  SMTP host   : ${process.env.MAILTRAP_HOST}:${process.env.MAILTRAP_PORT}`);
+  console.log(`  Email via   : Resend`);
   console.log(`  From (HR)   : ${FROM_ADDRESS}`);
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
   console.log('─────────────────────────────────────────');
