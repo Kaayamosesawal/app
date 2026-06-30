@@ -90,80 +90,284 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 console.log('[Email] ✅ Resend client initialized');
 
 // ─── Email HTML template ──────────────────────────────────────────────────────
-const buildEmailHtml = (title, bodyHtml, department = 'HR Department') => `<!DOCTYPE html>
-<html lang="en">
+//
+//  Anti-spam enforcement layers applied:
+//  1. Full HTML5 DOCTYPE + XML namespaces (Outlook MSO compatibility)
+//  2. Preheader text — controls the snippet Gmail/Outlook show in the inbox
+//     list view, making the email look legitimate before it is even opened
+//  3. Table-only layout — CSS-heavy DIV layouts score poorly in spam filters
+//  4. Physical mailing address in footer (CAN-SPAM / GDPR requirement)
+//  5. Visible unsubscribe link (CAN-SPAM / CASL requirement)
+//  6. "You received this because…" explanation — removes the "Why am I
+//     getting this?" confusion that causes spam reports
+//  7. No spam-trigger words in subject/body helpers (handled at call sites)
+//  8. Plain-text version sent alongside every email (see buildPlainText)
+//  9. reply_to set to a real monitored inbox — "noreply@" hurts reputation
+// 10. List-Unsubscribe + List-Unsubscribe-Post headers (Gmail one-click)
+// 11. Precedence: transactional (not "bulk" which implies marketing)
+// 12. X-Entity-Ref-ID per send — prevents duplicate-detection false positives
+//
+const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipientEmail = '') => `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <!--[if !mso]><!-->
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no" />
+  <!--<![endif]-->
   <title>${title}</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
 </head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
-         style="background:#f4f4f5;padding:32px 16px;">
-    <tr><td align="center">
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
-             style="max-width:560px;background:#ffffff;border-radius:12px;
-                    overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 
-        <!-- Header / Logo -->
+  <!-- Preheader: hidden text that appears as inbox snippet in Gmail/Outlook.
+       Pad with spaces/zero-width chars so nothing bleeds into the visible email. -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;
+              font-size:1px;line-height:1px;color:#f4f4f5;">
+    ${title} — Slirus Holding Limited · Official Correspondence
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+
+  <!-- Outer wrapper -->
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+         style="background-color:#f4f4f5;padding:32px 16px;">
+    <tr><td align="center">
+
+      <!-- Email card -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="560"
+             style="max-width:560px;background-color:#ffffff;border-radius:12px;
+                    overflow:hidden;border:1px solid #e2e8f0;">
+
+        <!-- ── HEADER / LOGO ── -->
         <tr>
-          <td align="center"
-              style="padding:32px 24px 12px;background:#ffffff;">
-            <img src="https://raw.githubusercontent.com/Kaayamosesawal/images/main/slirus_1.png"
-                 alt="Slirus Holding" width="72" height="72"
-                 style="display:block;border-radius:50%;
-                        border:2px solid #e2e8f0;object-fit:cover;" />
-            <p style="margin:12px 0 0;font-size:12px;font-weight:700;
-                      letter-spacing:2px;color:#94a3b8;text-transform:uppercase;">
-              Slirus Holding Limited
-            </p>
+          <td align="center" style="padding:32px 24px 16px;background-color:#ffffff;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding-right:10px;vertical-align:middle;">
+                  <img src="https://raw.githubusercontent.com/Kaayamosesawal/images/main/slirus_1.png"
+                       alt="Slirus Holding"
+                       width="48" height="48"
+                       style="display:block;border-radius:50%;border:2px solid #e2e8f0;
+                              object-fit:cover;outline:none;text-decoration:none;
+                              -ms-interpolation-mode:bicubic;" />
+                </td>
+                <td style="vertical-align:middle;">
+                  <p style="margin:0;font-size:17px;font-weight:700;color:#1e293b;
+                            letter-spacing:-0.3px;font-family:Arial,Helvetica,sans-serif;">
+                    Slirus <span style="color:#475569;font-weight:400;">Holding</span>
+                  </p>
+                  <p style="margin:2px 0 0;font-size:10px;font-weight:700;letter-spacing:2px;
+                            color:#94a3b8;text-transform:uppercase;
+                            font-family:Arial,Helvetica,sans-serif;">
+                    ${department}
+                  </p>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
 
         <!-- Divider -->
         <tr>
           <td style="padding:0 24px;">
-            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0;" />
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+              <tr><td style="border-top:1px solid #f1f5f9;font-size:0;line-height:0;">&nbsp;</td></tr>
+            </table>
           </td>
         </tr>
 
-        <!-- Title -->
+        <!-- ── TITLE ── -->
         <tr>
           <td style="padding:24px 32px 8px;text-align:center;">
             <h1 style="margin:0;font-size:22px;font-weight:700;color:#1e293b;
-                       line-height:1.3;">
+                       line-height:1.3;font-family:Arial,Helvetica,sans-serif;">
               ${title}
             </h1>
           </td>
         </tr>
 
-        <!-- Body -->
+        <!-- ── BODY ── -->
         <tr>
-          <td style="padding:16px 32px 32px;color:#475569;
-                     font-size:15px;line-height:1.75;">
+          <td style="padding:16px 32px 32px;color:#475569;font-size:15px;
+                     line-height:1.75;font-family:Arial,Helvetica,sans-serif;">
             ${bodyHtml}
           </td>
         </tr>
 
-        <!-- Footer -->
+        <!-- ── FOOTER ── -->
+        <!--
+          CAN-SPAM / CASL compliance:
+          - Physical mailing address of sender
+          - Clear identification of sender
+          - Reason recipient is receiving this email
+          - Visible unsubscribe mechanism
+        -->
         <tr>
-          <td style="padding:16px 32px;text-align:center;
-                     background:#f8fafc;border-top:1px solid #f1f5f9;">
-            <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
-              &copy; ${new Date().getFullYear()} Slirus Holding Limited &nbsp;&middot;&nbsp;
-              ${department}<br />
-              <span style="font-size:11px;color:#cbd5e1;">
-                This is an automated message — please do not reply directly to this email.
-              </span>
+          <td style="padding:20px 32px 24px;text-align:center;
+                     background-color:#f8fafc;border-top:1px solid #f1f5f9;">
+            <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#475569;
+                      font-family:Arial,Helvetica,sans-serif;">
+              Slirus Holding Limited
             </p>
+            <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;line-height:1.6;
+                      font-family:Arial,Helvetica,sans-serif;">
+              Plot 14, Parliament Avenue, Kampala, Uganda &nbsp;&middot;&nbsp; info@slirus.com
+            </p>
+            <p style="margin:0 0 10px;font-size:11px;color:#94a3b8;line-height:1.6;
+                      font-family:Arial,Helvetica,sans-serif;">
+              &copy; ${new Date().getFullYear()} Slirus Holding Limited. All rights reserved.
+            </p>
+            <p style="margin:0 0 8px;font-size:11px;color:#94a3b8;line-height:1.6;
+                      font-family:Arial,Helvetica,sans-serif;">
+              You are receiving this email because you submitted an inquiry or application
+              through <a href="https://slirus.com" style="color:#94a3b8;text-decoration:underline;">slirus.com</a>.
+              If this was not you, please disregard this message.
+            </p>
+            ${recipientEmail ? `
+            <p style="margin:0;font-size:11px;color:#cbd5e1;font-family:Arial,Helvetica,sans-serif;">
+              <a href="https://slirus.com/unsubscribe?email=${encodeURIComponent(recipientEmail)}"
+                 style="color:#cbd5e1;text-decoration:underline;">Unsubscribe</a>
+              &nbsp;&middot;&nbsp;
+              <a href="https://slirus.com/privacy"
+                 style="color:#cbd5e1;text-decoration:underline;">Privacy Policy</a>
+            </p>` : ''}
           </td>
         </tr>
 
       </table>
+      <!-- /Email card -->
+
     </td></tr>
   </table>
+  <!-- /Outer wrapper -->
+
 </body>
 </html>`;
+
+// ─── Plain-text fallback builder ─────────────────────────────────────────────
+//
+//  Sending a text/plain alternative alongside the HTML part is one of the
+//  single most effective anti-spam measures. HTML-only emails with no text
+//  part are a strong spam signal in SpamAssassin, Gmail, and Outlook filters.
+//
+const buildPlainText = (title, name, program, type, department) => {
+  const year = new Date().getFullYear();
+  const divider = '─'.repeat(56);
+
+  const bodies = {
+    application_received: [
+      `Dear ${name},`,
+      '',
+      `We have successfully received your application for the ${program} position`,
+      'at Slirus Holding. Thank you for the time and effort you invested.',
+      '',
+      'Our hiring team is reviewing all profiles and will contact you directly',
+      'if your background aligns with our current needs.',
+      '',
+      'Thank you for your patience and for considering a career with Slirus Holding.',
+    ],
+    shortlisted: [
+      `Dear ${name},`,
+      '',
+      `Congratulations — you have been nominated for the ${program} position`,
+      'at Slirus Holding.',
+      '',
+      'A member of our HR team will contact you shortly to discuss next steps,',
+      'including scheduling an interview.',
+      '',
+      'We look forward to speaking with you soon.',
+    ],
+    unqualified: [
+      `Dear ${name},`,
+      '',
+      `Thank you for applying for the ${program} position at Slirus Holding.`,
+      '',
+      'After careful review, we regret to inform you that your application will',
+      'not be progressing further at this time, as your current background does',
+      'not fully align with the specific requirements for this role.',
+      '',
+      'We encourage you to monitor our careers page for future openings.',
+      'We wish you the very best in your professional endeavours.',
+    ],
+    position_closed: [
+      `Dear ${name},`,
+      '',
+      `Thank you for your interest in the ${program} position at Slirus Holding.`,
+      '',
+      'We regret to inform you that we are no longer accepting applications for',
+      'this role, as the recruitment process has been formally closed.',
+      '',
+      'We encourage you to visit our careers page for future openings.',
+    ],
+    project_request_received: [
+      `Dear ${name},`,
+      '',
+      `Thank you for submitting your project request: ${program}.`,
+      '',
+      'We have received your request and our project review team will carefully',
+      'assess the scope, timeline, and requirements you shared. We aim to respond',
+      'with a tailored proposal within 2–3 business days.',
+      '',
+      'Feel free to reply to this email with any additional details.',
+    ],
+    project_accepted: [
+      `Dear ${name},`,
+      '',
+      `Great news — we have accepted your project: ${program}.`,
+      '',
+      'A member of our team will be in touch shortly to discuss next steps,',
+      'including scope confirmation, timeline alignment, and contract details.',
+      '',
+      'Thank you for trusting Slirus Holding with your project.',
+    ],
+    project_declined: [
+      `Dear ${name},`,
+      '',
+      `Thank you for considering Slirus Holding for: ${program}.`,
+      '',
+      'After careful review, we are not able to take on this particular project',
+      'at this time. This is in no way a reflection of the value of your project.',
+      '',
+      'We would welcome the chance to work together on future projects.',
+    ],
+  };
+
+  const bodyLines = bodies[type] ?? [`Dear ${name},`, '', 'Thank you for contacting Slirus Holding.'];
+
+  return [
+    title.toUpperCase(),
+    divider,
+    '',
+    ...bodyLines,
+    '',
+    `Warm regards,`,
+    `Slirus Holding — ${department}`,
+    '',
+    divider,
+    `© ${year} Slirus Holding Limited`,
+    'Plot 14, Parliament Avenue, Kampala, Uganda',
+    'info@slirus.com  |  https://slirus.com',
+    '',
+    'You received this because you submitted an inquiry or application at slirus.com.',
+    'To unsubscribe: https://slirus.com/unsubscribe',
+  ].join('\n');
+};
 
 // ─── Email content factory ────────────────────────────────────────────────────
 const buildEmailContent = (type, name, program) => {
@@ -415,11 +619,29 @@ app.post('/api/send-email', async (req, res) => {
   const department     = isProjectEmail ? 'Client Relations' : 'HR Department';
 
   try {
+    const html      = buildEmailHtml(content.title, content.body, department, to);
+    const text      = buildPlainText(content.title, name, program, type, department);
+    const messageId = `slirus-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const replyTo   = isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
+
     const { data, error } = await resend.emails.send({
-      from:    senderAddress,
+      from:     senderAddress,
       to,
-      subject: content.subject,
-      html:    buildEmailHtml(content.title, content.body, department),
+      reply_to: replyTo,        // Real monitored inbox — "noreply" hurts deliverability
+      subject:  content.subject,
+      html,
+      text,                     // Plain-text alternative — HTML-only emails score as spam
+      headers: {
+        // Marks email as transactional (not bulk/marketing) — respected by Gmail & Outlook
+        'Precedence':              'transactional',
+        // One-click unsubscribe button in Gmail/Outlook inbox header (RFC 8058)
+        'List-Unsubscribe':        `<https://slirus.com/unsubscribe?email=${encodeURIComponent(to)}>, <mailto:${replyTo}?subject=Unsubscribe>`,
+        'List-Unsubscribe-Post':   'List-Unsubscribe=One-Click',
+        // Unique per-message ID prevents duplicate-detection false positives
+        'X-Entity-Ref-ID':         messageId,
+        // Identifies the sending system — helps corporate mail gateways trust the source
+        'X-Mailer':                'Slirus-Email-API/1.0',
+      },
     });
 
     if (error) {
@@ -473,6 +695,15 @@ app.listen(PORT, () => {
   console.log(`  Email via   : Resend`);
   console.log(`  From (HR)   : ${FROM_ADDRESS}`);
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
+  console.log('─────────────────────────────────────────');
+  console.log('  Deliverability checklist (DNS required):');
+  console.log('  ✉  SPF   — TXT record on your sending domain');
+  console.log('             e.g. "v=spf1 include:amazonses.com ~all"');
+  console.log('             (Resend adds this when you verify a domain)');
+  console.log('  🔑 DKIM  — CNAME records from Resend domain settings');
+  console.log('  🛡  DMARC — TXT _dmarc.<domain>');
+  console.log('             e.g. "v=DMARC1; p=quarantine; rua=mailto:dmarc@slirus.com"');
+  console.log('  Without all three, mail WILL land in spam regardless of code.');
   console.log('─────────────────────────────────────────');
 });
 
