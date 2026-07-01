@@ -227,11 +227,11 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
             </p>
             <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
-              Plot 14, Parliament Avenue, Kampala, Uganda &nbsp;&middot;&nbsp; info@slirus.com
+              P.O Box 331921, Juba Road, Lira, Uganda &nbsp;&middot;&nbsp; info@slirus.com
             </p>
             <p style="margin:0 0 10px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
-              &copy; ${new Date().getFullYear()} Slirus Holding Limited. All rights reserved.
+              &copy; ${new Date().getFullYear()} Slirus Holding. All rights reserved.
             </p>
             <p style="margin:0 0 8px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
