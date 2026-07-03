@@ -35,7 +35,28 @@ const PORT              = process.env.PORT              || 3001;
 const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@slirus.com>';
 // Project requests are sent on behalf of the general Slirus inbox, not HR.
 const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holding <info@slirus.com>';
+// New team-account credentials are sent on behalf of Systems/IT, not HR or
+// the general inbox — keeps password-bearing mail in its own reputation lane.
+const ACCOUNTS_FROM     = process.env.RESEND_FROM_ACCOUNTS || 'Slirus Systems <accounts@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
+
+// Base URL of the deployed frontend, used to build the "Sign in" link in the
+// account-provisioning email. Falls back to CLIENT_ORIGIN (already required
+// for CORS) so no new env var is strictly needed in most deployments.
+const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || process.env.CLIENT_ORIGIN || 'https://slirus.web.app').replace(/\/$/, '');
+
+// Department → portal route. Update these paths if your router uses
+// different slugs; this is the single place that mapping lives.
+const DEPARTMENT_PORTAL_PATHS = {
+  Sales:       '/sales',
+  HR:          '/hr',
+  Finance:     '/accounts',
+  Operations:  '/secretary',
+  Engineering: '/worker',
+  Marketing:   '/worker',
+  Executive:   '/ceo',
+};
+const portalUrlFor = (department) => `${PORTAL_BASE_URL}${DEPARTMENT_PORTAL_PATHS[department] || '/login'}`;
 
 const ALLOWED_ORIGINS = [
   'http://localhost:3000',
@@ -56,6 +77,8 @@ const EMAIL_TYPES = new Set([
   'project_request_received',
   'project_accepted',
   'project_declined',
+  // Internal team-account provisioning (CeoManager.jsx)
+  'account_created',
 ]);
 
 // Email types that should be sent from the general Slirus inbox (info@)
@@ -64,6 +87,12 @@ const PROJECT_EMAIL_TYPES = new Set([
   'project_request_received',
   'project_accepted',
   'project_declined',
+]);
+
+// Email types that carry account credentials — routed through the
+// Systems/IT sender identity instead of HR or the general inbox.
+const ACCOUNT_EMAIL_TYPES = new Set([
+  'account_created',
 ]);
 
 // ─── Express app ──────────────────────────────────────────────────────────────
@@ -97,15 +126,14 @@ console.log('[Email] ✅ Resend client initialized');
 //     list view, making the email look legitimate before it is even opened
 //  3. Table-only layout — CSS-heavy DIV layouts score poorly in spam filters
 //  4. Physical mailing address in footer (CAN-SPAM / GDPR requirement)
-//  5. Visible unsubscribe link (CAN-SPAM / CASL requirement)
+//  5. SPAM / CASL requirement
 //  6. "You received this because…" explanation — removes the "Why am I
 //     getting this?" confusion that causes spam reports
 //  7. No spam-trigger words in subject/body helpers (handled at call sites)
 //  8. Plain-text version sent alongside every email (see buildPlainText)
 //  9. reply_to set to a real monitored inbox — "noreply@" hurts reputation
-// 10. List-Unsubscribe + List-Unsubscribe-Post headers (Gmail one-click)
-// 11. Precedence: transactional (not "bulk" which implies marketing)
-// 12. X-Entity-Ref-ID per send — prevents duplicate-detection false positives
+// 10. Precedence: transactional (not "bulk" which implies marketing)
+// 11. X-Entity-Ref-ID per send — prevents duplicate-detection false positives
 //
 const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipientEmail = '') => `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -135,7 +163,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
        Pad with spaces/zero-width chars so nothing bleeds into the visible email. -->
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;
               font-size:1px;line-height:1px;color:#f4f4f5;">
-    ${title} — Slirus Holding Limited · Official Correspondence
+    ${title} - Slirus Holding · Official Correspondence
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
@@ -223,11 +251,11 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
                      background-color:#f8fafc;border-top:1px solid #f1f5f9;">
             <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#475569;
                       font-family:Arial,Helvetica,sans-serif;">
-              Slirus Holding Limited
+              Slirus Holdings
             </p>
             <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
-              P.O Box 331921, Juba Road, Lira, Uganda &nbsp;&middot;&nbsp; info@slirus.com
+              P.O Box 331921, Lira - Uganda &nbsp;&middot;&nbsp; info@slirus.com
             </p>
             <p style="margin:0 0 10px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
@@ -241,9 +269,6 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
             </p>
             ${recipientEmail ? `
             <p style="margin:0;font-size:11px;color:#cbd5e1;font-family:Arial,Helvetica,sans-serif;">
-              <a href="https://slirus.com/unsubscribe?email=${encodeURIComponent(recipientEmail)}"
-                 style="color:#cbd5e1;text-decoration:underline;">Unsubscribe</a>
-              &nbsp;&middot;&nbsp;
               <a href="https://slirus.com/privacy"
                  style="color:#cbd5e1;text-decoration:underline;">Privacy Policy</a>
             </p>` : ''}
@@ -266,11 +291,28 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
 //  single most effective anti-spam measures. HTML-only emails with no text
 //  part are a strong spam signal in SpamAssassin, Gmail, and Outlook filters.
 //
-const buildPlainText = (title, name, program, type, department) => {
+const buildPlainText = (title, name, program, type, department, extra = {}) => {
   const year = new Date().getFullYear();
   const divider = '─'.repeat(56);
 
   const bodies = {
+    account_created: [
+      `Dear ${name},`,
+      '',
+      `An account has been created for you on the Slirus Holding internal portal`,
+      `(${extra.department || 'General'} · ${extra.role || 'Staff'}).`,
+      '',
+      'Your login details:',
+      `  Portal   : ${extra.portalUrl || PORTAL_BASE_URL}`,
+      `  Email    : ${extra.to || ''}`,
+      `  Password : ${extra.password || ''}`,
+      '',
+      'This is a temporary password. For your security, please sign in and',
+      'change it immediately — do not share it or forward this email.',
+      '',
+      'If you were not expecting this account, please contact your',
+      'administrator right away.',
+    ],
     application_received: [
       `Dear ${name},`,
       '',
@@ -360,17 +402,21 @@ const buildPlainText = (title, name, program, type, department) => {
     `Slirus Holding — ${department}`,
     '',
     divider,
-    `© ${year} Slirus Holding Limited`,
+    `© ${year} Slirus Holdings`,
     'Plot 14, Parliament Avenue, Kampala, Uganda',
     'info@slirus.com  |  https://slirus.com',
     '',
-    'You received this because you submitted an inquiry or application at slirus.com.',
-    'To unsubscribe: https://slirus.com/unsubscribe',
+    type === 'account_created'
+      ? 'You received this because a Slirus Holding administrator created an account for you.'
+      : 'You received this because you submitted an inquiry or application at slirus.com.',
+
   ].join('\n');
 };
 
 // ─── Email content factory ────────────────────────────────────────────────────
-const buildEmailContent = (type, name, program) => {
+// `extra` carries fields that don't apply to the recruitment/project emails
+// (password, department, role, portalUrl) — only 'account_created' reads it.
+const buildEmailContent = (type, name, program, extra = {}) => {
   switch (type) {
 
     case 'application_received':
@@ -580,6 +626,66 @@ const buildEmailContent = (type, name, program) => {
           </p>`,
       };
 
+    // ── Internal team-account provisioning ──────────────────────────────
+
+    case 'account_created': {
+      const { password = '', department = 'General', role = 'Staff', portalUrl = PORTAL_BASE_URL } = extra;
+      return {
+        subject: `Your Slirus Holding Account Is Ready | Sign-In Details Inside`,
+        title:   'Your Account Has Been Created',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          <p>
+            An account has been created for you on the <strong>Slirus Holding</strong>
+            internal portal, giving you access to the tools for your role in
+            <strong>${department}</strong> as <strong>${role}</strong>.
+          </p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                 style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin:20px 0;">
+            <tr>
+              <td style="padding:18px 20px;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td style="padding:4px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;width:120px;">Portal</td>
+                    <td style="padding:4px 0;font-size:14px;color:#1e293b;"><a href="${portalUrl}" style="color:#1e293b;text-decoration:underline;">${portalUrl}</a></td>
+                  </tr>
+                  <tr>
+                    <td style="padding:4px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;">Email</td>
+                    <td style="padding:4px 0;font-size:14px;color:#1e293b;">${extra.to || ''}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:4px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;">Temporary password</td>
+                    <td style="padding:4px 0;font-size:15px;font-family:'Courier New',Courier,monospace;color:#1e293b;font-weight:700;letter-spacing:0.4px;">${password}</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:8px 0 20px;">
+            <tr>
+              <td style="border-radius:8px;background-color:#1A3C5E;">
+                <a href="${portalUrl}"
+                   style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;
+                          color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,Helvetica,sans-serif;">
+                  Sign In to the Portal
+                </a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin-top:8px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+            🔒 For your security, please sign in and change this password immediately.
+            Do not share it or forward this email to anyone.
+          </p>
+          <p style="margin-top:24px;">
+            If you were not expecting this account, please contact your administrator
+            right away.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">Slirus Systems Team</strong>
+          </p>`,
+      };
+    }
+
     default:
       return null;
   }
@@ -587,12 +693,18 @@ const buildEmailContent = (type, name, program) => {
 
 // ─── POST /api/send-email ─────────────────────────────────────────────────────
 app.post('/api/send-email', async (req, res) => {
-  const { type, to, name, program } = req.body ?? {};
+  const { type, to, name, program, password, department, role, portalUrl } = req.body ?? {};
+  const isAccountEmail = ACCOUNT_EMAIL_TYPES.has(type);
 
-  if (!type || !to || !name || !program) {
+  // account_created has its own required-field shape (no `program`, but
+  // needs `password` + `department`); every other type keeps the original
+  // {type, to, name, program} contract unchanged.
+  if (!type || !to || !name || (isAccountEmail ? (!password || !department) : !program)) {
     return res.status(400).json({
       success: false,
-      message: 'Missing required fields. Expected: type, to, name, program.',
+      message: isAccountEmail
+        ? 'Missing required fields. Expected: type, to, name, password, department.'
+        : 'Missing required fields. Expected: type, to, name, program.',
     });
   }
 
@@ -607,22 +719,28 @@ app.post('/api/send-email', async (req, res) => {
     return res.status(400).json({ success: false, message: `Invalid recipient email: "${to}"` });
   }
 
-  const content = buildEmailContent(type, name, program);
+  const extra = isAccountEmail
+    ? { to, password, department, role, portalUrl: portalUrl || portalUrlFor(department) }
+    : {};
+
+  const content = buildEmailContent(type, name, program, extra);
   if (!content) {
     return res.status(500).json({ success: false, message: 'Failed to build email content.' });
   }
 
-  // Project-related emails come from the general inbox (info@) with a
-  // matching footer label; recruitment emails keep the existing HR sender.
+  // Recruitment mail keeps the HR sender; client-facing project mail comes
+  // from the general inbox; account credentials come from Systems/IT — each
+  // with its own reply-to and header department label.
   const isProjectEmail = PROJECT_EMAIL_TYPES.has(type);
-  const senderAddress  = isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
-  const department     = isProjectEmail ? 'Client Relations' : 'HR Department';
+  const senderAddress  = isAccountEmail ? ACCOUNTS_FROM : isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
+  const department_    = isAccountEmail ? 'Account Provisioning' : isProjectEmail ? 'Client Relations' : 'HR Department';
+  const replyToAddress = isAccountEmail ? 'support@slirus.com' : isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
 
   try {
-    const html      = buildEmailHtml(content.title, content.body, department, to);
-    const text      = buildPlainText(content.title, name, program, type, department);
+    const html      = buildEmailHtml(content.title, content.body, department_, to);
+    const text      = buildPlainText(content.title, name, program, type, department_, extra);
     const messageId = `slirus-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const replyTo   = isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
+    const replyTo   = replyToAddress;
 
     const { data, error } = await resend.emails.send({
       from:     senderAddress,
@@ -634,9 +752,6 @@ app.post('/api/send-email', async (req, res) => {
       headers: {
         // Marks email as transactional (not bulk/marketing) — respected by Gmail & Outlook
         'Precedence':              'transactional',
-        // One-click unsubscribe button in Gmail/Outlook inbox header (RFC 8058)
-        'List-Unsubscribe':        `<https://slirus.com/unsubscribe?email=${encodeURIComponent(to)}>, <mailto:${replyTo}?subject=Unsubscribe>`,
-        'List-Unsubscribe-Post':   'List-Unsubscribe=One-Click',
         // Unique per-message ID prevents duplicate-detection false positives
         'X-Entity-Ref-ID':         messageId,
         // Identifies the sending system — helps corporate mail gateways trust the source
@@ -695,6 +810,8 @@ app.listen(PORT, () => {
   console.log(`  Email via   : Resend`);
   console.log(`  From (HR)   : ${FROM_ADDRESS}`);
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
+  console.log(`  From (Acct) : ${ACCOUNTS_FROM}`);
+  console.log(`  Portal base : ${PORTAL_BASE_URL}`);
   console.log('─────────────────────────────────────────');
   console.log('  Deliverability checklist (DNS required):');
   console.log('  ✉  SPF   — TXT record on your sending domain');
