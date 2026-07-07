@@ -49,12 +49,14 @@ const Footer = () => {
 
         {/* Sectors */}
         <div className="ft-col">
-          <h4 className="ft-col-head">Services</h4>
+          <h4 className="ft-col-head">Staff Portals</h4>
           <nav className="ft-link-list">
-            <Link to="/services" className="ft-link">Software Development</Link>
-            <Link to="/services" className="ft-link">IT Consultancy</Link>
-            <Link to="/services" className="ft-link">Networking</Link>
-            <Link to="/services" className="ft-link">Cybersecurity</Link>
+            <Link to="/admin" className="ft-link">Admin</Link>
+            <Link to="/ceo-manager" className="ft-link">Manager</Link>
+            <Link to="/hr-manager" className="ft-link">Human Resource</Link>
+            <Link to="/sales-manager" className="ft-link">Sales</Link>
+            <Link to="/secretary-manager" className="ft-link">Secretary</Link>
+            <Link to="/worker-log" className="ft-link">Worker's Log</Link>
           </nav>
         </div>
 

@@ -2,24 +2,42 @@
  * server.js – Slirus Holdings Email API Server
  *
  * Production-ready Node.js/Express server that handles all transactional
- * emails for the Slirus Holdings recruitment platform.
+ * emails for the Slirus Holdings recruitment platform, plus the small set
+ * of privileged Firebase Auth operations the CEO Control Center needs
+ * (CeoManager.jsx) to provision team accounts.
  *
  * Endpoints:
- *   POST /api/send-email  – Dispatch recruitment emails via Resend
- *   GET  /api/health      – Health check for uptime monitors & Render keep-alive
+ *   POST /api/send-email          – Dispatch recruitment/account emails via Resend
+ *   POST /api/create-user         – (CEO-only) Create a Firebase Auth user + temp password
+ *   POST /api/set-user-disabled   – (CEO-only) Enable/disable a Firebase Auth user
+ *   POST /api/delete-user         – (CEO-only) Permanently delete a Firebase Auth user
+ *   GET  /api/health              – Health check for uptime monitors & Render keep-alive
+ *
+ * "CEO-only" routes require an `Authorization: Bearer <Firebase ID token>` header.
+ * The token is verified server-side with firebase-admin and the decoded email
+ * must match CEO_EMAIL — this is the real authorization boundary; the matching
+ * client-side check in CeoManager.jsx is a UX gate only, never trust it alone.
  *
  * Environment variables (set in Render dashboard, never commit to git):
- *   PORT              – HTTP port (Render sets this automatically)
- *   CLIENT_ORIGIN     – Production frontend URL (e.g. https://slirus.web.app)
- *   RESEND_API_KEY    – Your Resend API key
- *   RESEND_FROM       – Sender address (must match your verified sending domain)
- *   RENDER_EXTERNAL_URL – Set automatically by Render; used for keep-alive pings
+ *   PORT                      – HTTP port (Render sets this automatically)
+ *   CLIENT_ORIGIN             – Production frontend URL (e.g. https://slirus.web.app)
+ *   RESEND_API_KEY            – Your Resend API key
+ *   RESEND_FROM               – Sender address (must match your verified sending domain)
+ *   RENDER_EXTERNAL_URL       – Set automatically by Render; used for keep-alive pings
+ *   CEO_EMAIL                 – Email allowed to call the user-management endpoints
+ *   FIREBASE_SERVICE_ACCOUNT_KEY
+ *       – JSON string (or base64 of it) of a Firebase service account key with
+ *         Auth Admin rights. Generate via Firebase Console → Project Settings →
+ *         Service Accounts → "Generate new private key". Without this set, the
+ *         three user-management endpoints respond 503 and email sending still
+ *         works normally.
  */
 
 import 'dotenv/config';
 import express    from 'express';
 import { Resend } from 'resend';
 import cors       from 'cors';
+import admin      from 'firebase-admin';
 
 // ─── Validate required environment variables on startup ───────────────────────
 const REQUIRED_ENV = ['RESEND_API_KEY'];
@@ -36,6 +54,10 @@ const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@sl
 // Project requests are sent on behalf of the general Slirus inbox, not HR.
 const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holding <info@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
+
+// UX-gate email on the client (CeoManager.jsx) mirrors this — but this is the
+// value that actually matters, since it's checked against a verified ID token.
+const CEO_EMAIL = (process.env.CEO_EMAIL || 'kaayamosesawal@gmail.com').toLowerCase();
 
 // Base URL of the deployed frontend, used to build the "Sign in" link in the
 // account-provisioning email. Falls back to CLIENT_ORIGIN (already required
@@ -114,6 +136,48 @@ app.use(express.json({ limit: '16kb' }));
 // ─── Resend client ────────────────────────────────────────────────────────────
 const resend = new Resend(process.env.RESEND_API_KEY);
 console.log('[Email] ✅ Resend client initialized');
+
+// ─── Firebase Admin (powers the CEO Control Center's user-management routes) ──
+// Optional by design: if it's not configured, /api/send-email keeps working
+// as normal and only the three user-management routes below respond 503.
+let firebaseAdminReady = false;
+try {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
+  // Accept either a raw JSON string or a base64-encoded JSON string, since
+  // some hosts mangle the multi-line "private_key" field in plain env vars.
+  const jsonStr = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+  const serviceAccount = JSON.parse(jsonStr);
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  firebaseAdminReady = true;
+  console.log('[Server] ✅ Firebase Admin initialized — user-management endpoints active');
+} catch (err) {
+  console.error('[Server] ⚠️  Firebase Admin not initialized — /api/create-user, /api/set-user-disabled, and /api/delete-user will respond 503:', err.message);
+}
+
+// Verifies the caller is signed in as the CEO before allowing a privileged
+// user-management action. Never trust a client-side email check alone here.
+const verifyCeoAuth = async (req, res, next) => {
+  if (!firebaseAdminReady) {
+    return res.status(503).json({ success: false, message: 'User management is not configured on this server.' });
+  }
+  const header = req.headers.authorization || '';
+  const token  = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Missing or malformed Authorization header.' });
+  }
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    if ((decoded.email || '').toLowerCase() !== CEO_EMAIL) {
+      return res.status(403).json({ success: false, message: 'Only the CEO account may perform this action.' });
+    }
+    req.callerEmail = decoded.email;
+    next();
+  } catch (err) {
+    console.warn('[Auth] ID token verification failed:', err.message);
+    return res.status(401).json({ success: false, message: 'Invalid or expired session. Please sign in again.' });
+  }
+};
 
 // ─── Email HTML template ──────────────────────────────────────────────────────
 //
@@ -773,12 +837,102 @@ app.post('/api/send-email', async (req, res) => {
   }
 });
 
+// ─── POST /api/create-user ─────────────────────────────────────────────────────
+// Creates the Firebase Auth account for a new team member. The CEO Control
+// Center generates the temporary password client-side and passes it here
+// (rather than letting Admin SDK auto-generate one) so the exact same
+// password can be shown once in the UI and emailed via /api/send-email.
+app.post('/api/create-user', verifyCeoAuth, async (req, res) => {
+  const { name, email, department, role, password } = req.body ?? {};
+
+  if (!name || !email || !department || !role || !password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required fields. Expected: name, email, department, role, password.',
+    });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ success: false, message: `Invalid email address: "${email}"` });
+  }
+  if (String(password).length < 6) {
+    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+  }
+
+  try {
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+      displayName: name,
+      emailVerified: false,
+      disabled: false,
+    });
+    console.log(`[Users] ✅ Created "${email}" (uid: ${userRecord.uid}) — by ${req.callerEmail}`);
+    return res.status(200).json({ success: true, uid: userRecord.uid });
+  } catch (err) {
+    console.error('[Users] ❌ Create user failed:', err.message);
+    const isDuplicate = err.code === 'auth/email-already-exists';
+    return res.status(isDuplicate ? 409 : 500).json({
+      success: false,
+      message: isDuplicate
+        ? 'An account with this email already exists.'
+        : (NODE_ENV === 'production' ? 'Could not create the account. Please try again.' : err.message),
+    });
+  }
+});
+
+// ─── POST /api/set-user-disabled ───────────────────────────────────────────────
+// Mirrors a team member's `status` field in Firestore into their actual
+// Firebase Auth account, so a "suspended" user is also locked out of sign-in.
+app.post('/api/set-user-disabled', verifyCeoAuth, async (req, res) => {
+  const { uid, disabled } = req.body ?? {};
+
+  if (!uid || typeof disabled !== 'boolean') {
+    return res.status(400).json({ success: false, message: 'Missing required fields. Expected: uid, disabled (boolean).' });
+  }
+
+  try {
+    await admin.auth().updateUser(uid, { disabled });
+    console.log(`[Users] ${disabled ? '⛔ Disabled' : '✅ Re-enabled'} uid "${uid}" — by ${req.callerEmail}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Users] ❌ set-user-disabled failed:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: NODE_ENV === 'production' ? 'Could not update the account.' : err.message,
+    });
+  }
+});
+
+// ─── POST /api/delete-user ──────────────────────────────────────────────────────
+// Permanently removes a Firebase Auth account. The Firestore `teamUsers` doc
+// is deleted separately, client-side, before this call is made.
+app.post('/api/delete-user', verifyCeoAuth, async (req, res) => {
+  const { uid } = req.body ?? {};
+
+  if (!uid) {
+    return res.status(400).json({ success: false, message: 'Missing required field: uid.' });
+  }
+
+  try {
+    await admin.auth().deleteUser(uid);
+    console.log(`[Users] 🗑️  Deleted uid "${uid}" — by ${req.callerEmail}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Users] ❌ delete-user failed:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: NODE_ENV === 'production' ? 'Could not delete the account.' : err.message,
+    });
+  }
+});
+
 // ─── GET /api/health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.status(200).json({
     status:    'ok',
     service:   'Slirus Email API',
     env:       NODE_ENV,
+    userManagement: firebaseAdminReady ? 'enabled' : 'disabled',
     timestamp: new Date().toISOString(),
   });
 });
@@ -807,6 +961,7 @@ app.listen(PORT, () => {
   console.log(`  From (HR)   : ${FROM_ADDRESS}`);
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
   console.log(`  Portal base : ${PORTAL_BASE_URL}`);
+  console.log(`  User mgmt   : ${firebaseAdminReady ? 'enabled (Firebase Admin)' : 'disabled — set FIREBASE_SERVICE_ACCOUNT_KEY'}`);
   console.log('─────────────────────────────────────────');
   console.log('  Deliverability checklist (DNS required):');
   console.log('  ✉  SPF   — TXT record on your sending domain');

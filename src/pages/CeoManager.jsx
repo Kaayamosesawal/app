@@ -600,13 +600,27 @@ const CeoManager = () => {
   }, []);
 
   // ── User provisioning ──────────────────────────────────────────────────
+  // The three user-management endpoints below are CEO-gated server-side
+  // (server.js verifies the ID token's email against CEO_EMAIL) — this
+  // helper attaches that token so the server can actually enforce it.
+  // The client-side CEO_EMAIL check earlier in this file is a UX gate only.
+  const authFetch = useCallback(async (path, body) => {
+    const idToken = await auth.currentUser?.getIdToken();
+    return fetch(`${API_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  }, []);
+
   const handleCreateUser = useCallback(async ({ name, email, department, role }) => {
     try {
       const password = generatePassword();
-      const res = await fetch(`${API_URL}/api/create-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, department, role, password, createdBy: auth.currentUser?.email }),
+      const res = await authFetch('/api/create-user', {
+        name, email, department, role, password, createdBy: auth.currentUser?.email,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -663,7 +677,7 @@ const CeoManager = () => {
       console.error('Create user error:', err);
       return { success: false, error: err.message };
     }
-  }, [logAudit]);
+  }, [logAudit, authFetch]);
 
   const toggleUserStatus = useCallback(async (target) => {
     const newStatus = target.status === 'suspended' ? 'active' : 'suspended';
@@ -677,16 +691,14 @@ const CeoManager = () => {
     try {
       await updateDoc(doc(db, 'teamUsers', target.id), { status: newStatus });
       await logAudit(newStatus === 'suspended' ? 'Suspended user' : 'Reactivated user', target.email);
-      fetch(`${API_URL}/api/set-user-disabled`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: target.id, disabled: newStatus === 'suspended' }),
-      }).catch(err => console.warn('Auth disable sync failed (non-fatal):', err.message));
+      authFetch('/api/set-user-disabled', { uid: target.id, disabled: newStatus === 'suspended' })
+        .catch(err => console.warn('Auth disable sync failed (non-fatal):', err.message));
     } catch (err) {
       alert('Could not update user status: ' + err.message);
     } finally {
       setBusyUserId(null);
     }
-  }, [logAudit]);
+  }, [logAudit, authFetch]);
 
   const handleDeleteUser = useCallback(async (target) => {
     const confirmed = window.confirm(`Permanently delete ${target.name} (${target.email})? This cannot be undone.`);
@@ -694,17 +706,15 @@ const CeoManager = () => {
     setBusyUserId(target.id);
     try {
       await deleteDoc(doc(db, 'teamUsers', target.id));
-      fetch(`${API_URL}/api/delete-user`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: target.id }),
-      }).catch(err => console.warn('Auth delete sync failed (non-fatal):', err.message));
+      authFetch('/api/delete-user', { uid: target.id })
+        .catch(err => console.warn('Auth delete sync failed (non-fatal):', err.message));
       await logAudit('Deleted user account', target.email);
     } catch (err) {
       alert('Delete failed: ' + err.message);
     } finally {
       setBusyUserId(null);
     }
-  }, [logAudit]);
+  }, [logAudit, authFetch]);
 
   const savePermissions = useCallback(async (userId, permissions) => {
     await updateDoc(doc(db, 'teamUsers', userId), { permissions });
