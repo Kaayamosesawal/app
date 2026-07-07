@@ -16,6 +16,7 @@ import { db } from '../firebase/firebase';
 import { collection, addDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import { CAREER_TRACKS } from './careerTracks';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from '../utils/pdfBrand';
 
 // ─── API Base URL ─────────────────────────────────────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -23,6 +24,7 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 // ─── PDF Generator ────────────────────────────────────────────────────────────
 const generateApplicationPDF = async (form, track) => {
   const { jsPDF } = await import('jspdf');
+  const logoDataUrl = await loadLogoDataUrl();
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const PW = 210, M = 20, CW = PW - M * 2;
   let y = 20;
@@ -30,21 +32,14 @@ const generateApplicationPDF = async (form, track) => {
   const newPage = () => { pdf.addPage(); y = 20; };
   const checkY = (n = 10) => { if (y + n > 275) newPage(); };
 
-  // Header
-  pdf.setFillColor(26, 60, 94);
-  pdf.rect(0, 0, PW, 28, 'F');
-  pdf.setFontSize(14); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(255, 255, 255);
-  pdf.text('SLIRUS HOLDINGS LIMITED', M, 12);
-  pdf.setFontSize(9); pdf.setFont('helvetica', 'normal');
-  pdf.text('Employment Application Form', M, 19);
-  pdf.text(`Position: ${track.title}`, PW - M, 12, { align: 'right' });
-  pdf.text(`Date: ${new Date().toLocaleDateString('en-UG')}`, PW - M, 19, { align: 'right' });
-  y = 36;
+  // Header (logo + letterhead)
+  y = drawLetterhead(pdf, {
+    logoDataUrl,
+    eyebrow: 'Employment Application Form',
+    rightLines: [`Position: ${track.title}`, `Date: ${new Date().toLocaleDateString('en-UG')}`],
+  });
+  y += 4;
 
-  const hexToRgb = (hex) => {
-    const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return r ? [parseInt(r[1], 16), parseInt(r[2], 16), parseInt(r[3], 16)] : [26, 60, 94];
-  };
   const [cr, cg, cb] = hexToRgb(track.color || '#1A3C5E');
   pdf.setDrawColor(cr, cg, cb); pdf.setLineWidth(0.8);
   pdf.line(M, y, PW - M, y); y += 6;
@@ -125,14 +120,7 @@ const generateApplicationPDF = async (form, track) => {
     row('  Title', r.title); row('  Contact', r.contact); y += 1;
   });
 
-  // Footer on every page
-  const total = pdf.internal.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    pdf.setPage(p);
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(160, 160, 160);
-    pdf.line(M, 285, PW - M, 285);
-    pdf.text(`Slirus Holdings Limited · Page ${p} of ${total}`, PW / 2, 290, { align: 'center' });
-  }
+  drawFooter(pdf, { note: 'Slirus Holdings Limited' });
 
   pdf.save(`Slirus_Application_${(form.fullName || 'applicant').replace(/\s+/g, '_')}_${track.key}.pdf`);
 };

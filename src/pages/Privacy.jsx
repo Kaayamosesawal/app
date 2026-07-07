@@ -3,72 +3,85 @@ import Layout from '../components/Layout';
 
 const products = [
   {
-    id: 'slirupay',
-    icon: 'fas fa-mobile-alt',
-    name: 'SlirusPay',
-    tagline: 'Mobile Money & Agent Banking Platform',
-    color: '#2563eb',
-    light: '#eff6ff',
+    id: "radi-expense",
+    name: "RadiExpense",
+    icon: "fas fa-receipt",
+    color: "#10b981",
+    light: "#10b98120",
+    tagline: "Take full control of every shilling your business spends.",
     sections: [
       {
-        heading: 'What SlirusPay Collects',
-        body: `When you register on SlirusPay or use an agent outlet, we collect your full name, national ID number (Nin), date of birth, phone number, and a live selfie photograph for identity verification. Every transaction you initiate, including the amount, timestamp, recipient, sending and receiving float balances, and device location at the time of transfer, is recorded to maintain a legally compliant audit trail.`,
+        heading: "Expense & Financial Data",
+        body: "RadiExpense collects business expense details, receipts, vendor information, approval workflows, and transaction metadata. This data is used solely to enable expense submission, approvals, reimbursements, and financial reporting for your organization."
       },
       {
-        heading: 'How We Use Your SlirusPay Data',
-        body: `Your identity data is used to comply with Bank of Uganda Know-Your-Customer (KYC) and Anti-Money Laundering (AML) directives. Transaction records are used to generate your e-statement, settle disputes, and detect unusual activity such as rapid high-value transfers or SIM-swap fraud patterns. We do not use your SlirusPay data to serve you advertisements. Agent outlet data (float levels, daily throughput) is shared internally with Slirus Financial Services Limited to manage liquidity.`,
+        heading: "User Access & Controls",
+        body: "Only authorized personnel within your company (approvers, accountants, and finance managers) can access expense records. We enforce strict role-based access controls. Field users can submit expenses offline, with data encrypted during synchronization."
       },
       {
-        heading: 'Retention of SlirusPay Records',
-        body: `Under the Financial Institutions Act and Bank of Uganda guidelines, all transaction records, KYC documents, and agent agreements are retained for a minimum of seven (7) years. Records tied to an active regulatory investigation are held until that investigation is formally closed, regardless of the standard retention window.`,
+        heading: "Data Retention",
+        body: "Expense records are retained for the duration of your active subscription plus up to 7 years to comply with Ugandan tax and financial regulations, after which they are securely archived or deleted upon request."
       },
-    ],
+      {
+        heading: "Special Protections",
+        body: "Sensitive financial information such as bank account details is encrypted both in transit and at rest. We do not store full credit card numbers."
+      }
+    ]
   },
   {
-    id: 'slirusmanage',
-    icon: 'fas fa-layer-group',
-    name: 'SlirusManage',
-    tagline: 'Enterprise Resource Planning & Business Management',
-    color: '#7c3aed',
-    light: '#f5f3ff',
+    id: "radi-learn",
+    name: "RadiLearn",
+    icon: "fas fa-graduation-cap",
+    color: "#3b82f6",
+    light: "#3b82f620",
+    tagline: "A complete school management and e-learning system in one platform.",
     sections: [
       {
-        heading: 'What SlirusManage Collects',
-        body: `SlirusManage collects data you or your organisation enters into the platform: employee records (names, roles, salary grades, National Social Security Fund numbers), customer invoices and payment status, supplier purchase orders, and inventory stock levels. System usage data, which modules you open, how long you spend on each screen, and any errors encountered, is collected automatically to help us improve the product.`,
+        heading: "Student & Academic Data",
+        body: "RadiLearn collects student personal information, academic records, attendance, examination results, and fee payment data. This information is processed to support admissions, academic management, reporting, and e-learning activities."
       },
       {
-        heading: 'Data Ownership & Client Control',
-        body: `You own the business data you input into SlirusManage. We act as a data processor on your behalf, not as a data controller for that content. You may export a full copy of your data at any time from the Settings › Data Export panel, and you may request permanent deletion of your account and all associated records by contacting support@slirus.com. Deletion requests are processed within 14 business days.`,
+        heading: "Parental & Guardian Access",
+        body: "Parents and guardians can access their child’s academic progress, fees, and attendance through secure parent portals. Schools are responsible for obtaining appropriate consent as required under the Uganda Data Protection and Privacy Act."
       },
       {
-        heading: 'Integrations & Third-Party Connectors',
-        body: `If you connect SlirusManage to a third-party service, such as a bank feed, Uganda Revenue Authority (URA) eTax gateway, or SMS gateway for invoice delivery, you authorise Slirus Technologies to transmit the minimum data required to complete that integration. Each connector is documented in your account under Settings › Integrations with a plain-language summary of what data crosses the boundary.`,
+        heading: "E-Learning Activity",
+        body: "Learning activity data such as progress, quiz scores, and time spent is used only to enhance the educational experience within the platform. Student work and submissions are not used to train external AI models."
       },
-    ],
+      {
+        heading: "Data Retention",
+        body: "Student records are retained for the duration of enrollment plus 7 years after graduation or withdrawal, in accordance with educational regulatory requirements, unless deletion is requested by the school or legal guardian."
+      }
+    ]
   },
   {
-    id: 'slirusfashion',
-    icon: 'fas fa-tshirt',
-    name: 'SlirusFashion',
-    tagline: 'Fashion Retail & Inventory Management',
-    color: '#db2777',
-    light: '#fdf2f8',
+    id: "radi-link",
+    name: "RadiLink",
+    icon: "fas fa-users",
+    color: "#8b5cf6",
+    light: "#8b5cf620",
+    tagline: "The all-in-one platform for managing clubs, SACCOs, and associations.",
     sections: [
       {
-        heading: 'What SlirusFashion Collects',
-        body: `When you place an order through SlirusFashion, whether for school uniforms, corporate wear, or retail clothing, we collect your full name, delivery address, phone number, and measurements or size preferences you provide. If you pay online, card processing is handled entirely by our licensed payment gateway partner; Slirus does not store raw card numbers on our servers.`,
+        heading: "Membership & Contribution Data",
+        body: "RadiLink collects member personal details, contact information, contribution records, and participation history. This data is used exclusively for membership management, contributions, communications, events, and governance within your organization."
       },
       {
-        heading: 'How We Use Your SlirusFashion Data',
-        body: `Your address and contact details are shared with our production and delivery teams to fulfil your order. Size and style preference data is used to pre-populate future orders and provide accurate fit recommendations. We may send you order status updates via SMS or WhatsApp. We will only send promotional messages if you explicitly opt in, and you can unsubscribe from any message by replying STOP.`,
+        heading: "SACCO Financial Data",
+        body: "For SACCOs, savings, loans, and contribution data are protected with strong encryption. We provide internal tracking tools but do not act as a financial institution or store full banking credentials beyond reconciliation needs."
       },
       {
-        heading: 'Bulk & Corporate Order Data',
-        body: `For institutional clients (schools, hospitals, government entities), we receive staff lists, employee numbers, and department groupings to manage bulk uniform orders. This data is used exclusively for order fulfilment. Lists are deleted from our production systems within 30 days of final delivery confirmation, though an anonymised order summary is retained for billing records.`,
+        heading: "Communications & Events",
+        body: "Member contact details are used only for organization-approved communications such as meeting notices, event invitations, and governance updates. Members can opt out of non-essential messages directly in the platform."
       },
-    ],
-  },
+      {
+        heading: "Data Retention",
+        body: "Member data is retained for the duration of active membership. Upon resignation or termination, personal data is archived or deleted according to the organization’s policies and Ugandan data protection laws."
+      }
+    ]
+  }
 ];
+
 
 const rights = [
   { icon: 'fas fa-eye', title: 'Right to Access', desc: 'You may request a copy of all personal data Slirus holds about you across any of our products. We will respond within 21 days.' },
@@ -497,9 +510,9 @@ const PrivacyPolicy = () => {
             <div className="pp-nav-divider"></div>
             <ul className="pp-nav-list">
               <li><a href="#products">Our Products</a></li>
-              <li><a href="#slirupay">SlirusPay</a></li>
-              <li><a href="#slirusmanage">SlirusManage</a></li>
-              <li><a href="#slirusfashion">SlirusFashion</a></li>
+              <li><a href="#slirupay">RadiExpense</a></li>
+              <li><a href="#slirusmanage">RadiLearn</a></li>
+              <li><a href="#slirusfashion">RadiLink</a></li>
             </ul>
             <div className="pp-nav-divider"></div>
             <ul className="pp-nav-list">

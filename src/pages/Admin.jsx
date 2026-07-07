@@ -17,10 +17,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../firebase/firebase';
-import { collection, updateDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { CAREER_TRACKS } from './careerTracks';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from '../utils/pdfBrand';
+import { generateProjectRequestPDF, generateProjectProposalPDF } from '../utils/projectPdf';
 
 // ─── API Base URL ─────────────────────────────────────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -30,6 +32,7 @@ const generateAdminPDF = async (app) => {
   const { jsPDF } = await import('jspdf');
   const track    = CAREER_TRACKS.find(t => t.key === app.trackKey);
   const hexColor = app.trackColor || track?.color || '#1A3C5E';
+  const logoDataUrl = await loadLogoDataUrl();
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const PW = 210, M = 20, CW = PW - M * 2;
   let y = 20;
@@ -37,23 +40,16 @@ const generateAdminPDF = async (app) => {
   const newPage = () => { pdf.addPage(); y = 20; };
   const checkY  = (n = 10) => { if (y + n > 275) newPage(); };
 
-  const hexToRgb = (hex) => {
-    const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return r ? [parseInt(r[1], 16), parseInt(r[2], 16), parseInt(r[3], 16)] : [26, 60, 94];
-  };
-
-  // Header
-  pdf.setFillColor(26, 60, 94);
-  pdf.rect(0, 0, PW, 28, 'F');
-  pdf.setFontSize(14); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(255, 255, 255);
-  pdf.text('SLIRUS HOLDINGS LIMITED', M, 12);
-  pdf.setFontSize(9); pdf.setFont('helvetica', 'normal');
-  pdf.text('Employment Application — Admin Copy', M, 19);
-  pdf.text(`Position: ${app.program || '—'}`, PW - M, 12, { align: 'right' });
   const submittedDate = app.submittedAt?.toDate
     ? app.submittedAt.toDate().toLocaleDateString('en-UG') : '—';
-  pdf.text(`Submitted: ${submittedDate}`, PW - M, 19, { align: 'right' });
-  y = 36;
+
+  // Header (logo + letterhead)
+  y = drawLetterhead(pdf, {
+    logoDataUrl,
+    eyebrow: 'Employment Application — Admin Copy',
+    rightLines: [`Position: ${app.program || '—'}`, `Submitted: ${submittedDate}`],
+  });
+  y += 4;
 
   const [cr, cg, cb] = hexToRgb(hexColor);
   pdf.setDrawColor(cr, cg, cb); pdf.setLineWidth(0.8);
@@ -143,13 +139,7 @@ const generateAdminPDF = async (app) => {
     row('  Title', r.title); row('  Contact', r.contact); y += 1;
   });
 
-  const total = pdf.internal.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    pdf.setPage(p);
-    pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(160, 160, 160);
-    pdf.line(M, 285, PW - M, 285);
-    pdf.text(`Slirus Holdings · Admin Copy · Confidential · Page ${p} of ${total}`, PW / 2, 290, { align: 'center' });
-  }
+  drawFooter(pdf, { note: 'Slirus Holdings · Admin Copy', confidential: true });
 
   const safe = (app.fullName || 'applicant').replace(/\s+/g, '_');
   pdf.save(`Slirus_Admin_${safe}_${app.trackKey || 'app'}.pdf`);
@@ -331,6 +321,182 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating }) => {
   );
 };
 
+// ─── Project Request Status Badge ──────────────────────────────────────────────
+const PROJECT_STATUS_CONFIG = {
+  New:        { bg: '#DBEAFE', color: '#1D4ED8', dot: '#3B82F6' },
+  Reviewing:  { bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B' },
+  Accepted:   { bg: '#D1FAE5', color: '#065F46', dot: '#10B981' },
+  Declined:   { bg: '#FEE2E2', color: '#991B1B', dot: '#EF4444' },
+};
+
+const ProjectBadge = ({ status }) => {
+  const cfg = PROJECT_STATUS_CONFIG[status] || PROJECT_STATUS_CONFIG.New;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cfg.bg, color: cfg.color, borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
+      {status || 'New'}
+    </span>
+  );
+};
+
+// ─── Project Request Detail Modal ──────────────────────────────────────────────
+const ProjectDetailModal = ({ project, onClose, onStatusChange, statusUpdating }) => {
+  const [localStatus, setLocalStatus] = useState(project?.status);
+  const [reqPdfLoading, setReqPdfLoading] = useState(false);
+  const [propPdfLoading, setPropPdfLoading] = useState(false);
+
+  useEffect(() => { setLocalStatus(project?.status); }, [project?.status]);
+
+  if (!project) return null;
+
+  const tc = '#2E6DA4';
+
+  const handleStatusChange = async (newStatus) => {
+    setLocalStatus(newStatus);
+    await onStatusChange(project.id, newStatus);
+  };
+
+  const handleRequestPDF = async () => {
+    setReqPdfLoading(true);
+    try { await generateProjectRequestPDF({ ...project, status: localStatus }); }
+    catch (err) { alert('PDF error: ' + err.message); }
+    finally { setReqPdfLoading(false); }
+  };
+
+  const handleProposalPDF = async () => {
+    setPropPdfLoading(true);
+    try { await generateProjectProposalPDF({ ...project, status: localStatus }); }
+    catch (err) { alert('PDF error: ' + err.message); }
+    finally { setPropPdfLoading(false); }
+  };
+
+  const Sec = ({ title, children }) => (
+    <div style={ms.section}>
+      <h4 style={{ ...ms.secTitle, color: tc }}>{title}</h4>
+      {children}
+    </div>
+  );
+  const Row = ({ label, val }) => val
+    ? <div style={ms.row}><span style={ms.label}>{label}</span><span style={ms.val}>{val}</span></div>
+    : null;
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={ms.modal} onClick={e => e.stopPropagation()}>
+        {/* Modal header */}
+        <div style={{ ...ms.header, borderTop: `4px solid ${tc}` }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{project.projectTitle}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+              {project.companyName} · {project.contactName}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ProjectBadge status={localStatus} />
+            <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+          </div>
+        </div>
+
+        {/* Action bar */}
+        <div style={ms.actionBar}>
+          <button
+            style={{ ...ms.actionBtn, background: '#FEF3C7', color: '#92400E', opacity: localStatus === 'Reviewing' ? 0.45 : 1 }}
+            onClick={() => handleStatusChange('Reviewing')}
+            disabled={localStatus === 'Reviewing' || statusUpdating}
+          >
+            🔍 Reviewing
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#D1FAE5', color: '#065F46', opacity: localStatus === 'Accepted' ? 0.45 : 1 }}
+            onClick={() => handleStatusChange('Accepted')}
+            disabled={localStatus === 'Accepted' || statusUpdating}
+          >
+            ✅ Accept
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#FEE2E2', color: '#991B1B', opacity: localStatus === 'Declined' ? 0.45 : 1 }}
+            onClick={() => handleStatusChange('Declined')}
+            disabled={localStatus === 'Declined' || statusUpdating}
+          >
+            ✗ Decline
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }}
+            onClick={handleRequestPDF}
+            disabled={reqPdfLoading}
+          >
+            {reqPdfLoading ? '⏳ Generating…' : '⬇ Request PDF'}
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#EDE9FE', color: '#5B21B6' }}
+            onClick={handleProposalPDF}
+            disabled={propPdfLoading}
+          >
+            {propPdfLoading ? '⏳ Generating…' : '⬇ Proposal PDF'}
+          </button>
+          {project.fileUrl && (
+            <a
+              href={project.fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#4A6B8A', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+            >
+              📎 View Attachment
+            </a>
+          )}
+        </div>
+
+        {/* Scrollable body */}
+        <div style={ms.body}>
+          <Sec title="Client & Contact">
+            <Row label="Company"   val={project.companyName} />
+            <Row label="Website"   val={project.companyWebsite} />
+            <Row label="Contact"   val={`${project.contactName} · ${project.contactEmail} · ${project.contactPhone}`} />
+            {project.signatoryName && (
+              <Row label="Signatory" val={`${project.signatoryName}${project.signatoryTitle ? ' — ' + project.signatoryTitle : ''}`} />
+            )}
+          </Sec>
+
+          <Sec title="Project Overview">
+            <Row label="Description"  val={project.projectDescription} />
+            <Row label="Objectives"   val={(project.objectives || []).join(' · ')} />
+            <Row label="Audience"     val={project.targetAudience} />
+            <Row label="Challenges"   val={project.currentChallenges} />
+          </Sec>
+
+          <Sec title="Scope">
+            <Row label="Deliverables"     val={(project.deliverables || []).join(' · ')} />
+            <Row label="Technical Reqs"   val={project.technicalRequirements} />
+            <Row label="Brand Assets"     val={project.brandAssets} />
+          </Sec>
+
+          <Sec title="Timeline & Budget">
+            <Row label="Start Date" val={project.startDate} />
+            <Row label="Deadline"   val={project.hardDeadline} />
+            <Row label="Budget"     val={project.budgetRange} />
+          </Sec>
+
+          <Sec title="Success Metrics">
+            <Row label="KPIs"        val={project.kpis} />
+            <Row label="Inspiration" val={(project.inspirationLinks || []).join(' · ')} />
+          </Sec>
+
+          <Sec title="Logistics">
+            <Row label="Referral Source" val={project.referralSource} />
+            <Row label="Attachment"      val={project.fileName} />
+          </Sec>
+
+          <Sec title="Submission">
+            <Row label="Reference" val={project.id?.slice(0, 12).toUpperCase()} />
+            <Row label="Submitted" val={project.submittedAt?.toDate ? project.submittedAt.toDate().toLocaleString('en-UG') : '—'} />
+            <Row label="Status"    val={localStatus} />
+          </Sec>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 const LoginScreen = ({ onLogin }) => {
   const [email, setEmail]       = useState('');
@@ -398,12 +564,26 @@ const Admin = () => {
   const [toggling, setToggling]       = useState(null);
   const [selected, setSelected]       = useState(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [loadingApps, setLoadingApps] = useState(true);
   const [trackFilter, setTrackFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [search, setSearch]           = useState('');
   const [appsError, setAppsError]     = useState(null);
   const [settingsError, setSettingsError] = useState(null);
+
+  // ── Top-level dashboard tab: Applications vs Project Requests ──────────────
+  const [dashTab, setDashTab] = useState('applications'); // 'applications' | 'projects'
+
+  // ── Project Requests state (mirrors applications state) ───────────────────
+  const [projectRequests, setProjectRequests]     = useState([]);
+  const [loadingProjects, setLoadingProjects]     = useState(true);
+  const [projectsError, setProjectsError]         = useState(null);
+  const [selectedProject, setSelectedProject]     = useState(null);
+  const [projectStatusFilter, setProjectStatusFilter] = useState('All');
+  const [projectSearch, setProjectSearch]         = useState('');
+  const [projectStatusUpdating, setProjectStatusUpdating] = useState(false);
+  const [deletingProjectId, setDeletingProjectId] = useState(null);
 
   // Auth state listener
   useEffect(() => {
@@ -477,10 +657,69 @@ const Admin = () => {
     return () => { unsubApps(); unsubSettings(); };
   }, [user]);
 
-  const handleLogout = async () => {
-    try { await signOut(auth); }
-    catch (err) { console.error('Logout error:', err); }
-  };
+  // ── Project Requests listener — only when logged in ───────────────────────
+  useEffect(() => {
+    if (!user) {
+      setProjectRequests([]);
+      setProjectsError(null);
+      return;
+    }
+    setLoadingProjects(true);
+
+    const unsubProjects = onSnapshot(
+      collection(db, 'projectRequests'),
+      (snap) => {
+        setProjectsError(null);
+        setProjectRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoadingProjects(false);
+      },
+      (err) => {
+        console.error('Project requests listen error:', err);
+        setProjectsError(err.code === 'permission-denied'
+          ? 'Permission denied reading project requests. Check your Firestore Security Rules.'
+          : 'Could not load project requests: ' + err.message);
+        setLoadingProjects(false);
+      }
+    );
+
+    return () => unsubProjects();
+  }, [user]);
+
+  // ── Secure sign-out ──────────────────────────────────────────────────────
+  // 1. Confirms intent (prevents accidental sign-out mid-review).
+  // 2. Clears all locally-held sensitive state BEFORE calling signOut, so
+  //    no applicant/project data lingers in memory or briefly re-renders
+  //    after the auth listener fires.
+  // 3. Calls Firebase signOut, which invalidates the session token client-side
+  //    and clears Firebase's persisted auth state (IndexedDB/localStorage).
+  // 4. onAuthStateChanged (already wired above) will catch the null user and
+  //    redirect to <LoginScreen /> automatically.
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = useCallback(async () => {
+    const confirmed = window.confirm('Sign out of the Admin Portal?');
+    if (!confirmed) return;
+
+    setLoggingOut(true);
+    try {
+      // Wipe sensitive state immediately — don't wait on the network call.
+      setApplications([]);
+      setProjectRequests([]);
+      setTrackStatuses({});
+      setSelected(null);
+      setSelectedProject(null);
+      setSearch('');
+      setProjectSearch('');
+
+      await signOut(auth);
+      // user/auth listener will flip `user` to null and render LoginScreen.
+    } catch (err) {
+      console.error('Logout error:', err);
+      alert('Sign out failed: ' + err.message + '\n\nPlease check your connection and try again.');
+    } finally {
+      setLoggingOut(false);
+    }
+  }, []);
 
   const toggleTrackStatus = async (trackKey, currentStatus) => {
     setToggling(trackKey);
@@ -550,6 +789,64 @@ const Admin = () => {
     }
   }, [applications]);
 
+  const updateProjectStatus = useCallback(async (id, status) => {
+    setProjectStatusUpdating(true);
+    try {
+      await updateDoc(doc(db, 'projectRequests', id), { status });
+      setSelectedProject(prev => prev?.id === id ? { ...prev, status } : prev);
+
+      // Optional: notify the client by email on Accept/Decline
+      const proj = projectRequests.find(p => p.id === id);
+      if (proj && (status === 'Accepted' || status === 'Declined')) {
+        const emailType = status === 'Accepted' ? 'project_accepted' : 'project_declined';
+        fetch(`${API_URL}/api/send-email`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type:    emailType,
+            to:      proj.contactEmail,
+            name:    proj.contactName,
+            program: proj.projectTitle,
+          }),
+        }).catch(err => console.warn('[Email] Project status email failed:', err));
+      }
+    } catch (err) {
+      console.error('updateProjectStatus error:', err);
+      alert('Status update failed: ' + err.message);
+    } finally {
+      setProjectStatusUpdating(false);
+    }
+  }, [projectRequests]);
+
+  const deleteApplication = useCallback(async (id, fullName) => {
+    if (!window.confirm(`Delete the application from "${fullName || 'this applicant'}"? This cannot be undone.`)) return;
+    setDeletingId(id);
+    try {
+      await deleteDoc(doc(db, 'applications', id));
+      // Close the modal if the deleted record is currently open.
+      setSelected(prev => prev?.id === id ? null : prev);
+    } catch (err) {
+      console.error('deleteApplication error:', err);
+      alert('Delete failed: ' + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  }, []);
+
+  const deleteProject = useCallback(async (id, companyName) => {
+    if (!window.confirm(`Delete the project request from "${companyName || 'this company'}"? This cannot be undone.`)) return;
+    setDeletingProjectId(id);
+    try {
+      await deleteDoc(doc(db, 'projectRequests', id));
+      setSelectedProject(prev => prev?.id === id ? null : prev);
+    } catch (err) {
+      console.error('deleteProject error:', err);
+      alert('Delete failed: ' + err.message);
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }, []);
+
   // ── Loading auth ──
   if (authLoading) {
     return (
@@ -581,27 +878,77 @@ const Admin = () => {
     Unqualified: applications.filter(a => a.status === 'Unqualified').length,
   };
 
+  // ── Project Requests derived data ──────────────────────────────────────────
+  const displayedProjects = projectRequests
+    .filter(p => projectStatusFilter === 'All' || p.status === projectStatusFilter)
+    .filter(p => {
+      const q = projectSearch.trim().toLowerCase();
+      return !q
+        || p.companyName?.toLowerCase().includes(q)
+        || p.contactName?.toLowerCase().includes(q)
+        || p.contactEmail?.toLowerCase().includes(q)
+        || p.projectTitle?.toLowerCase().includes(q);
+    })
+    .sort((a, b) => (b.submittedAt?.toDate?.() || 0) - (a.submittedAt?.toDate?.() || 0));
+
+  const projectCounts = {
+    All:        projectRequests.length,
+    New:        projectRequests.filter(p => p.status === 'New').length,
+    Reviewing:  projectRequests.filter(p => p.status === 'Reviewing').length,
+    Accepted:   projectRequests.filter(p => p.status === 'Accepted').length,
+    Declined:   projectRequests.filter(p => p.status === 'Declined').length,
+  };
+
   return (
     <Layout>
       <div style={s.page}>
         {/* Permission / connection error banners */}
-        {settingsError && (
+        {settingsError && dashTab === 'applications' && (
           <div style={s.errorBanner}>⚠️ Track Settings: {settingsError}</div>
         )}
-        {appsError && (
+        {appsError && dashTab === 'applications' && (
           <div style={s.errorBanner}>⚠️ Applications: {appsError}</div>
+        )}
+        {projectsError && dashTab === 'projects' && (
+          <div style={s.errorBanner}>⚠️ Project Requests: {projectsError}</div>
         )}
 
         {/* Top bar */}
         <div style={s.topBar}>
           <div>
-            <h1 style={s.pageTitle}>Applications Dashboard</h1>
+            <h1 style={s.pageTitle}>
+              {dashTab === 'applications' ? 'Applications Dashboard' : 'Project Proposals Dashboard'}
+            </h1>
             <p style={s.pageSub}>
-              {counts.All} total · {counts.Shortlisted} shortlisted · {counts.Pending} pending · {counts.Unqualified} unqualified
+              {dashTab === 'applications'
+                ? `${counts.All} total · ${counts.Shortlisted} shortlisted · ${counts.Pending} pending · ${counts.Unqualified} unqualified`
+                : `${projectCounts.All} total · ${projectCounts.New} new · ${projectCounts.Reviewing} reviewing · ${projectCounts.Accepted} accepted`}
             </p>
           </div>
-          <button style={s.logoutBtn} onClick={handleLogout}>Sign Out ⎋</button>
+          <button style={s.logoutBtn} onClick={handleLogout} disabled={loggingOut}>
+            {loggingOut ? 'Signing out…' : 'Sign Out ⎋'}
+          </button>
         </div>
+
+        {/* ── Top-level dashboard switcher ── */}
+        <div style={s.dashSwitcher}>
+          <button
+            style={{ ...s.dashTab, ...(dashTab === 'applications' ? s.dashTabActive : {}) }}
+            onClick={() => setDashTab('applications')}
+          >
+            👤 Applications <span style={s.tabCount}>{counts.All}</span>
+          </button>
+          <button
+            style={{ ...s.dashTab, ...(dashTab === 'projects' ? s.dashTabActive : {}) }}
+            onClick={() => setDashTab('projects')}
+          >
+            📋 Project Proposals <span style={s.tabCount}>{projectCounts.All}</span>
+            {projectCounts.New > 0 && <span style={s.newPill}>{projectCounts.New} new</span>}
+          </button>
+        </div>
+
+        {dashTab === 'applications' ? (
+        <>
 
         {/* Intake control */}
         <h2 style={s.sectionHead}>Position Intake Control</h2>
@@ -719,6 +1066,13 @@ const Admin = () => {
                             Reject
                           </button>
                           <button style={s.btnView} onClick={() => setSelected(app)}>View</button>
+                          <button
+                            style={{ ...s.btnDelete, opacity: deletingId === app.id ? 0.5 : 1 }}
+                            onClick={() => deleteApplication(app.id, app.fullName)}
+                            disabled={deletingId === app.id}
+                          >
+                            Delete
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -728,14 +1082,122 @@ const Admin = () => {
             </table>
           )}
         </div>
+        </>
+        ) : (
+        <>
+
+        {/* ── PROJECT REQUESTS TAB ── */}
+        <h2 style={s.sectionHead}>Received Project Proposals</h2>
+
+        {/* Filters toolbar */}
+        <div style={s.toolbar}>
+          <div style={s.tabs}>
+            {['All', 'New', 'Reviewing', 'Accepted', 'Declined'].map(st => {
+              const cfg = PROJECT_STATUS_CONFIG[st];
+              return (
+                <button
+                  key={st}
+                  style={{ ...s.tab, ...(projectStatusFilter === st ? (cfg ? { background: cfg.bg, color: cfg.color, borderColor: cfg.dot } : s.tabActive) : {}) }}
+                  onClick={() => setProjectStatusFilter(st)}
+                >
+                  {st} <span style={s.tabCount}>{projectCounts[st]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <input
+            style={s.searchInput}
+            placeholder="Search company, contact, or project title…"
+            value={projectSearch}
+            onChange={e => setProjectSearch(e.target.value)}
+          />
+        </div>
+
+        {/* Project Requests table */}
+        <div style={s.tableWrap}>
+          {loadingProjects ? (
+            <div style={s.tableMsg}>Loading project requests…</div>
+          ) : displayedProjects.length === 0 ? (
+            <div style={s.tableMsg}>No project proposals match your filters.</div>
+          ) : (
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  <th style={s.th}>Company / Project</th>
+                  <th style={s.th}>Contact</th>
+                  <th style={s.th}>Budget</th>
+                  <th style={s.th}>Status</th>
+                  <th style={s.th}>Submitted</th>
+                  <th style={s.th}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedProjects.map(proj => (
+                  <tr key={proj.id} style={s.tr}>
+                    <td style={s.td}>
+                      <button style={s.nameBtn} onClick={() => setSelectedProject(proj)}>
+                        {proj.companyName}
+                      </button>
+                      <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{proj.projectTitle}</div>
+                    </td>
+                    <td style={s.td}>
+                      <span style={{ fontSize: 13, color: '#1A3C5E', fontWeight: 600 }}>{proj.contactName}</span>
+                      <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{proj.contactEmail}</div>
+                    </td>
+                    <td style={{ ...s.td, fontSize: 13, whiteSpace: 'nowrap' }}>{proj.budgetRange || '—'}</td>
+                    <td style={s.td}><ProjectBadge status={proj.status} /></td>
+                    <td style={{ ...s.td, fontSize: 12, color: '#7A8A9A', whiteSpace: 'nowrap' }}>
+                      {proj.submittedAt?.toDate ? proj.submittedAt.toDate().toLocaleDateString('en-UG') : '—'}
+                    </td>
+                    <td style={s.td}>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          style={{ ...s.btnShortlist, opacity: proj.status === 'Accepted' ? 0.45 : 1 }}
+                          onClick={() => updateProjectStatus(proj.id, 'Accepted')}
+                          disabled={proj.status === 'Accepted' || projectStatusUpdating}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          style={{ ...s.btnReject, opacity: proj.status === 'Declined' ? 0.45 : 1 }}
+                          onClick={() => updateProjectStatus(proj.id, 'Declined')}
+                          disabled={proj.status === 'Declined' || projectStatusUpdating}
+                        >
+                          Decline
+                        </button>
+                        <button style={s.btnView} onClick={() => setSelectedProject(proj)}>View</button>
+                        <button
+                          style={{ ...s.btnDelete, opacity: deletingProjectId === proj.id ? 0.5 : 1 }}
+                          onClick={() => deleteProject(proj.id, proj.companyName)}
+                          disabled={deletingProjectId === proj.id}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        </>
+        )}
       </div>
 
-      {/* Detail modal */}
+      {/* Detail modals */}
       <DetailModal
         app={selected}
         onClose={() => setSelected(null)}
         onStatusChange={updateStatus}
         statusUpdating={statusUpdating}
+      />
+      <ProjectDetailModal
+        project={selectedProject}
+        onClose={() => setSelectedProject(null)}
+        onStatusChange={updateProjectStatus}
+        statusUpdating={projectStatusUpdating}
       />
     </Layout>
   );
@@ -757,7 +1219,13 @@ const s = {
   topBar:      { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, flexWrap: 'wrap', gap: 12 },
   pageTitle:   { fontSize: 26, fontWeight: 700, color: '#1A3C5E', margin: 0 },
   pageSub:     { color: '#5A7A9A', margin: '4px 0 0', fontSize: 14 },
-  logoutBtn:   { padding: '8px 16px', background: '#fff', border: '1.5px solid #C5CDD6', color: '#4A6B8A', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  logoutBtn:   { padding: '8px 16px', background: '#fff', border: '1.5px solid #C5CDD6', color: '#4A6B8A', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: 1, transition: 'opacity 0.15s' },
+
+  dashSwitcher: { display: 'flex', gap: 8, marginBottom: 28, borderBottom: '2px solid #E2E8F0', paddingBottom: 0 },
+  dashTab:      { display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', borderBottom: '3px solid transparent', padding: '10px 4px 12px', fontSize: 14, fontWeight: 700, color: '#7A8A9A', cursor: 'pointer', marginBottom: -2 },
+  dashTabActive:{ color: '#1A3C5E', borderBottomColor: '#1A3C5E' },
+  newPill:      { background: '#FEE2E2', color: '#991B1B', borderRadius: 20, padding: '2px 8px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4 },
+
   sectionHead: { fontSize: 15, fontWeight: 700, color: '#1A3C5E', margin: '0 0 14px' },
   trackGrid:   { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 },
 
@@ -779,6 +1247,7 @@ const s = {
   btnShortlist:{ background: '#D1FAE5', color: '#065F46', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnReject:   { background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnView:     { background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnDelete:   { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 };
 
 const tt = {

@@ -393,20 +393,26 @@ const Terms = () => {
             <section className="pp-section">
               
               {/* Card 1 */}
-              <div className="pp-legal-card" id="sec-about">
-                <h3><i className="fas fa-info-circle"></i> 1. About Us</h3>
-                <p>
-                  Slirus Holdings Limited is a Ugandan-registered company (URSB) operating as a technology-led holding company with specialized business focus areas and subsidiaries in:
-                </p>
-                <ul>
-                  <li>Information Technology (Slirus Technologies)</li>
-                  <li>Financial Services (Mobile Money &amp; Agent Banking)</li>
-                  <li>Fashion &amp; Garment Retail</li>
-                </ul>
-                <p>
-                  Our premier core digital product architectures include <strong>SlirusPay</strong>, <strong>SlirusManage</strong>, and <strong>SlirusFashion</strong>.
-                </p>
-              </div>
+             <div className="pp-legal-card" id="sec-about">
+  <h3><i className="fas fa-info-circle"></i> 1. About Us</h3>
+  <p>
+    Slirus Holdings Limited is a Ugandan-registered technology company (URSB). We develop practical, locally relevant digital solutions that solve real challenges faced by Ugandan businesses, schools, and community organizations.
+  </p>
+  <p>
+    Our core digital platforms are designed for the Ugandan context working reliably online and offline, on low-bandwidth networks, and on affordable devices.
+  </p>
+  <p>
+    Our flagship products include:
+  </p>
+  <ul>
+    <li><strong>RadiExpense</strong>. Intelligent corporate expense management system for businesses</li>
+    <li><strong>RadiLearn</strong>. Complete school management and e-learning platform for academic institutions</li>
+    <li><strong>RadiLink</strong>. All-in-one membership and management platform for clubs, SACCOs, and associations</li>
+  </ul>
+  <p>
+    Built in Uganda for Uganda, Slirus is committed to creating secure, trustworthy, and easy-to-use tools that help organizations manage their operations more efficiently while maintaining the highest standards of data protection and privacy.
+  </p>
+</div>
 
               {/* Card 2 */}
               <div className="pp-legal-card" id="sec-acceptance">
@@ -429,18 +435,24 @@ const Terms = () => {
 
               {/* Card 4 */}
               <div className="pp-legal-card" id="sec-services">
-                <h3><i className="fas fa-cubes"></i> 4. Our Services</h3>
-                <p>We actively deliver and support:</p>
-                <ul>
-                  <li>Custom software development and enterprise IT solutions</li>
-                  <li>Mobile money transactional routing and agent platform layouts (<strong>SlirusPay</strong>)</li>
-                  <li>Business metrics tracking and ERP tooling infrastructures (<strong>SlirusManage</strong>)</li>
-                  <li>Fashion retail points, operational inventory systems, and e-commerce setups (<strong>SlirusFashion</strong>)</li>
-                </ul>
-                <p>
-                  All services are systematically distributed on an “as is” and “as available” operational metric framework with no warranties.
-                </p>
-              </div>
+  <h3><i className="fas fa-cubes"></i> 4. Our Services</h3>
+  <p>We develop and support secure, reliable digital platforms specifically built for the Ugandan market:</p>
+  <ul>
+    <li><strong>RadiExpense</strong>. Intelligent expense management system for businesses and organizations</li>
+    <li><strong>RadiLearn</strong>. Comprehensive school management and e-learning platform for academic institutions</li>
+    <li><strong>RadiLink</strong>. All-in-one membership management system for clubs, SACCOs, and associations</li>
+  </ul>
+  <p>
+    In addition to our core products, we also offer:
+  </p>
+  <ul>
+    <li>Custom software development and enterprise IT solutions</li>
+    <li>Technical support, training, and ongoing system maintenance</li>
+  </ul>
+  <p>
+    All our services are provided on an “as is” and “as available” basis, subject to the terms outlined in this Privacy Policy and our Service Level Agreements.
+  </p>
+</div>
 
               {/* Card 5 */}
               <div className="pp-legal-card" id="sec-conduct">

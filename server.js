@@ -35,9 +35,6 @@ const PORT              = process.env.PORT              || 3001;
 const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@slirus.com>';
 // Project requests are sent on behalf of the general Slirus inbox, not HR.
 const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holding <info@slirus.com>';
-// New team-account credentials are sent on behalf of Systems/IT, not HR or
-// the general inbox — keeps password-bearing mail in its own reputation lane.
-const ACCOUNTS_FROM     = process.env.RESEND_FROM_ACCOUNTS || 'Slirus Systems <accounts@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
 
 // Base URL of the deployed frontend, used to build the "Sign in" link in the
@@ -681,7 +678,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             right away.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
-            Warm regards,<br /><strong style="color:#475569;">Slirus Systems Team</strong>
+            Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
           </p>`,
       };
     }
@@ -728,13 +725,12 @@ app.post('/api/send-email', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to build email content.' });
   }
 
-  // Recruitment mail keeps the HR sender; client-facing project mail comes
-  // from the general inbox; account credentials come from Systems/IT — each
-  // with its own reply-to and header department label.
+  // Recruitment mail and account-provisioning mail both go out from HR;
+  // client-facing project mail comes from the general inbox.
   const isProjectEmail = PROJECT_EMAIL_TYPES.has(type);
-  const senderAddress  = isAccountEmail ? ACCOUNTS_FROM : isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
-  const department_    = isAccountEmail ? 'Account Provisioning' : isProjectEmail ? 'Client Relations' : 'HR Department';
-  const replyToAddress = isAccountEmail ? 'support@slirus.com' : isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
+  const senderAddress  = isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
+  const department_    = isProjectEmail ? 'Client Relations' : 'HR Department';
+  const replyToAddress = isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
 
   try {
     const html      = buildEmailHtml(content.title, content.body, department_, to);
@@ -810,7 +806,6 @@ app.listen(PORT, () => {
   console.log(`  Email via   : Resend`);
   console.log(`  From (HR)   : ${FROM_ADDRESS}`);
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
-  console.log(`  From (Acct) : ${ACCOUNTS_FROM}`);
   console.log(`  Portal base : ${PORTAL_BASE_URL}`);
   console.log('─────────────────────────────────────────');
   console.log('  Deliverability checklist (DNS required):');

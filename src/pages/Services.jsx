@@ -440,8 +440,8 @@ const Services = () => {
       <div className="services-cta">
         <h2>Ready to Work With Us?</h2>
         <p>Get in touch and let's discuss how Slirus can support your goals.</p>
-        <a href="mailto:sales@slirus.com">
-          Contact Us <i className="fas fa-arrow-right"></i>
+        <a href="/start-project">
+          Submit Proposal and Service Request <i className="fas fa-arrow-right"></i>
         </a>
       </div>
     </Layout>
