@@ -37,7 +37,8 @@ import 'dotenv/config';
 import express    from 'express';
 import { Resend } from 'resend';
 import cors       from 'cors';
-import admin      from 'firebase-admin';
+import { initializeApp as initFirebaseAdmin, cert as firebaseCert } from 'firebase-admin/app';
+import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
 
 // ─── Validate required environment variables on startup ───────────────────────
 const REQUIRED_ENV = ['RESEND_API_KEY'];
@@ -141,6 +142,7 @@ console.log('[Email] ✅ Resend client initialized');
 // Optional by design: if it's not configured, /api/send-email keeps working
 // as normal and only the three user-management routes below respond 503.
 let firebaseAdminReady = false;
+let adminAuth = null;
 try {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
@@ -148,7 +150,8 @@ try {
   // some hosts mangle the multi-line "private_key" field in plain env vars.
   const jsonStr = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
   const serviceAccount = JSON.parse(jsonStr);
-  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  const firebaseApp = initFirebaseAdmin({ credential: firebaseCert(serviceAccount) });
+  adminAuth = getFirebaseAdminAuth(firebaseApp);
   firebaseAdminReady = true;
   console.log('[Server] ✅ Firebase Admin initialized — user-management endpoints active');
 } catch (err) {
@@ -167,7 +170,7 @@ const verifyCeoAuth = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Missing or malformed Authorization header.' });
   }
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await adminAuth.verifyIdToken(token);
     if ((decoded.email || '').toLowerCase() !== CEO_EMAIL) {
       return res.status(403).json({ success: false, message: 'Only the CEO account may perform this action.' });
     }
@@ -859,7 +862,7 @@ app.post('/api/create-user', verifyCeoAuth, async (req, res) => {
   }
 
   try {
-    const userRecord = await admin.auth().createUser({
+    const userRecord = await adminAuth.createUser({
       email,
       password,
       displayName: name,
@@ -891,7 +894,7 @@ app.post('/api/set-user-disabled', verifyCeoAuth, async (req, res) => {
   }
 
   try {
-    await admin.auth().updateUser(uid, { disabled });
+    await adminAuth.updateUser(uid, { disabled });
     console.log(`[Users] ${disabled ? '⛔ Disabled' : '✅ Re-enabled'} uid "${uid}" — by ${req.callerEmail}`);
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -914,7 +917,7 @@ app.post('/api/delete-user', verifyCeoAuth, async (req, res) => {
   }
 
   try {
-    await admin.auth().deleteUser(uid);
+    await adminAuth.deleteUser(uid);
     console.log(`[Users] 🗑️  Deleted uid "${uid}" — by ${req.callerEmail}`);
     return res.status(200).json({ success: true });
   } catch (err) {
