@@ -718,7 +718,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
                     <td style="padding:4px 0;font-size:14px;color:#1e293b;">${extra.to || ''}</td>
                   </tr>
                   <tr>
-                    <td style="padding:4px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;">Temporary password</td>
+                    <td style="padding:4px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;">User Password</td>
                     <td style="padding:4px 0;font-size:15px;font-family:'Courier New',Courier,monospace;color:#1e293b;font-weight:700;letter-spacing:0.4px;">${password}</td>
                   </tr>
                 </table>
