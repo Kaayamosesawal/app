@@ -63,18 +63,18 @@ const CEO_EMAIL = (process.env.CEO_EMAIL || 'kaayamosesawal@gmail.com').toLowerC
 // Base URL of the deployed frontend, used to build the "Sign in" link in the
 // account-provisioning email. Falls back to CLIENT_ORIGIN (already required
 // for CORS) so no new env var is strictly needed in most deployments.
-const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || process.env.CLIENT_ORIGIN || 'https://slirus.web.app').replace(/\/$/, '');
+const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || process.env.CLIENT_ORIGIN || 'https://slirus.com').replace(/\/$/, '');
 
 // Department → portal route. Update these paths if your router uses
 // different slugs; this is the single place that mapping lives.
 const DEPARTMENT_PORTAL_PATHS = {
-  Sales:       '/sales',
-  HR:          '/hr',
-  Finance:     '/accounts',
-  Operations:  '/secretary',
-  Engineering: '/worker',
-  Marketing:   '/worker',
-  Executive:   '/ceo',
+  Sales:       '/sales-manager',
+  HR:          '/hr-manager',
+  Finance:     '/accounts-manager',
+  Operations:  '/secretary-manager',
+  Engineering: '/worker-log',
+  Marketing:   '/worker-log',
+  Executive:   '/ceo-manager',
 };
 const portalUrlFor = (department) => `${PORTAL_BASE_URL}${DEPARTMENT_PORTAL_PATHS[department] || '/login'}`;
 
@@ -467,7 +467,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     '',
     divider,
     `© ${year} Slirus Holdings`,
-    'Plot 14, Parliament Avenue, Kampala, Uganda',
+    'P.O Box 331921, Lira, Uganda',
     'info@slirus.com  |  https://slirus.com',
     '',
     type === 'account_created'
