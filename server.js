@@ -1,8 +1,8 @@
 /**
- * server.js – Slirus Holdings Email API Server
+ * server.js – Slirus Holdingssss Email API Server
  *
  * Production-ready Node.js/Express server that handles all transactional
- * emails for the Slirus Holdings recruitment platform, plus the small set
+ * emails for the Slirus Holdingssss recruitment platform, plus the small set
  * of privileged Firebase Auth operations the CEO Control Center needs
  * (CeoManager.jsx) to provision team accounts.
  *
@@ -53,7 +53,7 @@ if (missingEnv.length > 0) {
 const PORT              = process.env.PORT              || 3001;
 const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@slirus.com>';
 // Project requests are sent on behalf of the general Slirus inbox, not HR.
-const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holding <info@slirus.com>';
+const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Holdingsss <info@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
 
 // UX-gate email on the client (CeoManager.jsx) mirrors this — but this is the
@@ -227,7 +227,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
        Pad with spaces/zero-width chars so nothing bleeds into the visible email. -->
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;
               font-size:1px;line-height:1px;color:#f4f4f5;">
-    ${title} - Slirus Holding · Official Correspondence
+    ${title} - Slirus Holdingsss · Official Correspondence
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
     &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
@@ -253,7 +253,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
               <tr>
                 <td style="padding-right:10px;vertical-align:middle;">
                   <img src="https://raw.githubusercontent.com/Kaayamosesawal/images/main/slirus_1.png"
-                       alt="Slirus Holding"
+                       alt="Slirus Holdingsss"
                        width="48" height="48"
                        style="display:block;border-radius:50%;border:2px solid #e2e8f0;
                               object-fit:cover;outline:none;text-decoration:none;
@@ -262,7 +262,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
                 <td style="vertical-align:middle;">
                   <p style="margin:0;font-size:17px;font-weight:700;color:#1e293b;
                             letter-spacing:-0.3px;font-family:Arial,Helvetica,sans-serif;">
-                    Slirus <span style="color:#475569;font-weight:400;">Holding</span>
+                    Slirus <span style="color:#475569;font-weight:400;">Holdingsss</span>
                   </p>
                   <p style="margin:2px 0 0;font-size:10px;font-weight:700;letter-spacing:2px;
                             color:#94a3b8;text-transform:uppercase;
@@ -315,7 +315,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
                      background-color:#f8fafc;border-top:1px solid #f1f5f9;">
             <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#475569;
                       font-family:Arial,Helvetica,sans-serif;">
-              Slirus Holdings
+              Slirus Holdingssss
             </p>
             <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
@@ -323,7 +323,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
             </p>
             <p style="margin:0 0 10px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
-              &copy; ${new Date().getFullYear()} Slirus Holding. All rights reserved.
+              &copy; ${new Date().getFullYear()} Slirus Holdingsss. All rights reserved.
             </p>
             <p style="margin:0 0 8px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
@@ -363,7 +363,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     account_created: [
       `Dear ${name},`,
       '',
-      `An account has been created for you on the Slirus Holding internal portal`,
+      `An account has been created for you on the Slirus Holdingsss internal portal`,
       `(${extra.department || 'General'} · ${extra.role || 'Staff'}).`,
       '',
       'Your login details:',
@@ -381,18 +381,18 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       `Dear ${name},`,
       '',
       `We have successfully received your application for the ${program} position`,
-      'at Slirus Holding. Thank you for the time and effort you invested.',
+      'at Slirus Holdingsss. Thank you for the time and effort you invested.',
       '',
       'Our hiring team is reviewing all profiles and will contact you directly',
       'if your background aligns with our current needs.',
       '',
-      'Thank you for your patience and for considering a career with Slirus Holding.',
+      'Thank you for your patience and for considering a career with Slirus Holdingsss.',
     ],
     shortlisted: [
       `Dear ${name},`,
       '',
       `Congratulations — you have been nominated for the ${program} position`,
-      'at Slirus Holding.',
+      'at Slirus Holdingsss.',
       '',
       'A member of our HR team will contact you shortly to discuss next steps,',
       'including scheduling an interview.',
@@ -402,7 +402,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     unqualified: [
       `Dear ${name},`,
       '',
-      `Thank you for applying for the ${program} position at Slirus Holding.`,
+      `Thank you for applying for the ${program} position at Slirus Holdingsss.`,
       '',
       'After careful review, we regret to inform you that your application will',
       'not be progressing further at this time, as your current background does',
@@ -414,7 +414,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     position_closed: [
       `Dear ${name},`,
       '',
-      `Thank you for your interest in the ${program} position at Slirus Holding.`,
+      `Thank you for your interest in the ${program} position at Slirus Holdingsss.`,
       '',
       'We regret to inform you that we are no longer accepting applications for',
       'this role, as the recruitment process has been formally closed.',
@@ -440,12 +440,12 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       'A member of our team will be in touch shortly to discuss next steps,',
       'including scope confirmation, timeline alignment, and contract details.',
       '',
-      'Thank you for trusting Slirus Holding with your project.',
+      'Thank you for trusting Slirus Holdingsss with your project.',
     ],
     project_declined: [
       `Dear ${name},`,
       '',
-      `Thank you for considering Slirus Holding for: ${program}.`,
+      `Thank you for considering Slirus Holdingsss for: ${program}.`,
       '',
       'After careful review, we are not able to take on this particular project',
       'at this time. This is in no way a reflection of the value of your project.',
@@ -454,7 +454,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     ],
   };
 
-  const bodyLines = bodies[type] ?? [`Dear ${name},`, '', 'Thank you for contacting Slirus Holding.'];
+  const bodyLines = bodies[type] ?? [`Dear ${name},`, '', 'Thank you for contacting Slirus Holdingsss.'];
 
   return [
     title.toUpperCase(),
@@ -463,15 +463,15 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     ...bodyLines,
     '',
     `Warm regards,`,
-    `Slirus Holding — ${department}`,
+    `Slirus Holdingsss — ${department}`,
     '',
     divider,
-    `© ${year} Slirus Holdings`,
+    `© ${year} Slirus Holdingssss`,
     'P.O Box 331921, Lira, Uganda',
     'info@slirus.com  |  https://slirus.com',
     '',
     type === 'account_created'
-      ? 'You received this because a Slirus Holding administrator created an account for you.'
+      ? 'You received this because a Slirus Holdingsss administrator created an account for you.'
       : 'You received this because you submitted an inquiry or application at slirus.com.',
 
   ].join('\n');
@@ -485,13 +485,13 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'application_received':
       return {
-        subject: `Application Received – ${program} | Slirus Holding`,
+        subject: `Application Received – ${program} | Slirus Holdingsss`,
         title:   'Application Received Successfully',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             We are pleased to confirm that we have successfully received your application
-            for the <strong>${program}</strong> position at Slirus Holding. We sincerely
+            for the <strong>${program}</strong> position at Slirus Holdingsss. We sincerely
             appreciate the time and effort you have invested in your application.
           </p>
           <p>
@@ -506,7 +506,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             discuss the next steps in our recruitment process.
           </p>
           <p style="margin-top:24px;">
-            Thank you for your patience and for considering a career with Slirus Holding.
+            Thank you for your patience and for considering a career with Slirus Holdingsss.
             We wish you the very best in your professional endeavours.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
@@ -516,13 +516,13 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'shortlisted':
       return {
-        subject: `Congratulations — You Have Been Nominated | Slirus Holding`,
+        subject: `Congratulations — You Have Been Nominated | Slirus Holdingsss`,
         title:   'Congratulations! 🎉',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             We are delighted to inform you that you have been <strong>Nominated</strong>
-            for the <strong>${program}</strong> position at Slirus Holding.
+            for the <strong>${program}</strong> position at Slirus Holdingsss.
           </p>
           <p>
             After a comprehensive review of your qualifications, our hiring team has
@@ -536,7 +536,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           </p>
           <p style="margin-top:24px;">
             We look forward to speaking with you soon and thank you for your continued
-            interest in Slirus Holding.
+            interest in Slirus Holdingsss.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
             Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
@@ -545,12 +545,12 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'unqualified':
       return {
-        subject: `Update on Your Application | Slirus Holding`,
+        subject: `Update on Your Application | Slirus Holdingsss`,
         title:   'Update on Your Application',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
-            Thank you for your interest in Slirus Holding and for taking the time to
+            Thank you for your interest in Slirus Holdingsss and for taking the time to
             apply for the <strong>${program}</strong> position.
           </p>
           <p>
@@ -574,13 +574,13 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'position_closed':
       return {
-        subject: `Application Update — Position Closed | Slirus Holding`,
+        subject: `Application Update — Position Closed | Slirus Holdingsss`,
         title:   'Position Currently Closed',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             Thank you for your interest in the <strong>${program}</strong> position at
-            Slirus Holding. We genuinely appreciate the time, effort, and professional
+            Slirus Holdingsss. We genuinely appreciate the time, effort, and professional
             consideration you invested in your application.
           </p>
           <p>
@@ -595,7 +595,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             review your profile for upcoming roles.
           </p>
           <p style="margin-top:24px;">
-            Thank you again for considering a career with Slirus Holding.
+            Thank you again for considering a career with Slirus Holdingsss.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
             Kind regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
@@ -606,12 +606,12 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'project_request_received':
       return {
-        subject: `We've Received Your Project Request — ${program} | Slirus Holding`,
+        subject: `We've Received Your Project Request — ${program} | Slirus Holdingsss`,
         title:   'Thank You for Trusting Slirus',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
-            Thank you for reaching out and choosing <strong>Slirus Holding</strong> to
+            Thank you for reaching out and choosing <strong>Slirus Holdingsss</strong> to
             help bring <strong>${program}</strong> to life. We have successfully received
             your project request, and we sincerely appreciate the trust you've placed in
             our team to support your goals.
@@ -638,7 +638,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'project_accepted':
       return {
-        subject: `Your Project Has Been Accepted — ${program} | Slirus Holding`,
+        subject: `Your Project Has Been Accepted — ${program} | Slirus Holdingsss`,
         title:   'Great News — We\'re On Board! 🎉',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
@@ -653,7 +653,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             started on delivering the best possible outcome for your business.
           </p>
           <p style="margin-top:24px;">
-            Thank you again for trusting Slirus Holding with your project. We look forward
+            Thank you again for trusting Slirus Holdingsss with your project. We look forward
             to a successful partnership.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
@@ -663,12 +663,12 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'project_declined':
       return {
-        subject: `Update on Your Project Request — ${program} | Slirus Holding`,
+        subject: `Update on Your Project Request — ${program} | Slirus Holdingsss`,
         title:   'Update on Your Project Request',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
-            Thank you for considering Slirus Holding for <strong>${program}</strong>, and
+            Thank you for considering Slirus Holdingsss for <strong>${program}</strong>, and
             for taking the time to share the details of your project with us.
           </p>
           <p>
@@ -683,7 +683,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             fit.
           </p>
           <p style="margin-top:24px;">
-            Thank you again for your interest and trust in Slirus Holding.
+            Thank you again for your interest and trust in Slirus Holdingsss.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
             Kind regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
@@ -695,12 +695,12 @@ const buildEmailContent = (type, name, program, extra = {}) => {
     case 'account_created': {
       const { password = '', department = 'General', role = 'Staff', portalUrl = PORTAL_BASE_URL } = extra;
       return {
-        subject: `Your Slirus Holding Account Is Ready | Sign-In Details Inside`,
+        subject: `Your Slirus Holdingsss Account Is Ready | Sign-In Details Inside`,
         title:   'Your Account Has Been Created',
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
-            An account has been created for you on the <strong>Slirus Holding</strong>
+            An account has been created for you on the <strong>Slirus Holdingsss</strong>
             internal portal, giving you access to the tools for your role in
             <strong>${department}</strong> as <strong>${role}</strong>.
           </p>
