@@ -1,5 +1,5 @@
 /**
- * Apply.jsx – Slirus Holdings Career Application
+ * Apply.jsx – Slirus Global Limited Career Application
  *
  * Fully self-contained multi-step application form.
  * Steps: Track Selection → Personal → Contact → Education → Experience → Review & Submit
@@ -120,7 +120,7 @@ const generateApplicationPDF = async (form, track) => {
     row('  Title', r.title); row('  Contact', r.contact); y += 1;
   });
 
-  drawFooter(pdf, { note: 'Slirus Holdings Limited' });
+  drawFooter(pdf, { note: 'Slirus Global Limited Limited' });
 
   pdf.save(`Slirus_Application_${(form.fullName || 'applicant').replace(/\s+/g, '_')}_${track.key}.pdf`);
 };
@@ -191,7 +191,7 @@ const TrackSkeleton = () => (
 const TrackSelector = ({ trackStatuses, statusLoading, onSelect }) => (
   <div style={s.selectorWrap}>
     <div style={s.selectorHeader}>
-      <h1 style={s.selectorTitle}>Careers at Slirus Holdings</h1>
+      <h1 style={s.selectorTitle}>Careers at Slirus Global Limited</h1>
       <p style={s.selectorSub}>Select a position below to begin your application. Open positions are accepting submissions now.</p>
     </div>
     {statusLoading ? (

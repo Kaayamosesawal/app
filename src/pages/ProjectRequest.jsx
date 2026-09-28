@@ -1,5 +1,5 @@
 /**
- * ProjectRequest.jsx – Slirus Holdings Project Request / Proposal Intake
+ * ProjectRequest.jsx – Slirus Global Limited Project Request / Proposal Intake
  *
  * Multi-step client intake form covering:
  *  1. Your Details
@@ -61,6 +61,30 @@ const Textarea = ({ error, ...props }) => (
 
 // ─── Step Bar ─────────────────────────────────────────────────────────────────
 const STEPS = ['Your Details', 'Your Project', 'What You Need', 'Timeline & Budget', 'What Success Looks Like', 'Last Step', 'Review'];
+
+// ─── Service catalogue (all 4 lines — request isn't limited to Software Dev) ──
+const SERVICE_CATEGORIES = [
+  {
+    id: 'Custom Software Development',
+    blurb: 'Tailor-made web and mobile products, enterprise systems, and integrations.',
+    subServices: ['Web Application Development', 'Mobile App Development', 'Enterprise Systems & Automation', 'API & Systems Integration'],
+  },
+  {
+    id: 'IT Consulting & Digital Transformation',
+    blurb: 'Technology strategy, audits, and cloud/digital transformation roadmaps.',
+    subServices: ['IT Audits & System Assessments', 'Digital Transformation Roadmaps', 'Cloud Migration & Adoption', 'IT Corporate Training'],
+  },
+  {
+    id: 'Network Infrastructure Management',
+    blurb: 'Network design, server setup, cabling, and ongoing monitoring & support.',
+    subServices: ['Network Design & Architecture', 'Server Setup & Management', 'Wireless & Structured Cabling', 'Network Monitoring & Support'],
+  },
+  {
+    id: 'Cybersecurity & Data Protection',
+    blurb: 'Security audits, endpoint protection, backups, and incident response.',
+    subServices: ['Security Audits & Risk Assessments', 'Endpoint & Network Security', 'Data Backup & Disaster Recovery', 'Incident Response & Monitoring'],
+  },
+];
 
 const StepBar = ({ step }) => (
   <div style={s.stepBar}>
@@ -185,10 +209,43 @@ const StepClient = ({ form, errors, onChange }) => (
 );
 
 // ─── Step 2: Your Project ──────────────────────────────────────────────────────
-const StepOverview = ({ form, errors, onChange, onChangeArr }) => (
+const StepOverview = ({ form, errors, onChange, onChangeArr }) => {
+  const activeCategory = SERVICE_CATEGORIES.find(c => c.id === form.serviceCategory);
+
+  const toggleSubService = (name) => {
+    const has = form.specificServices.includes(name);
+    onChange('specificServices', has ? form.specificServices.filter(name2 => name2 !== name) : [...form.specificServices, name]);
+  };
+
+  return (
   <div>
     <h3 style={s.sectionTitle}>Your Project</h3>
     <p style={s.sectionHint}>Tell us what you're trying to do, in your own words.</p>
+
+    <Field label="Which Service Are You Interested In?" required hint="We cover software development, IT consulting, network infrastructure, and cybersecurity." error={errors.serviceCategory}>
+      <Select
+        value={form.serviceCategory}
+        error={errors.serviceCategory}
+        onChange={e => { onChange('serviceCategory', e.target.value); onChange('specificServices', []); }}
+      >
+        <option value="">Pick the service that fits best…</option>
+        {SERVICE_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+      </Select>
+      {activeCategory && <span style={s.hint}>{activeCategory.blurb}</span>}
+    </Field>
+
+    {activeCategory && (
+      <Field label="Specific Service(s) You Need" hint="Pick one or more, or leave blank if you're not sure yet — we can help you figure it out.">
+        <div style={s.checkGrid}>
+          {activeCategory.subServices.map(name => (
+            <label key={name} style={s.checkItem}>
+              <input type="checkbox" checked={form.specificServices.includes(name)} onChange={() => toggleSubService(name)} />
+              <span>{name}</span>
+            </label>
+          ))}
+        </div>
+      </Field>
+    )}
 
     <Field label="Give Your Project a Name" required error={errors.projectTitle}>
       <Input value={form.projectTitle} error={errors.projectTitle} onChange={e => onChange('projectTitle', e.target.value)} placeholder="A short name so we both know what to call this" />
@@ -226,7 +283,8 @@ const StepOverview = ({ form, errors, onChange, onChangeArr }) => (
       <Textarea value={form.currentChallenges} onChange={e => onChange('currentChallenges', e.target.value)} placeholder="What's going wrong, or what's missing right now?" rows={3} />
     </Field>
   </div>
-);
+  );
+};
 
 // ─── Step 3: What You Need ─────────────────────────────────────────────────────
 const StepScope = ({ form, errors, onChangeArr, onAddRow, onRemoveRow, onChange }) => (
@@ -264,12 +322,9 @@ const StepScope = ({ form, errors, onChangeArr, onAddRow, onRemoveRow, onChange 
 
 // ─── Step 4: Timeline & Budget ─────────────────────────────────────────────────
 const BUDGET_RANGES = [
-  'Under $1,000',
-  '$1,000 – $3,000',
-  '$3,000 – $7,000',
-  '$7,000 – $15,000',
-  '$15,000+',
-  'Not sure yet',
+  'Under Ugx 500,000',
+  'Ugx 500,000 – 5,000,000',
+  'Ugx 5000,000 – 25,000,000',
 ];
 
 const StepTimeline = ({ form, errors, onChange }) => (
@@ -368,6 +423,8 @@ const StepReview = ({ form }) => (
 
     <div style={s.rrSection}>
       <h4 style={s.rrHead}>Your Project</h4>
+      <RR label="Service" value={form.serviceCategory} />
+      <RR label="Specific Services" value={form.specificServices.join(' · ')} />
       <RR label="Name" value={form.projectTitle} />
       <RR label="Description" value={form.projectDescription} />
       <RR label="Goals" value={form.objectives.filter(Boolean).join(' · ')} />
@@ -417,6 +474,7 @@ const ProjectRequest = () => {
     contactName: '', contactEmail: '', contactPhone: '',
     signatoryName: '', signatoryTitle: '',
     // Step 2 — Your Project
+    serviceCategory: '', specificServices: [],
     projectTitle: '', projectDescription: '',
     objectives: ['', '', ''],
     targetAudience: '', currentChallenges: '',
@@ -457,6 +515,7 @@ const ProjectRequest = () => {
       if (!form.contactPhone.trim()) e.contactPhone = 'Please add a phone number.';
     }
     if (step === 1) {
+      if (!form.serviceCategory)           e.serviceCategory    = 'Please pick which service you\'re interested in.';
       if (!form.projectTitle.trim())       e.projectTitle       = 'Please give your project a name.';
       if (!form.projectDescription.trim()) e.projectDescription = 'Please tell us what you want to achieve.';
       if (!form.objectives[0]?.trim())     e.obj_0              = 'Please add at least one goal.';
@@ -505,6 +564,7 @@ const ProjectRequest = () => {
           to:      form.contactEmail,
           name:    form.contactName,
           program: form.projectTitle,
+          service: form.serviceCategory,
         }),
       }).catch(err => console.warn('[Email] Confirmation email failed:', err));
 
@@ -523,6 +583,7 @@ const ProjectRequest = () => {
       companyName: '', companyWebsite: '',
       contactName: '', contactEmail: '', contactPhone: '',
       signatoryName: '', signatoryTitle: '',
+      serviceCategory: '', specificServices: [],
       projectTitle: '', projectDescription: '',
       objectives: ['', '', ''],
       targetAudience: '', currentChallenges: '',
@@ -629,6 +690,8 @@ const s = {
 
   row2:         { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 0 },
   row3:         { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 0 },
+  checkGrid:    { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 },
+  checkItem:    { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: BRAND, background: '#F7F9FC', border: '1.5px solid #E2E8F0', borderRadius: 7, padding: '9px 12px', cursor: 'pointer' },
   fieldWrap:    { display: 'flex', flexDirection: 'column', marginBottom: 16 },
   label:        { fontSize: 12, fontWeight: 600, color: '#4A6B8A', marginBottom: 4, letterSpacing: 0.3 },
   hint:         { fontSize: 11.5, color: '#94A3B8', marginBottom: 6, lineHeight: 1.5 },

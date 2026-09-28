@@ -343,7 +343,7 @@ const About = () => {
           <div className="about-eyebrow">
             <i className="fas fa-building"></i> Uganda
           </div>
-          <h1>We are <span>Slirus</span> Holdings</h1>
+          <h1>We are <span>Slirus</span> Company</h1>
           <p>
             A multi-sector holding company driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
           </p>
@@ -357,7 +357,7 @@ const About = () => {
             <p className="about-eyebrow-small">Our Profile</p>
             <h2 className="about-h2">Built to power Uganda's next economy</h2>
             <p>
-              Slirus Holdings is a dynamic technology-led company specializing in modern, high-performing digital solutions that empower businesses to succeed in an increasingly competitive landscape.
+              Slirus Global Limited is a dynamic technology-led company specializing in modern, high-performing digital solutions that empower businesses to succeed in an increasingly competitive landscape.
             </p>
             <p>
               Founded with a clear mission to deliver affordable, reliable, and cutting-edge technology without compromising on quality we combine technical expertise with fresh perspectives to understand each client's unique needs and transform them into scalable digital realities.

@@ -1,5 +1,5 @@
 /**
- * CeoManager.jsx – Slirus Holdings CEO Control Center
+ * CeoManager.jsx – Slirus Global Limited CEO Control Center
  *
  * Super Admin dashboard restricted to the CEO account. Sits alongside
  * Admin.jsx and reuses the same auth/session conventions.
@@ -18,6 +18,12 @@
  *    but deny `update`/`delete` on this collection to keep it tamper-proof.
  *  - Global Dashboard: real-time, read-only view over Sales / HR / Finance
  *    summary documents, plus live counts pulled from existing collections.
+ *  - Contracts & Agreements: create SLAs, Service Contract Agreements, and
+ *    other professional agreements for contractual IT work (Software
+ *    Development, Network & Infrastructure, IT Consultancy, Cybersecurity).
+ *    Terms are entered as a bulleted, add/remove list of conditions. Saves
+ *    to the `contracts` Firestore collection (also read by Admin.jsx) and
+ *    downloads a Client Copy + Company Copy PDF via utils/contractPdf.js.
  *  - Extra professional tooling: search/filter, CSV export, bulk-safe
  *    confirmations, and an idle-session auto-sign-out.
  *
@@ -34,6 +40,10 @@ import {
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
+import {
+  CONTRACT_TYPES, SERVICE_CATEGORIES, CONTRACT_STATUSES, CONTRACT_STATUS_CONFIG,
+  CONTRACT_TYPE_FIELDS, emptyContractForm, generateContractPDF, generateBothContractCopies,
+} from '../utils/contractPdf';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -111,6 +121,16 @@ const StatusBadge = ({ status }) => {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cfg.bg, color: cfg.color, borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
       {status === 'suspended' ? 'Suspended' : 'Active'}
+    </span>
+  );
+};
+
+const ContractStatusBadge = ({ status }) => {
+  const cfg = CONTRACT_STATUS_CONFIG[status] || CONTRACT_STATUS_CONFIG.Draft;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cfg.bg, color: cfg.color, borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
+      {status || 'Draft'}
     </span>
   );
 };
@@ -447,13 +467,276 @@ const CreateUserModal = ({ onClose, onCreate }) => {
   );
 };
 
+// ─── Contract / Agreement Form Modal ────────────────────────────────────────
+// Covers SLAs, Service Contract Agreements, and other professional
+// agreements for the four IT contractual-job categories (Software
+// Development, Network & Infrastructure, IT Consultancy, Cybersecurity).
+// Terms & conditions are entered as a bulleted, add/remove list of text
+// fields rather than a single free-text box, so each clause stays a
+// distinct, addressable item both on screen and in the generated PDFs.
+const ContractFormModal = ({ initial, onClose, onSave }) => {
+  const [form, setForm] = useState(initial || emptyContractForm());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const update = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
+
+  // Generic handlers for any bulleted 'list' field — used by the catch-all
+  // `conditions` list and by whichever per-type list field the current
+  // contractType calls for (deliverables, milestones, …).
+  const updateListItem = (key, idx, val) => setForm(prev => {
+    const arr = [...(prev[key] || [''])];
+    arr[idx] = val;
+    return { ...prev, [key]: arr };
+  });
+  const addListItem = (key) => setForm(prev => ({ ...prev, [key]: [...(prev[key] || ['']), ''] }));
+  const removeListItem = (key, idx) => setForm(prev => {
+    const arr = prev[key] || [''];
+    return { ...prev, [key]: arr.length > 1 ? arr.filter((_, i) => i !== idx) : [''] };
+  });
+
+  const typeFields = CONTRACT_TYPE_FIELDS[form.contractType] || [];
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.contractTitle.trim() || !form.clientCompanyName.trim()) {
+      setError('Contract title and client company name are required.');
+      return;
+    }
+    if (!form.conditions.some(c => c.trim())) {
+      setError('Add at least one contract condition / clause.');
+      return;
+    }
+    setSaving(true); setError('');
+    try {
+      const cleaned = { ...form, conditions: form.conditions.filter(c => c.trim()) };
+      typeFields.forEach(f => {
+        if (f.type === 'list') cleaned[f.key] = (form[f.key] || []).filter(v => v && v.trim());
+      });
+      await onSave(cleaned);
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Could not save the contract.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 720 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #1A3C5E' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>
+              {initial ? 'Edit Contract / Agreement' : 'New Contract / Agreement'}
+            </h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+              SLA, Service Contract Agreement, or other professional IT-services agreement.
+            </p>
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ ...ms.body, overflowY: 'auto', minHeight: 0 }}>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Agreement type</label>
+                <select style={cu.select} value={form.contractType} onChange={e => update('contractType', e.target.value)} disabled={saving}>
+                  {CONTRACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Service category</label>
+                <select style={cu.select} value={form.serviceCategory} onChange={e => update('serviceCategory', e.target.value)} disabled={saving}>
+                  {SERVICE_CATEGORIES.map(c => <option key={c.key} value={c.label}>{c.label}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <label style={{ ...cu.label, marginTop: 12 }}>Contract title / reference</label>
+            <input style={s.loginInput} value={form.contractTitle} onChange={e => update('contractTitle', e.target.value)} disabled={saving} placeholder="e.g. Network Monitoring SLA – Q3 2026" />
+
+            <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>Client</h4>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Client company</label>
+                <input style={s.loginInput} value={form.clientCompanyName} onChange={e => update('clientCompanyName', e.target.value)} disabled={saving} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Contact name</label>
+                <input style={s.loginInput} value={form.clientContactName} onChange={e => update('clientContactName', e.target.value)} disabled={saving} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Contact email</label>
+                <input type="email" style={s.loginInput} value={form.clientEmail} onChange={e => update('clientEmail', e.target.value)} disabled={saving} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Contact phone</label>
+                <input style={s.loginInput} value={form.clientPhone} onChange={e => update('clientPhone', e.target.value)} disabled={saving} />
+              </div>
+            </div>
+            <label style={{ ...cu.label, marginTop: 12 }}>Client address</label>
+            <input style={s.loginInput} value={form.clientAddress} onChange={e => update('clientAddress', e.target.value)} disabled={saving} />
+
+            <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>Signatories</h4>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Company signatory</label>
+                <input style={s.loginInput} value={form.companySignatoryName} onChange={e => update('companySignatoryName', e.target.value)} disabled={saving} />
+                <input style={{ ...s.loginInput, marginTop: 8 }} placeholder="Title" value={form.companySignatoryTitle} onChange={e => update('companySignatoryTitle', e.target.value)} disabled={saving} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Client signatory</label>
+                <input style={s.loginInput} value={form.clientSignatoryName} onChange={e => update('clientSignatoryName', e.target.value)} disabled={saving} />
+                <input style={{ ...s.loginInput, marginTop: 8 }} placeholder="Title" value={form.clientSignatoryTitle} onChange={e => update('clientSignatoryTitle', e.target.value)} disabled={saving} />
+              </div>
+            </div>
+
+            <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>Term & Value</h4>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Effective date</label>
+                <input type="date" style={s.loginInput} value={form.effectiveDate} onChange={e => update('effectiveDate', e.target.value)} disabled={saving} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Expiry / renewal date</label>
+                <input type="date" style={s.loginInput} value={form.expiryDate} onChange={e => update('expiryDate', e.target.value)} disabled={saving} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Contract value</label>
+                <input style={s.loginInput} placeholder="e.g. UGX 12,000,000 / year" value={form.contractValue} onChange={e => update('contractValue', e.target.value)} disabled={saving} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={cu.label}>Payment terms</label>
+                <input style={s.loginInput} placeholder="e.g. Net 30, quarterly in advance" value={form.paymentTerms} onChange={e => update('paymentTerms', e.target.value)} disabled={saving} />
+              </div>
+            </div>
+
+            {typeFields.length > 0 && (
+              <>
+                <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>{form.contractType} — Specific Terms</h4>
+                {typeFields.map(f => (
+                  <div key={f.key} style={{ marginBottom: 14 }}>
+                    <label style={cu.label}>{f.label}</label>
+                    {f.type === 'list' ? (
+                      <>
+                        {(form[f.key] || ['']).map((item, idx) => (
+                          <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                            <span style={{ fontSize: 15, color: '#7A8A9A', marginTop: 10 }}>•</span>
+                            <textarea
+                              style={{ ...s.loginInput, flex: 1, minHeight: 64, resize: 'vertical', fontFamily: 'inherit' }}
+                              value={item}
+                              onChange={e => updateListItem(f.key, idx, e.target.value)}
+                              disabled={saving}
+                              placeholder={f.placeholder}
+                            />
+                            <button
+                              type="button"
+                              style={bulletDeleteBtn}
+                              onClick={() => removeListItem(f.key, idx)}
+                              disabled={saving}
+                              title={`Remove ${f.label.toLowerCase()}`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        <button type="button" style={s.tab} onClick={() => addListItem(f.key)} disabled={saving}>
+                          ➕ Add {f.label.toLowerCase().replace(/s$/, '')}
+                        </button>
+                      </>
+                    ) : f.type === 'textarea' ? (
+                      <textarea
+                        style={{ ...s.loginInput, minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }}
+                        value={form[f.key] || ''}
+                        onChange={e => update(f.key, e.target.value)}
+                        disabled={saving}
+                        placeholder={f.placeholder}
+                      />
+                    ) : (
+                      <input
+                        style={s.loginInput}
+                        value={form[f.key] || ''}
+                        onChange={e => update(f.key, e.target.value)}
+                        disabled={saving}
+                        placeholder={f.placeholder}
+                      />
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+
+            <label style={{ ...cu.label, marginTop: 12 }}>Scope of work / purpose</label>
+            <textarea
+              style={{ ...s.loginInput, minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
+              value={form.scopeSummary}
+              onChange={e => update('scopeSummary', e.target.value)}
+              disabled={saving}
+              placeholder="Brief summary of what this agreement covers…"
+            />
+
+            <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>Terms & Conditions</h4>
+            <p style={{ fontSize: 12.5, color: '#7A8A9A', margin: '0 0 10px' }}>
+              Catch-all clauses not already covered above. Add each clause as its own bullet point — these render as the bulleted terms in the generated PDF.
+            </p>
+            {form.conditions.map((cond, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                <span style={{ fontSize: 15, color: '#7A8A9A', marginTop: 10 }}>•</span>
+                <textarea
+                  style={{ ...s.loginInput, flex: 1, minHeight: 64, resize: 'vertical', fontFamily: 'inherit' }}
+                  value={cond}
+                  onChange={e => updateListItem('conditions', idx, e.target.value)}
+                  disabled={saving}
+                  placeholder={`Condition ${idx + 1} (e.g. "Provider guarantees 99.5% uptime, measured monthly.")`}
+                />
+                <button
+                  type="button"
+                  style={bulletDeleteBtn}
+                  onClick={() => removeListItem('conditions', idx)}
+                  disabled={saving}
+                  title="Remove condition"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button type="button" style={{ ...s.tab, marginTop: 4 }} onClick={() => addListItem('conditions')} disabled={saving}>
+              ➕ Add condition
+            </button>
+
+            <label style={{ ...cu.label, marginTop: 18 }}>Status</label>
+            <select style={cu.select} value={form.status} onChange={e => update('status', e.target.value)} disabled={saving}>
+              {CONTRACT_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+            </select>
+
+            {error && <p style={s.loginErr}>{error}</p>}
+          </div>
+
+          <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+            <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" style={{ ...ms.actionBtn, background: '#1A3C5E', color: '#fff' }} disabled={saving}>
+              {saving ? 'Saving…' : '💾 Save Contract'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 const CeoManager = () => {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard | users | audit
+  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard | users | contracts | audit
 
   // Team users
   const [teamUsers, setTeamUsers] = useState([]);
@@ -471,6 +754,17 @@ const CeoManager = () => {
   const [loadingAudit, setLoadingAudit] = useState(true);
   const [auditError, setAuditError] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
+
+  // Contracts & Agreements (SLA / Service Contract / other professional agreements)
+  const [contracts, setContracts] = useState([]);
+  const [loadingContracts, setLoadingContracts] = useState(true);
+  const [contractsError, setContractsError] = useState(null);
+  const [contractSearch, setContractSearch] = useState('');
+  const [contractCategoryFilter, setContractCategoryFilter] = useState('All');
+  const [contractStatusFilter, setContractStatusFilter] = useState('All');
+  const [showContractForm, setShowContractForm] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [busyContractId, setBusyContractId] = useState(null);
 
   // Global dashboard metrics
   const [salesData, setSalesData] = useState(null);
@@ -519,6 +813,26 @@ const CeoManager = () => {
         console.error('auditLogs listen error:', err);
         setAuditError(err.code === 'permission-denied' ? 'Permission denied reading the audit log.' : 'Could not load audit log: ' + err.message);
         setLoadingAudit(false);
+      }
+    );
+    return unsub;
+  }, [isCeo]);
+
+  // ── Contracts listener ─────────────────────────────────────────────────
+  // Stored in the same `contracts` collection that Admin.jsx reads from,
+  // so every agreement created here is immediately visible/downloadable
+  // there too — same collection, same PDF-generation logic.
+  useEffect(() => {
+    if (!isCeo) { setContracts([]); setContractsError(null); return; }
+    setLoadingContracts(true);
+    const q = query(collection(db, 'contracts'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(
+      q,
+      (snap) => { setContractsError(null); setContracts(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoadingContracts(false); },
+      (err) => {
+        console.error('contracts listen error:', err);
+        setContractsError(err.code === 'permission-denied' ? 'Permission denied reading contracts.' : 'Could not load contracts: ' + err.message);
+        setLoadingContracts(false);
       }
     );
     return unsub;
@@ -577,6 +891,7 @@ const CeoManager = () => {
     try {
       setTeamUsers([]); setAuditLogs([]); setSalesData(null); setHrData(null); setFinanceData(null);
       setRoleTarget(null); setShowCreateUser(false);
+      setContracts([]); setShowContractForm(false); setEditingContract(null);
       await signOut(auth);
     } catch (err) {
       alert('Sign out failed: ' + err.message);
@@ -729,6 +1044,74 @@ const CeoManager = () => {
     );
   }, [logAudit, teamUsers]);
 
+  // ── Contracts: save (create or edit) ───────────────────────────────────
+  const saveContract = useCallback(async (form) => {
+    if (editingContract) {
+      await updateDoc(doc(db, 'contracts', editingContract.id), {
+        ...form,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.email || 'unknown',
+      });
+      await logAudit('Updated contract', form.clientCompanyName, `${form.contractType} · ${form.serviceCategory}`);
+    } else {
+      await addDoc(collection(db, 'contracts'), {
+        ...form,
+        createdAt: serverTimestamp(),
+        createdBy: auth.currentUser?.email || 'unknown',
+      });
+      await logAudit('Created contract', form.clientCompanyName, `${form.contractType} · ${form.serviceCategory}`);
+    }
+  }, [editingContract, logAudit]);
+
+  const updateContractStatus = useCallback(async (contract, status) => {
+    setBusyContractId(contract.id);
+    try {
+      await updateDoc(doc(db, 'contracts', contract.id), { status });
+      await logAudit('Changed contract status', contract.clientCompanyName, `${contract.contractType} → ${status}`);
+    } catch (err) {
+      alert('Could not update contract status: ' + err.message);
+    } finally {
+      setBusyContractId(null);
+    }
+  }, [logAudit]);
+
+  const deleteContract = useCallback(async (contract) => {
+    if (!window.confirm(`Permanently delete the ${contract.contractType} for "${contract.clientCompanyName}"? This cannot be undone.`)) return;
+    setBusyContractId(contract.id);
+    try {
+      await deleteDoc(doc(db, 'contracts', contract.id));
+      await logAudit('Deleted contract', contract.clientCompanyName, contract.contractType);
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    } finally {
+      setBusyContractId(null);
+    }
+  }, [logAudit]);
+
+  // Downloads both the Client Copy and the Company Copy PDFs.
+  const downloadContractCopies = useCallback(async (contract) => {
+    setBusyContractId(contract.id);
+    try {
+      await generateBothContractCopies(contract);
+      await logAudit('Downloaded contract PDFs', contract.clientCompanyName, `${contract.contractType} · Client + Company copies`);
+    } catch (err) {
+      alert('PDF generation failed: ' + err.message);
+    } finally {
+      setBusyContractId(null);
+    }
+  }, [logAudit]);
+
+  const downloadSingleContractCopy = useCallback(async (contract, copyLabel) => {
+    setBusyContractId(contract.id);
+    try {
+      await generateContractPDF(contract, copyLabel);
+    } catch (err) {
+      alert('PDF generation failed: ' + err.message);
+    } finally {
+      setBusyContractId(null);
+    }
+  }, []);
+
   // ── Derived data ────────────────────────────────────────────────────────
   const filteredUsers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
@@ -755,6 +1138,37 @@ const CeoManager = () => {
       l.details?.toLowerCase().includes(q)
     );
   }, [auditLogs, auditSearch]);
+
+  const filteredContracts = useMemo(() => {
+    const q = contractSearch.trim().toLowerCase();
+    return contracts
+      .filter(c => contractCategoryFilter === 'All' || c.serviceCategory === contractCategoryFilter)
+      .filter(c => contractStatusFilter === 'All' || c.status === contractStatusFilter)
+      .filter(c => !q
+        || c.clientCompanyName?.toLowerCase().includes(q)
+        || c.contractTitle?.toLowerCase().includes(q)
+        || c.clientContactName?.toLowerCase().includes(q)
+      );
+  }, [contracts, contractSearch, contractCategoryFilter, contractStatusFilter]);
+
+  const contractCounts = useMemo(() => ({
+    All: contracts.length,
+    Draft: contracts.filter(c => c.status === 'Draft').length,
+    Active: contracts.filter(c => c.status === 'Active').length,
+    Expired: contracts.filter(c => c.status === 'Expired').length,
+    Terminated: contracts.filter(c => c.status === 'Terminated').length,
+  }), [contracts]);
+
+  const exportContractsCSV = () => downloadCSV('slirus_contracts.csv', toCSV(filteredContracts, [
+    { label: 'Client',   get: c => c.clientCompanyName },
+    { label: 'Title',    get: c => c.contractTitle },
+    { label: 'Type',     get: c => c.contractType },
+    { label: 'Category', get: c => c.serviceCategory },
+    { label: 'Value',    get: c => c.contractValue },
+    { label: 'Status',   get: c => c.status },
+    { label: 'Effective', get: c => c.effectiveDate },
+    { label: 'Expiry',    get: c => c.expiryDate },
+  ]));
 
   const exportUsersCSV = () => downloadCSV('slirus_team_accounts.csv', toCSV(filteredUsers, [
     { label: 'Name', get: u => u.name },
@@ -789,6 +1203,7 @@ const CeoManager = () => {
           </div>
         )}
         {usersError && activeTab === 'users' && <div style={s.errorBanner}>⚠️ {usersError}</div>}
+        {contractsError && activeTab === 'contracts' && <div style={s.errorBanner}>⚠️ {contractsError}</div>}
         {auditError && activeTab === 'audit' && <div style={s.errorBanner}>⚠️ {auditError}</div>}
 
         {/* Top bar */}
@@ -809,6 +1224,9 @@ const CeoManager = () => {
           </button>
           <button style={{ ...s.dashTab, ...(activeTab === 'users' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('users')}>
             👥 User Provisioning <span style={s.tabCount}>{teamUsers.length}</span>
+          </button>
+          <button style={{ ...s.dashTab, ...(activeTab === 'contracts' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('contracts')}>
+            📄 Contracts & Agreements <span style={s.tabCount}>{contracts.length}</span>
           </button>
           <button style={{ ...s.dashTab, ...(activeTab === 'audit' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('audit')}>
             📜 Audit Log <span style={s.tabCount}>{auditLogs.length}</span>
@@ -920,6 +1338,121 @@ const CeoManager = () => {
           </>
         )}
 
+        {/* ── Contracts & Agreements tab ── */}
+        {activeTab === 'contracts' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <h2 style={{ ...s.sectionHead, margin: 0 }}>Contracts & Professional Agreements</h2>
+                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>
+                  SLAs, Service Contract Agreements, and other agreements for contractual IT work — Software Development,
+                  Network & Infrastructure, IT Consultancy, and Cybersecurity.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button style={s.tab} onClick={exportContractsCSV}>⬇ Export CSV</button>
+                <button
+                  style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0 }}
+                  onClick={() => { setEditingContract(null); setShowContractForm(true); }}
+                >
+                  ➕ New Contract
+                </button>
+              </div>
+            </div>
+
+            <div style={s.toolbar}>
+              <div style={s.tabs}>
+                {['All', 'Draft', 'Active', 'Expired', 'Terminated'].map(st => {
+                  const cfg = CONTRACT_STATUS_CONFIG[st];
+                  return (
+                    <button
+                      key={st}
+                      style={{ ...s.tab, ...(contractStatusFilter === st ? (cfg ? { background: cfg.bg, color: cfg.color, borderColor: cfg.dot } : s.tabActive) : {}) }}
+                      onClick={() => setContractStatusFilter(st)}
+                    >
+                      {st} <span style={s.tabCount}>{st === 'All' ? contractCounts.All : contractCounts[st]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <select style={{ ...cu.select, width: 'auto' }} value={contractCategoryFilter} onChange={e => setContractCategoryFilter(e.target.value)}>
+                <option value="All">All Categories</option>
+                {SERVICE_CATEGORIES.map(c => <option key={c.key} value={c.label}>{c.label}</option>)}
+              </select>
+              <input style={s.searchInput} placeholder="Search client, title, or contact…" value={contractSearch} onChange={e => setContractSearch(e.target.value)} />
+            </div>
+
+            <div style={s.tableWrap}>
+              {loadingContracts ? (
+                <div style={s.tableMsg}>Loading contracts…</div>
+              ) : filteredContracts.length === 0 ? (
+                <div style={s.tableMsg}>No contracts match your filters. Click "New Contract" to create one.</div>
+              ) : (
+                <table style={s.table}>
+                  <thead>
+                    <tr style={s.thead}>
+                      <th style={s.th}>Client / Title</th>
+                      <th style={s.th}>Type</th>
+                      <th style={s.th}>Category</th>
+                      <th style={s.th}>Value</th>
+                      <th style={s.th}>Status</th>
+                      <th style={s.th}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredContracts.map(c => (
+                      <tr key={c.id} style={s.tr}>
+                        <td style={s.td}>
+                          <span style={{ fontWeight: 700, color: '#1A3C5E' }}>{c.clientCompanyName}</span>
+                          <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{c.contractTitle}</div>
+                        </td>
+                        <td style={{ ...s.td, fontSize: 13 }}>{c.contractType}</td>
+                        <td style={{ ...s.td, fontSize: 13 }}>{c.serviceCategory}</td>
+                        <td style={{ ...s.td, fontSize: 13, whiteSpace: 'nowrap' }}>{c.contractValue || '—'}</td>
+                        <td style={s.td}><ContractStatusBadge status={c.status} /></td>
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <button style={s.btnView} onClick={() => { setEditingContract(c); setShowContractForm(true); }}>Edit</button>
+                            <button
+                              style={{ ...s.btnShortlist, opacity: busyContractId === c.id ? 0.5 : 1 }}
+                              onClick={() => downloadContractCopies(c)}
+                              disabled={busyContractId === c.id}
+                              title="Download both the Client Copy and the Company Copy"
+                            >
+                              {busyContractId === c.id ? '⏳' : '⬇ Both Copies'}
+                            </button>
+                            <button
+                              style={s.tab}
+                              onClick={() => downloadSingleContractCopy(c, 'Client Copy')}
+                              disabled={busyContractId === c.id}
+                            >
+                              Client PDF
+                            </button>
+                            <button
+                              style={s.tab}
+                              onClick={() => downloadSingleContractCopy(c, 'Company Copy')}
+                              disabled={busyContractId === c.id}
+                            >
+                              Company PDF
+                            </button>
+                            {c.status !== 'Active' && (
+                              <button style={s.btnShortlist} onClick={() => updateContractStatus(c, 'Active')} disabled={busyContractId === c.id}>Activate</button>
+                            )}
+                            {c.status !== 'Terminated' && (
+                              <button style={s.btnReject} onClick={() => updateContractStatus(c, 'Terminated')} disabled={busyContractId === c.id}>Terminate</button>
+                            )}
+                            <button style={s.btnDelete} onClick={() => deleteContract(c)} disabled={busyContractId === c.id}>Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+
         {/* ── Audit Log tab ── */}
         {activeTab === 'audit' && (
           <>
@@ -974,6 +1507,14 @@ const CeoManager = () => {
       )}
       {roleTarget && (
         <RoleMatrixModal targetUser={roleTarget} onClose={() => setRoleTarget(null)} onSave={savePermissions} />
+      )}
+      {showContractForm && (
+        <ContractFormModal
+          key={editingContract?.id || 'new'}
+          initial={editingContract}
+          onClose={() => { setShowContractForm(false); setEditingContract(null); }}
+          onSave={saveContract}
+        />
       )}
     </Layout>
   );
@@ -1032,6 +1573,7 @@ const ms = {
   actionBtn: { border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   body:      { overflowY: 'auto', padding: '20px 24px', flex: 1 },
   closeBtn:  { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#7A8A9A', lineHeight: 1, padding: 4 },
+  secTitle:  { fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, margin: '0 0 8px', borderBottom: '1px solid #F0F4F8', paddingBottom: 6 },
 };
 
 const gd = {
@@ -1044,6 +1586,16 @@ const gd = {
 const rm = {
   th:      { padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#7A8A9A', textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #E2E8F0' },
   miniBtn: { background: '#F0F4F8', border: '1px solid #E2E8F0', borderRadius: 5, padding: '3px 8px', fontSize: 11, fontWeight: 600, color: '#5A7A9A', cursor: 'pointer' },
+};
+
+// Small, fixed-size "✕" button for bulleted list rows (conditions,
+// deliverables, milestones, …) — stays compact regardless of how tall the
+// textarea next to it grows, instead of stretching to match its height.
+const bulletDeleteBtn = {
+  flexShrink: 0, width: 26, height: 26, marginTop: 8,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5',
+  borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0,
 };
 
 const cu = {

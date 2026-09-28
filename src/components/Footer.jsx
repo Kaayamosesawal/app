@@ -13,11 +13,11 @@ const Footer = () => {
         {/* Brand column */}
         <div className="ft-brand">
           <div className="ft-logo-mark">
-            <span className="ft-logo-s">S</span>
+            <img src="/Slirus.png" alt="Slirus Logo" className="ft-logo-img" />
           </div>
-          <p className="ft-brand-name">Slirus Holdings</p>
+          <p className="ft-brand-name">Slirus Global Limited</p>
           <p className="ft-tagline">
-            Empowering cross-sector enterprise innovation across Uganda.
+            Tech. Trade. Transform.
           </p>
           {/* Social links */}
           <div className="ft-socials">
@@ -43,7 +43,6 @@ const Footer = () => {
             <Link to="/about" className="ft-link">About Us</Link>
             <Link to="/services" className="ft-link">Our Services</Link>
             <Link to="/apply" className="ft-link">Careers</Link>
-            <Link to="/contact" className="ft-link">Contact</Link>
           </nav>
         </div>
 
@@ -53,6 +52,7 @@ const Footer = () => {
           <nav className="ft-link-list">
             <Link to="/admin" className="ft-link">Admin</Link>
             <Link to="/ceo-manager" className="ft-link">Manager</Link>
+            <Link to="/accounts-manager" className="ft-link">Accounts</Link>
             <Link to="/hr-manager" className="ft-link">Human Resource</Link>
             <Link to="/sales-manager" className="ft-link">Sales</Link>
             <Link to="/secretary-manager" className="ft-link">Secretary</Link>
@@ -95,7 +95,7 @@ const Footer = () => {
       {/* Bottom bar */}
       <div className="ft-bottom-bar">
         <p className="ft-copyright">
-          &copy; {currentYear} Slirus Holdings. All Rights Reserved.
+          &copy; {currentYear} Slirus Global Limited. All Rights Reserved.
         </p>
         <div className="ft-legal">
           <Link to="/privacy" className="ft-legal-link">Privacy Policy</Link>
@@ -128,11 +128,15 @@ const Footer = () => {
         .ft-brand { display: flex; flexDirection: column; gap: 12px; }
         .ft-logo-mark {
           width: 44px; height: 44px; border-radius: 10px;
-          background: linear-gradient(135deg, #C9A84C, #E8C96A);
           display: flex; align-items: center; justify-content: center;
           flex-shrink: 0;
+          overflow: hidden;
         }
-        .ft-logo-s { color: #0D1B2A; font-weight: 900; font-size: 22px; letter-spacing: -1px; }
+        .ft-logo-img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
         .ft-brand-name { color: #F0F6FF; font-weight: 700; font-size: 15px; margin: 0; letter-spacing: 0.3px; }
         .ft-tagline { font-size: 13px; line-height: 1.65; color: #7A90A4; margin: 0; max-width: 240px; }
         .ft-socials { display: flex; gap: 10px; margin-top: 4px; }

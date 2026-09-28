@@ -1,5 +1,5 @@
 /**
- * SecretaryManager.jsx – Slirus Holdings Secretary Workspace
+ * SecretaryManager.jsx – Slirus Global Limited Secretary Workspace
  *
  * Administrative-core dashboard for the Secretary role. Sits alongside
  * CeoManager.jsx and Admin.jsx and reuses the same auth/session/style

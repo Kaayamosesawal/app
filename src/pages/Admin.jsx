@@ -1,5 +1,5 @@
 /**
- * Admin.jsx – Slirus Holdings Applications Dashboard
+ * Admin.jsx – Slirus Global Limited Applications Dashboard
  *
  * Features:
  *  - Firebase Auth login / logout (email + password)
@@ -23,6 +23,10 @@ import Layout from '../components/Layout';
 import { CAREER_TRACKS } from './careerTracks';
 import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from '../utils/pdfBrand';
 import { generateProjectRequestPDF, generateProjectProposalPDF } from '../utils/projectPdf';
+import {
+  SERVICE_CATEGORIES, CONTRACT_STATUS_CONFIG, CONTRACT_TYPE_FIELDS, CONTRACT_TYPE_SECTION_TITLE,
+  generateContractPDF, generateBothContractCopies,
+} from '../utils/contractPdf';
 
 // ─── API Base URL ─────────────────────────────────────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -139,7 +143,7 @@ const generateAdminPDF = async (app) => {
     row('  Title', r.title); row('  Contact', r.contact); y += 1;
   });
 
-  drawFooter(pdf, { note: 'Slirus Holdings · Admin Copy', confidential: true });
+  drawFooter(pdf, { note: 'Slirus Global Limited · Admin Copy', confidential: true });
 
   const safe = (app.fullName || 'applicant').replace(/\s+/g, '_');
   pdf.save(`Slirus_Admin_${safe}_${app.trackKey || 'app'}.pdf`);
@@ -497,6 +501,193 @@ const ProjectDetailModal = ({ project, onClose, onStatusChange, statusUpdating }
   );
 };
 
+// ─── Contract Status Badge ──────────────────────────────────────────────────
+const ContractBadge = ({ status }) => {
+  const cfg = CONTRACT_STATUS_CONFIG[status] || CONTRACT_STATUS_CONFIG.Draft;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cfg.bg, color: cfg.color, borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
+      {status || 'Draft'}
+    </span>
+  );
+};
+
+// ─── Contract / Agreement Detail Modal ─────────────────────────────────────
+// Read/manage view over contracts created by the CEO Control Center
+// (CeoManager.jsx). Same `contracts` Firestore collection, same
+// utils/contractPdf.js generator — so PDFs downloaded here are byte-for-byte
+// the same layout as the ones the CEO downloads.
+const ContractDetailModal = ({ contract, onClose, onStatusChange, statusUpdating }) => {
+  const [localStatus, setLocalStatus] = useState(contract?.status);
+  const [clientPdfLoading, setClientPdfLoading] = useState(false);
+  const [companyPdfLoading, setCompanyPdfLoading] = useState(false);
+  const [bothPdfLoading, setBothPdfLoading] = useState(false);
+
+  useEffect(() => { setLocalStatus(contract?.status); }, [contract?.status]);
+
+  if (!contract) return null;
+
+  const tc = '#1A3C5E';
+
+  const handleStatusChange = async (newStatus) => {
+    setLocalStatus(newStatus);
+    await onStatusChange(contract.id, newStatus);
+  };
+
+  const handleClientPDF = async () => {
+    setClientPdfLoading(true);
+    try { await generateContractPDF({ ...contract, status: localStatus }, 'Client Copy'); }
+    catch (err) { alert('PDF error: ' + err.message); }
+    finally { setClientPdfLoading(false); }
+  };
+
+  const handleCompanyPDF = async () => {
+    setCompanyPdfLoading(true);
+    try { await generateContractPDF({ ...contract, status: localStatus }, 'Company Copy'); }
+    catch (err) { alert('PDF error: ' + err.message); }
+    finally { setCompanyPdfLoading(false); }
+  };
+
+  const handleBothPDFs = async () => {
+    setBothPdfLoading(true);
+    try { await generateBothContractCopies({ ...contract, status: localStatus }); }
+    catch (err) { alert('PDF error: ' + err.message); }
+    finally { setBothPdfLoading(false); }
+  };
+
+  const Sec = ({ title, children }) => (
+    <div style={ms.section}>
+      <h4 style={{ ...ms.secTitle, color: tc }}>{title}</h4>
+      {children}
+    </div>
+  );
+  const Row = ({ label, val }) => val
+    ? <div style={ms.row}><span style={ms.label}>{label}</span><span style={ms.val}>{val}</span></div>
+    : null;
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={ms.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: `4px solid ${tc}` }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{contract.contractTitle || contract.contractType}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+              {contract.clientCompanyName} · {contract.contractType}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ContractBadge status={localStatus} />
+            <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+          </div>
+        </div>
+
+        <div style={ms.actionBar}>
+          <button
+            style={{ ...ms.actionBtn, background: '#D1FAE5', color: '#065F46', opacity: localStatus === 'Active' ? 0.45 : 1 }}
+            onClick={() => handleStatusChange('Active')}
+            disabled={localStatus === 'Active' || statusUpdating}
+          >
+            ✅ Activate
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#FEE2E2', color: '#991B1B', opacity: localStatus === 'Terminated' ? 0.45 : 1 }}
+            onClick={() => handleStatusChange('Terminated')}
+            disabled={localStatus === 'Terminated' || statusUpdating}
+          >
+            ✗ Terminate
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }}
+            onClick={handleClientPDF}
+            disabled={clientPdfLoading}
+          >
+            {clientPdfLoading ? '⏳ Generating…' : '⬇ Client Copy PDF'}
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#EDE9FE', color: '#5B21B6' }}
+            onClick={handleCompanyPDF}
+            disabled={companyPdfLoading}
+          >
+            {companyPdfLoading ? '⏳ Generating…' : '⬇ Company Copy PDF'}
+          </button>
+          <button
+            style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#4A6B8A' }}
+            onClick={handleBothPDFs}
+            disabled={bothPdfLoading}
+          >
+            {bothPdfLoading ? '⏳ Generating…' : '⬇ Both Copies'}
+          </button>
+        </div>
+
+        <div style={ms.body}>
+          <Sec title="Agreement">
+            <Row label="Type"     val={contract.contractType} />
+            <Row label="Category" val={contract.serviceCategory} />
+            <Row label="Effective" val={contract.effectiveDate} />
+            <Row label="Expiry"    val={contract.expiryDate} />
+            <Row label="Value"     val={contract.contractValue} />
+            <Row label="Payment Terms" val={contract.paymentTerms} />
+          </Sec>
+
+          <Sec title="Client & Contact">
+            <Row label="Company"  val={contract.clientCompanyName} />
+            <Row label="Contact"  val={[contract.clientContactName, contract.clientEmail, contract.clientPhone].filter(Boolean).join(' · ')} />
+            <Row label="Address"  val={contract.clientAddress} />
+            <Row label="Client Signatory" val={`${contract.clientSignatoryName || '—'}${contract.clientSignatoryTitle ? ' — ' + contract.clientSignatoryTitle : ''}`} />
+            <Row label="Company Signatory" val={`${contract.companySignatoryName || '—'}${contract.companySignatoryTitle ? ' — ' + contract.companySignatoryTitle : ''}`} />
+          </Sec>
+
+          {(() => {
+            const typeFields = CONTRACT_TYPE_FIELDS[contract.contractType] || [];
+            const sectionTitle = CONTRACT_TYPE_SECTION_TITLE[contract.contractType];
+            const hasAnyValue = typeFields.some(f => f.type === 'list'
+              ? (contract[f.key] || []).some(v => v && v.trim())
+              : !!contract[f.key]);
+            if (!typeFields.length || !sectionTitle || !hasAnyValue) return null;
+            return (
+              <Sec title={sectionTitle}>
+                {typeFields.map(f => f.type === 'list' ? (
+                  (contract[f.key] || []).filter(v => v && v.trim()).length > 0 && (
+                    <div key={f.key} style={ms.row}>
+                      <span style={ms.label}>{f.label}</span>
+                      <ul style={{ margin: '2px 0 0', paddingLeft: 18, color: '#1A3C5E', fontSize: 13.5, lineHeight: 1.6 }}>
+                        {contract[f.key].filter(v => v && v.trim()).map((item, i) => <li key={i}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )
+                ) : (
+                  <Row key={f.key} label={f.label} val={contract[f.key]} />
+                ))}
+              </Sec>
+            );
+          })()}
+
+          {contract.scopeSummary && (
+            <Sec title="Scope of Work">
+              <Row label="Summary" val={contract.scopeSummary} />
+            </Sec>
+          )}
+
+          {(contract.conditions || []).length > 0 && (
+            <Sec title="Terms & Conditions">
+              <ul style={{ margin: 0, paddingLeft: 18, color: '#1A3C5E', fontSize: 13.5, lineHeight: 1.7 }}>
+                {contract.conditions.map((cond, i) => <li key={i}>{cond}</li>)}
+              </ul>
+            </Sec>
+          )}
+
+          <Sec title="Record">
+            <Row label="Reference" val={contract.id?.slice(0, 12).toUpperCase()} />
+            <Row label="Created" val={contract.createdAt?.toDate ? contract.createdAt.toDate().toLocaleString('en-UG') : '—'} />
+            <Row label="Created By" val={contract.createdBy} />
+            <Row label="Status" val={localStatus} />
+          </Sec>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 const LoginScreen = ({ onLogin }) => {
   const [email, setEmail]       = useState('');
@@ -573,7 +764,7 @@ const Admin = () => {
   const [settingsError, setSettingsError] = useState(null);
 
   // ── Top-level dashboard tab: Applications vs Project Requests ──────────────
-  const [dashTab, setDashTab] = useState('applications'); // 'applications' | 'projects'
+  const [dashTab, setDashTab] = useState('applications'); // 'applications' | 'projects' | 'contracts'
 
   // ── Project Requests state (mirrors applications state) ───────────────────
   const [projectRequests, setProjectRequests]     = useState([]);
@@ -584,6 +775,17 @@ const Admin = () => {
   const [projectSearch, setProjectSearch]         = useState('');
   const [projectStatusUpdating, setProjectStatusUpdating] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState(null);
+
+  // ── Contracts & Agreements state (mirrors project requests state) ─────────
+  const [contracts, setContracts]                 = useState([]);
+  const [loadingContracts, setLoadingContracts]   = useState(true);
+  const [contractsError, setContractsError]       = useState(null);
+  const [selectedContract, setSelectedContract]   = useState(null);
+  const [contractStatusFilter, setContractStatusFilter] = useState('All');
+  const [contractCategoryFilter, setContractCategoryFilter] = useState('All');
+  const [contractSearch, setContractSearch]       = useState('');
+  const [contractStatusUpdating, setContractStatusUpdating] = useState(false);
+  const [deletingContractId, setDeletingContractId] = useState(null);
 
   // Auth state listener
   useEffect(() => {
@@ -683,6 +885,36 @@ const Admin = () => {
     );
 
     return () => unsubProjects();
+  }, [user]);
+
+  // ── Contracts listener — reads the same `contracts` collection that ───────
+  // CeoManager.jsx writes to, so every SLA / Service Contract / agreement
+  // created there shows up here immediately.
+  useEffect(() => {
+    if (!user) {
+      setContracts([]);
+      setContractsError(null);
+      return;
+    }
+    setLoadingContracts(true);
+
+    const unsubContracts = onSnapshot(
+      collection(db, 'contracts'),
+      (snap) => {
+        setContractsError(null);
+        setContracts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoadingContracts(false);
+      },
+      (err) => {
+        console.error('Contracts listen error:', err);
+        setContractsError(err.code === 'permission-denied'
+          ? 'Permission denied reading contracts. Check your Firestore Security Rules.'
+          : 'Could not load contracts: ' + err.message);
+        setLoadingContracts(false);
+      }
+    );
+
+    return () => unsubContracts();
   }, [user]);
 
   // ── Secure sign-out ──────────────────────────────────────────────────────
@@ -847,6 +1079,33 @@ const Admin = () => {
     }
   }, []);
 
+  const updateContractStatus = useCallback(async (id, status) => {
+    setContractStatusUpdating(true);
+    try {
+      await updateDoc(doc(db, 'contracts', id), { status });
+      setSelectedContract(prev => prev?.id === id ? { ...prev, status } : prev);
+    } catch (err) {
+      console.error('updateContractStatus error:', err);
+      alert('Status update failed: ' + err.message);
+    } finally {
+      setContractStatusUpdating(false);
+    }
+  }, []);
+
+  const deleteContract = useCallback(async (id, clientCompanyName) => {
+    if (!window.confirm(`Delete the contract for "${clientCompanyName || 'this client'}"? This cannot be undone.`)) return;
+    setDeletingContractId(id);
+    try {
+      await deleteDoc(doc(db, 'contracts', id));
+      setSelectedContract(prev => prev?.id === id ? null : prev);
+    } catch (err) {
+      console.error('deleteContract error:', err);
+      alert('Delete failed: ' + err.message);
+    } finally {
+      setDeletingContractId(null);
+    }
+  }, []);
+
   // ── Loading auth ──
   if (authLoading) {
     return (
@@ -899,6 +1158,27 @@ const Admin = () => {
     Declined:   projectRequests.filter(p => p.status === 'Declined').length,
   };
 
+  // ── Contracts derived data ─────────────────────────────────────────────────
+  const displayedContracts = contracts
+    .filter(c => contractStatusFilter === 'All' || c.status === contractStatusFilter)
+    .filter(c => contractCategoryFilter === 'All' || c.serviceCategory === contractCategoryFilter)
+    .filter(c => {
+      const q = contractSearch.trim().toLowerCase();
+      return !q
+        || c.clientCompanyName?.toLowerCase().includes(q)
+        || c.contractTitle?.toLowerCase().includes(q)
+        || c.clientContactName?.toLowerCase().includes(q);
+    })
+    .sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
+
+  const contractCounts = {
+    All:        contracts.length,
+    Draft:      contracts.filter(c => c.status === 'Draft').length,
+    Active:     contracts.filter(c => c.status === 'Active').length,
+    Expired:    contracts.filter(c => c.status === 'Expired').length,
+    Terminated: contracts.filter(c => c.status === 'Terminated').length,
+  };
+
   return (
     <Layout>
       <div style={s.page}>
@@ -912,17 +1192,22 @@ const Admin = () => {
         {projectsError && dashTab === 'projects' && (
           <div style={s.errorBanner}>⚠️ Project Requests: {projectsError}</div>
         )}
+        {contractsError && dashTab === 'contracts' && (
+          <div style={s.errorBanner}>⚠️ Contracts: {contractsError}</div>
+        )}
 
         {/* Top bar */}
         <div style={s.topBar}>
           <div>
             <h1 style={s.pageTitle}>
-              {dashTab === 'applications' ? 'Applications Dashboard' : 'Project Proposals Dashboard'}
+              {dashTab === 'applications' ? 'Applications Dashboard' : dashTab === 'projects' ? 'Project Proposals Dashboard' : 'Contracts & Agreements'}
             </h1>
             <p style={s.pageSub}>
               {dashTab === 'applications'
                 ? `${counts.All} total · ${counts.Shortlisted} shortlisted · ${counts.Pending} pending · ${counts.Unqualified} unqualified`
-                : `${projectCounts.All} total · ${projectCounts.New} new · ${projectCounts.Reviewing} reviewing · ${projectCounts.Accepted} accepted`}
+                : dashTab === 'projects'
+                ? `${projectCounts.All} total · ${projectCounts.New} new · ${projectCounts.Reviewing} reviewing · ${projectCounts.Accepted} accepted`
+                : `${contractCounts.All} total · ${contractCounts.Active} active · ${contractCounts.Draft} draft · ${contractCounts.Expired} expired`}
             </p>
           </div>
           <button style={s.logoutBtn} onClick={handleLogout} disabled={loggingOut}>
@@ -944,6 +1229,12 @@ const Admin = () => {
           >
             📋 Project Proposals <span style={s.tabCount}>{projectCounts.All}</span>
             {projectCounts.New > 0 && <span style={s.newPill}>{projectCounts.New} new</span>}
+          </button>
+          <button
+            style={{ ...s.dashTab, ...(dashTab === 'contracts' ? s.dashTabActive : {}) }}
+            onClick={() => setDashTab('contracts')}
+          >
+            📄 Contracts & Agreements <span style={s.tabCount}>{contractCounts.All}</span>
           </button>
         </div>
 
@@ -1083,7 +1374,7 @@ const Admin = () => {
           )}
         </div>
         </>
-        ) : (
+        ) : dashTab === 'projects' ? (
         <>
 
         {/* ── PROJECT REQUESTS TAB ── */}
@@ -1183,6 +1474,99 @@ const Admin = () => {
           )}
         </div>
         </>
+        ) : (
+        <>
+
+        {/* ── CONTRACTS & AGREEMENTS TAB ── */}
+        {/* Read/manage view — contracts themselves are created from the CEO
+            Control Center form; this mirrors the same `contracts` collection
+            and PDF-generation logic so nothing here is duplicated. */}
+        <h2 style={s.sectionHead}>SLAs, Service Contracts & Professional Agreements</h2>
+
+        {/* Filters toolbar */}
+        <div style={s.toolbar}>
+          <div style={s.tabs}>
+            {['All', 'Draft', 'Active', 'Expired', 'Terminated'].map(st => {
+              const cfg = CONTRACT_STATUS_CONFIG[st];
+              return (
+                <button
+                  key={st}
+                  style={{ ...s.tab, ...(contractStatusFilter === st ? (cfg ? { background: cfg.bg, color: cfg.color, borderColor: cfg.dot } : s.tabActive) : {}) }}
+                  onClick={() => setContractStatusFilter(st)}
+                >
+                  {st} <span style={s.tabCount}>{st === 'All' ? contractCounts.All : contractCounts[st]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <select
+            style={{ ...s.loginInput, width: 'auto', padding: '9px 12px' }}
+            value={contractCategoryFilter}
+            onChange={e => setContractCategoryFilter(e.target.value)}
+          >
+            <option value="All">All Categories</option>
+            {SERVICE_CATEGORIES.map(c => <option key={c.key} value={c.label}>{c.label}</option>)}
+          </select>
+
+          <input
+            style={s.searchInput}
+            placeholder="Search client, title, or contact…"
+            value={contractSearch}
+            onChange={e => setContractSearch(e.target.value)}
+          />
+        </div>
+
+        {/* Contracts table */}
+        <div style={s.tableWrap}>
+          {loadingContracts ? (
+            <div style={s.tableMsg}>Loading contracts…</div>
+          ) : displayedContracts.length === 0 ? (
+            <div style={s.tableMsg}>No contracts match your filters.</div>
+          ) : (
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  <th style={s.th}>Client / Title</th>
+                  <th style={s.th}>Type</th>
+                  <th style={s.th}>Category</th>
+                  <th style={s.th}>Value</th>
+                  <th style={s.th}>Status</th>
+                  <th style={s.th}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedContracts.map(c => (
+                  <tr key={c.id} style={s.tr}>
+                    <td style={s.td}>
+                      <button style={s.nameBtn} onClick={() => setSelectedContract(c)}>
+                        {c.clientCompanyName}
+                      </button>
+                      <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{c.contractTitle}</div>
+                    </td>
+                    <td style={{ ...s.td, fontSize: 13 }}>{c.contractType}</td>
+                    <td style={{ ...s.td, fontSize: 13 }}>{c.serviceCategory}</td>
+                    <td style={{ ...s.td, fontSize: 13, whiteSpace: 'nowrap' }}>{c.contractValue || '—'}</td>
+                    <td style={s.td}><ContractBadge status={c.status} /></td>
+                    <td style={s.td}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button style={s.btnView} onClick={() => setSelectedContract(c)}>View</button>
+                        <button
+                          style={{ ...s.btnDelete, opacity: deletingContractId === c.id ? 0.5 : 1 }}
+                          onClick={() => deleteContract(c.id, c.clientCompanyName)}
+                          disabled={deletingContractId === c.id}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        </>
         )}
       </div>
 
@@ -1198,6 +1582,12 @@ const Admin = () => {
         onClose={() => setSelectedProject(null)}
         onStatusChange={updateProjectStatus}
         statusUpdating={projectStatusUpdating}
+      />
+      <ContractDetailModal
+        contract={selectedContract}
+        onClose={() => setSelectedContract(null)}
+        onStatusChange={updateContractStatus}
+        statusUpdating={contractStatusUpdating}
       />
     </Layout>
   );

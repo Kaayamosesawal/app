@@ -473,7 +473,7 @@ const PrivacyPolicy = () => {
               </div>
               <h1>Your data.<br /><span>Our responsibility.</span></h1>
               <p>
-                This policy explains exactly what personal information Slirus Holdings and its subsidiaries collect across every product and service, why we collect it, how we protect it, and what rights you hold under Ugandan law.
+                This policy explains exactly what personal information Slirus Global Limited and its subsidiaries collect across every product and service, why we collect it, how we protect it, and what rights you hold under Ugandan law.
               </p>
             </div>
 
@@ -488,7 +488,7 @@ const PrivacyPolicy = () => {
               </div>
               <div className="pp-meta-item">
                 <i className="fas fa-building"></i>
-                Applies to Slirus Holdings Limited &amp; all subsidiaries
+                Applies to Slirus Global Limited Limited &amp; all subsidiaries
               </div>
             </div>
           </div>
@@ -535,16 +535,16 @@ const PrivacyPolicy = () => {
               
               <div className="pp-legal-card">
                 <p>
-                  <strong>Slirus Holdings Limited</strong> is a multi-sector technology company incorporated in Uganda and operating from Lira. We are the data controller for all personal information collected through our corporate website (<strong>slirusholding.com</strong>) and across our three product subsidiaries: Slirus Technologies Limited, Slirus Financial Services Limited, and Slirus Fashion Limited.
+                  <strong>Slirus Global Limited Limited</strong> is a multi-sector technology company incorporated in Uganda and operating from Lira. We are the data controller for all personal information collected through our corporate website (<strong>slirusholding.com</strong>) and across our three product subsidiaries: Slirus Technologies Limited, Slirus Financial Services Limited, and Slirus Fashion Limited.
                 </p>
                 <p style={{ marginBottom: 0 }}>
-                  Each subsidiary operates its own product but shares a unified data governance framework set by Slirus Holdings. When you use SlirusPay, SlirusManage, or SlirusFashion, Slirus Holdings Limited remains the ultimate responsible entity for how your data is handled.
+                  Each subsidiary operates its own product but shares a unified data governance framework set by Slirus Global Limited. When you use SlirusPay, SlirusManage, or SlirusFashion, Slirus Global Limited Limited remains the ultimate responsible entity for how your data is handled.
                 </p>
               </div>
 
               <div className="pp-legal-card highlight">
                 <h3><i className="fas fa-map-marker-alt"></i> Registered Address</h3>
-                <p style={{ margin: 0 }}>Slirus Holdings Limited · Lira, Uganda · <strong>sales@slirus.com</strong> · <strong>info@slirus.com</strong></p>
+                <p style={{ margin: 0 }}>Slirus Global Limited Limited · Lira, Uganda · <strong>sales@slirus.com</strong> · <strong>info@slirus.com</strong></p>
               </div>
             </section>
 
@@ -876,7 +876,7 @@ const PrivacyPolicy = () => {
               <p className="pp-section-subtitle">For any privacy-related question, request, or concern, reach us directly.</p>
               
               <div className="pp-contact-card">
-                <h3>Slirus Holdings Limited, Data Privacy Team</h3>
+                <h3>Slirus Global Limited Limited, Data Privacy Team</h3>
                 <p>We respond to all privacy queries within 5 business days. For urgent matters involving a potential data breach or unauthorised access to your account, mark your email subject line <strong>URGENT: Security</strong>.</p>
                 
                 <div className="pp-contact-grid-inner">
@@ -898,7 +898,7 @@ const PrivacyPolicy = () => {
                     <i className="fas fa-map-marker-alt"></i>
                     <div>
                       <strong>Physical Address</strong>
-                      <span>Slirus Holdings, Lira, Uganda</span>
+                      <span>Slirus Global Limited, Lira, Uganda</span>
                     </div>
                   </div>
                   <div className="pp-contact-item-box">

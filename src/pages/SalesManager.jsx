@@ -1,5 +1,5 @@
 /**
- * SalesManager.jsx – Slirus Holdings Sales Officer Workspace
+ * SalesManager.jsx – Slirus Global Limited Sales Officer Workspace
  *
  * CRM & Revenue Operations dashboard for Sales Officers. Sits alongside
  * CeoManager.jsx / Admin.jsx and reuses the same auth/session conventions.
@@ -81,6 +81,56 @@ const PROPOSAL_STATUS_CONFIG = {
 };
 
 const PERIOD_TYPES = ['monthly', 'quarterly'];
+
+// Official Slirus service pricing bands, transcribed from the pricing
+// whiteboard. Each item has a lower (basic/entry) tier and an upper
+// (full/premium) tier, each with its own price and coverage notes.
+const PRICING_GUIDE = [
+  {
+    category: 'Software Development',
+    icon: '💻',
+    accent: '#2E6DA4',
+    items: [
+      {
+        name: 'MVPs (Minimum Viable Products)',
+        low:  { price: 'UGX 500K',   points: ['Basic website / app build', 'No domain name registration', 'No support or maintenance after delivery'] },
+        high: { price: 'UGX 1.2M', points: ['Fully working app', 'Domain name registration included', 'Ongoing maintenance & support for 6 months (within the 1-year plan)', 'UGX 150,000/yr fee for maintenance thereafter', 'Upgrades available at a charge, based on specifications'] },
+      },
+      {
+        name: 'Custom-Tier Builds',
+        low:  { price: 'UGX 2.5M',  points: ['Scope depends on desktop / web platform chosen'] },
+        high: { price: 'UGX 10M', points: ['Fully working app', 'Research phase included', 'Maintenance twice a year', 'Upgrades possible'] },
+      },
+      {
+        name: 'ERPs',
+        low:  { price: 'From UGX 5M', points: ['Scope depends on desktop / web platform chosen', 'No ongoing support or maintenance after delivery'] },
+        high: { price: 'Custom quote',    points: ['Scoped and priced per client requirements'] },
+      },
+    ],
+  },
+  {
+    category: 'Network Infrastructure & IT Services',
+    icon: '🛠️',
+    accent: '#7C3AED',
+    items: [
+      {
+        name: 'Network Design & Architecture (incl. Wireless / Cabling)',
+        low:  { price: 'From UGX 900K',        points: ['Client covers hardware costs in full'] },
+        high: { price: 'Based on size & specs', points: ['Company supplies & covers required hardware in full', 'Charged for the services on top'] },
+      },
+      {
+        name: 'IT Consulting',
+        low:  { price: 'From UGX 300K',   points: ['All services in demand', 'Rates negotiable, vary by scope'] },
+        high: { price: 'Up to UGX 5M', points: ['All services in demand', 'Rates negotiable, vary by scope'] },
+      },
+      {
+        name: 'Cybersecurity',
+        low:  { price: 'From UGX 500K',    points: ['All services in demand', 'Rates negotiable, vary by scope'] },
+        high: { price: 'Up to UGX 10MK', points: ['All services in demand', 'Rates negotiable, vary by scope'] },
+      },
+    ],
+  },
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmtDate = (ts) => (ts?.toDate ? ts.toDate().toLocaleString('en-UG') : (ts ? new Date(ts).toLocaleDateString('en-UG') : '—'));
@@ -237,6 +287,43 @@ const MetricBar = ({ label, value, max, accent }) => {
     </div>
   );
 };
+
+const PricingTier = ({ label, price, points, accent }) => (
+  <div style={pg.tier}>
+    <div style={pg.tierTop}>
+      <span style={pg.tierLabel}>{label}</span>
+      <span style={{ ...pg.tierPrice, color: accent }}>{price}</span>
+    </div>
+    <ul style={pg.list}>
+      {points.map((pt, i) => <li key={i} style={pg.listItem}><span style={{ ...pg.listDot, background: accent }} />{pt}</li>)}
+    </ul>
+  </div>
+);
+
+const PricingCard = ({ item, accent }) => (
+  <div style={pg.card}>
+    <div style={{ ...pg.cardTopBar, background: accent }} />
+    <h4 style={pg.itemName}>{item.name}</h4>
+    <div style={pg.tierRow}>
+      <PricingTier label="Basic / Entry" price={item.low.price} points={item.low.points} accent={accent} />
+      <div style={pg.tierDivider} />
+      <PricingTier label="Full / Premium" price={item.high.price} points={item.high.points} accent={accent} />
+    </div>
+  </div>
+);
+
+const PricingGuideCategory = ({ category, icon, accent, items }) => (
+  <div style={pg.categoryBlock}>
+    <div style={pg.categoryHead}>
+      <span style={{ ...pg.categoryIconWrap, background: `${accent}18` }}><span style={pg.categoryIcon}>{icon}</span></span>
+      <h3 style={{ ...pg.categoryTitle, color: accent }}>{category}</h3>
+    </div>
+    <div style={pg.grid}>
+      {items.map(it => <PricingCard key={it.name} item={it} accent={accent} />)}
+    </div>
+  </div>
+);
+
 
 // ─── Lead Modal (create / edit) ─────────────────────────────────────────────
 const LeadModal = ({ lead, userEmail, onClose, onSave, onDelete }) => {
@@ -1201,6 +1288,13 @@ const SalesManager = () => {
                 <TargetCard target={targets[0]} achieved={myWonTotal} />
               </div>
             )}
+
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, margin: '32px 0 4px' }}>
+              <h2 style={{ ...s.sectionHead, margin: 0 }}>💰 Service Pricing Guide</h2>
+            </div>
+            <p style={{ ...s.pageSub, margin: '0 0 18px' }}>Quick reference for client quotes — official price bands and what each tier includes. Use these when scoping proposals.</p>
+            {PRICING_GUIDE.map(cat => <PricingGuideCategory key={cat.category} {...cat} />)}
+            <p style={pg.footnote}>All figures in Ugandan Shillings (UGX). Ranges are guidance for quoting — confirm final pricing with management before issuing a binding proposal.</p>
           </>
         )}
 
@@ -1511,6 +1605,28 @@ const gd = {
 
 const rm = {
   miniBtn: { background: '#F0F4F8', border: '1px solid #E2E8F0', borderRadius: 5, padding: '3px 8px', fontSize: 11, fontWeight: 600, color: '#5A7A9A', cursor: 'pointer' },
+};
+
+const pg = {
+  categoryBlock:   { marginBottom: 26 },
+  categoryHead:    { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 },
+  categoryIconWrap:{ width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  categoryIcon:    { fontSize: 17 },
+  categoryTitle:   { fontSize: 16, fontWeight: 800, margin: 0 },
+  grid:            { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: 16 },
+  card:            { position: 'relative', background: '#fff', borderRadius: 12, border: '1px solid #E2E8F0', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', padding: '18px 18px 16px', overflow: 'hidden' },
+  cardTopBar:      { position: 'absolute', top: 0, left: 0, right: 0, height: 4 },
+  itemName:        { fontSize: 14.5, fontWeight: 700, color: '#1A3C5E', margin: '4px 0 14px', lineHeight: 1.3 },
+  tierRow:         { display: 'flex', gap: 14, flexWrap: 'wrap' },
+  tier:            { flex: '1 1 130px', minWidth: 130 },
+  tierDivider:     { width: 1, alignSelf: 'stretch', background: '#EEF2F7' },
+  tierTop:         { display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 },
+  tierLabel:       { fontSize: 10.5, fontWeight: 700, color: '#9AAAB8', textTransform: 'uppercase', letterSpacing: 0.5 },
+  tierPrice:       { fontSize: 17, fontWeight: 800 },
+  list:            { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 5 },
+  listItem:        { display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12, color: '#5A7A9A', lineHeight: 1.4 },
+  listDot:         { width: 5, height: 5, borderRadius: '50%', flexShrink: 0, marginTop: 5 },
+  footnote:        { fontSize: 12, color: '#9AAAB8', margin: '4px 0 0', fontStyle: 'italic' },
 };
 
 const cu = {

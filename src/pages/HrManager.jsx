@@ -1,5 +1,5 @@
 /**
- * HrManager.jsx – Slirus Holdings HR Control Center (Human Capital Management)
+ * HrManager.jsx – Slirus Global Limited HR Control Center (Human Capital Management)
  *
  * HR Manager dashboard. Access is provisioned by the CEO Control Center
  * (CeoManager.jsx): a `teamUsers/{uid}` profile with department `HR` or an
@@ -14,9 +14,13 @@
  *  - Automated Lifecycle Management: contract pipeline — Active ➔ Expiring
  *    Soon (auto-flagged, banner alert) ➔ Renewed / Terminated / Resigned /
  *    Expired. Every transition is written to the employee's history.
- *  - Automated Payroll Engine: job-grade base pay, progressive PAYE-style
- *    tax, allowances/deductions, one-click monthly payroll run that
- *    generates immutable digital pay slips (duplicate-run safe).
+ *  - Automated Payroll Engine: job-grade base pay + welfare + weekly
+ *    allowance (paid 4x/month), less the employee's NSSF contribution (the
+ *    company's matching NSSF contribution is tracked separately as an
+ *    employer cost; bonuses are tracked per-grade but are not part of the
+ *    standard payroll run, per the official Slirus Salary Structure), one-click
+ *    monthly payroll run that generates immutable digital pay slips
+ *    (duplicate-run safe).
  *  - Leave Management Workflow: HR logs/reviews requests; single-click
  *    Approve / Reject that automatically adjusts each employee's leave
  *    balance. Balances board included.
@@ -27,7 +31,8 @@
  *    into each employee's profile — this file does not capture biometrics.
  *
  * Branding on generated documents (ID card, Contract, Appointment Letter,
- * Pay Slip) uses the company logo at `/Slirus.png` in the public folder —
+ * Pay Slip, Certificate of Internship) uses the company logo at
+ * `/Slirus.png` in the public folder —
  * place it there before generating real documents. The ID card's QR code
  * is rendered with the `qrcode` npm package (`npm install qrcode`).
  *
@@ -53,20 +58,90 @@ const CEO_EMAIL = (import.meta.env.VITE_CEO_EMAIL || 'kaayamosesawal@gmail.com')
 
 const DEPARTMENTS = ['Sales', 'HR', 'Finance', 'Operations', 'Engineering', 'Marketing', 'Executive'];
 
+// Official "Slirus Salary Structure" — kept in sync with the signed-off
+// paper structure (Category / Raw Salary / Base Salary / NSSF / Welfare /
+// Weekly Allowance / Bonuses / Net Salary). NSSF, PAYE, and Raw/Net Salary
+// are derived below via gradeBreakdown() rather than hard-coded, so editing
+// baseSalary, weeklyAllowance, welfare, or bonuses here automatically
+// recalculates everything downstream.
+const NSSF_EMPLOYEE_RATE = 0.05; // 5% of base salary, withheld from the employee
+const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (employer cost)
+
 const JOB_GRADES = [
-  { code: 'G1', title: 'Intern / Trainee',      level: 1, baseSalary: 400000 },
-  { code: 'G2', title: 'Junior Staff',           level: 2, baseSalary: 900000 },
-  { code: 'G3', title: 'Staff',                  level: 3, baseSalary: 1500000 },
-  { code: 'G4', title: 'Senior Staff',           level: 4, baseSalary: 2300000 },
-  { code: 'G5', title: 'Team Lead',              level: 5, baseSalary: 3200000 },
-  { code: 'G6', title: 'Manager',                level: 6, baseSalary: 4500000 },
-  { code: 'G7', title: 'Senior Manager',         level: 7, baseSalary: 6200000 },
-  { code: 'G8', title: 'Director',               level: 8, baseSalary: 9000000 },
-  { code: 'G9', title: 'Executive',              level: 9, baseSalary: 13000000 },
+  { code: 'SHR-G1', title: 'SHR-Support', level: 1, baseSalary: 150000, welfare: 80000, weeklyAllowance: 30000, bonuses: 0 },
+  { code: 'SHR-G2', title: 'SHR-Junior',  level: 2, baseSalary: 285000, welfare: 80000, weeklyAllowance: 60000, bonuses: 65000 },
+  { code: 'SHR-G3', title: 'SHR-Senior',  level: 3, baseSalary: 325000, welfare: 80000, weeklyAllowance: 90000, bonuses: 100000 },
 ];
+
+// Uganda monthly PAYE bands, revised effective 1 July 2026: the tax-free
+// threshold rose from UGX 235,000 to UGX 335,000 (Income Tax (Amendment)
+// Act 2026). At current base salaries (all ≤ 335,000) every grade below
+// falls entirely in the 0% band, so no employee currently pays PAYE — only
+// the NSSF employee contribution is withheld. This function exists so that
+// if a grade's base salary is ever raised above the threshold (e.g. a new
+// senior/management grade), PAYE is applied automatically instead of being
+// silently skipped. Confirm figures against URA guidance before relying on
+// this for statutory filing.
+const computeTax = (gross) => {
+  const g = Math.max(0, Number(gross) || 0);
+  const bands = [
+    { upTo: 335000,     rate: 0,    base: 0 },
+    { upTo: 410000,     rate: 0.10, base: 0 },
+    { upTo: 10000000,   rate: 0.20, base: 7500 },
+    { upTo: Infinity,   rate: 0.30, base: 1925500 },
+  ];
+  for (let i = 0; i < bands.length; i++) {
+    const b = bands[i];
+    if (g <= b.upTo) {
+      const floor = i === 0 ? 0 : bands[i - 1].upTo;
+      return Math.round(b.base + (g - floor) * b.rate);
+    }
+  }
+  return 0;
+};
+
+// Full pay breakdown for a grade, matching the official salary structure:
+//   PAYE            = progressive tax on base salary (0 while base ≤ 335,000)
+//   NSSF Employee   = 5% of base salary (withheld from employee)
+//   NSSF Company    = 10% of base salary (employer cost, not paid to employee)
+//   Weekly Allowance is a weekly rate, paid out 4x per month.
+//   Total Allowance = welfare + (weekly allowance × 4)
+//   Raw Salary      = base + NSSF (company) + Total Allowance
+//                     (total monthly cost to the company for this grade; bonuses are
+//                     tracked separately and shown on their own line, not folded in)
+//   Net Salary      = base − PAYE − NSSF (employee) + Total Allowance
+//                     (what the employee actually takes home; bonuses excluded)
+const gradeBreakdown = (grade) => {
+  if (!grade) return null;
+  const base = Number(grade.baseSalary) || 0;
+  const welfare = Number(grade.welfare) || 0;
+  const weeklyAllowance = Number(grade.weeklyAllowance) || 0;
+  const weeklyAllowanceMonthly = weeklyAllowance * 4;
+  const totalAllowance = welfare + weeklyAllowanceMonthly;
+  const bonuses = Number(grade.bonuses) || 0;
+  const payeTax = computeTax(base);
+  const nssfEmployee = Math.round(base * NSSF_EMPLOYEE_RATE);
+  const nssfCompany = Math.round(base * NSSF_COMPANY_RATE);
+  const rawSalary = base + nssfCompany + totalAllowance;
+  const netSalary = base - payeTax - nssfEmployee + totalAllowance;
+  return {
+    base, welfare, weeklyAllowance, weeklyAllowanceMonthly, totalAllowance, bonuses,
+    payeTax, nssfEmployee, nssfCompany, rawSalary, netSalary,
+  };
+};
 
 const CONTRACT_TYPES = ['Probation', 'Fixed-Term', 'Permanent', 'Intern', 'Consultant'];
 const GENDERS = ['Female', 'Male', 'Other', 'Prefer not to say'];
+const REPORTS_TO_OPTIONS = ['Manager', 'HoD'];
+
+// Engagement type drives which document set (and which wording) is generated
+// for a given person: a "Contract of Employment" + "Letter of Appointment"
+// for payroll staff, or an "Independent Service and Task Execution
+// Agreement" for engaged contractors. Keeping this a first-class field (not
+// inferred from Contract Type) avoids accidentally mixing employee-only
+// statutory language (leave, PAYE, NSSF) into a contractor's paperwork.
+const ENGAGEMENT_TYPES = ['Employee', 'Independent Contractor'];
+const SERVICE_TERM_MONTHS = 6; // fixed project-bound term, renewable only by written agreement
 
 const CONTRACT_MANUAL_STATES = ['active', 'renewed', 'terminated', 'resigned'];
 const EXPIRING_SOON_WINDOW_DAYS = 30;
@@ -91,10 +166,10 @@ const IDLE_WARN_MS  = 18 * 60 * 1000;
 // Edit these to match the company's registered details before issuing real
 // contracts or appointment letters.
 const COMPANY_INFO = {
-  name: 'Slirus Holdings',
-  address: '[Company Postal Address, Plot No., Street, City]',
-  phone: '[Company Phone Number]',
-  email: '[Company Email Address]',
+  name: 'Slirus Global Limited',
+  address: 'P.O Box 331921, Lira -Uganda',
+  phone: '+256 776 079 495',
+  email: 'hr@slirus.com',
   website: 'https://slirus.com',
   logo: '/Slirus.png', // served from the public folder
 };
@@ -137,27 +212,6 @@ const daysBetween = (a, b) => {
   const A = toDateObj(a), B = toDateObj(b);
   if (!A || !B) return null;
   return Math.round((B.setHours(0,0,0,0) - A.setHours(0,0,0,0)) / 86400000);
-};
-
-// Progressive, PAYE-style monthly tax (illustrative — configure to your
-// jurisdiction's real bands before relying on this for statutory filing).
-const computeTax = (gross) => {
-  const g = Math.max(0, Number(gross) || 0);
-  const bands = [
-    { upTo: 235000,     rate: 0,    base: 0 },
-    { upTo: 335000,     rate: 0.10, base: 0 },
-    { upTo: 410000,     rate: 0.20, base: 10000 },
-    { upTo: 10000000,   rate: 0.30, base: 25000 },
-    { upTo: Infinity,   rate: 0.40, base: 2902000 },
-  ];
-  for (let i = 0; i < bands.length; i++) {
-    const b = bands[i];
-    if (g <= b.upTo) {
-      const floor = i === 0 ? 0 : bands[i - 1].upTo;
-      return Math.round(b.base + (g - floor) * b.rate);
-    }
-  }
-  return 0;
 };
 
 const gradeByCode = (code) => JOB_GRADES.find(g => g.code === code) || null;
@@ -298,10 +352,10 @@ const logoImgTag = () => `<img class="logo" src="${window.location.origin}${COMP
 
 // ─── Standard Contract of Employment (Uganda Employment Act, 2006 reference) ──
 // This is a general-purpose starting template, not a substitute for legal
-// review. Fields pulled from the employee record are filled in automatically;
-// blank underscored spaces are left for details this system doesn't capture
-// (place of work, reporting line, bank account, special conditions) and for
-// wet-ink signing.
+// review. Fields pulled from the employee record are filled in automatically,
+// including place of work and HFB bank account number; blank underscored
+// spaces are left only for details this system doesn't capture (reporting
+// line, special conditions) and for wet-ink signing.
 const buildContractHtml = (employee) => {
   const grade = gradeByCode(employee.jobGradeCode);
   const name = employeeFullName(employee);
@@ -316,23 +370,23 @@ const buildContractHtml = (employee) => {
     </div>
     <h2>Contract of Employment</h2>
 
-    <p class="clause">THIS CONTRACT OF EMPLOYMENT is made between <strong>${COMPANY_INFO.name}</strong> of ${COMPANY_INFO.address} (<strong>"the Employer"</strong>) and <strong>${name}</strong> of <span class="blank">&nbsp;</span> (<strong>"the Employee"</strong>), and made in accordance with the Employment Act, 2006 of the Republic of Uganda and its subsidiary regulations.</p>
+    <p class="clause">THIS CONTRACT OF EMPLOYMENT is made between <strong>${COMPANY_INFO.name}</strong> of ${COMPANY_INFO.address} (<strong>"the Employer"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Employee"</strong>), and made in accordance with the Employment Act, 2006 of the Republic of Uganda and its subsidiary regulations.</p>
 
     <h3>1. Position &amp; Duties</h3>
-    <p class="clause">The Employee is engaged as <strong>${employee.position || '[Job Title]'}</strong> in the <strong>${employee.department}</strong> department, Job Grade <strong>${grade ? `${grade.code} – ${grade.title}` : '[Grade]'}</strong>, reporting to <span class="blank">&nbsp;</span>. The Employee shall perform the duties of this position and any other reasonable duties assigned by the Employer from time to time.</p>
+    <p class="clause">The Employee is engaged as <strong>${employee.position || '[Job Title]'}</strong> in the <strong>${employee.department}</strong> department, Job Grade <strong>${grade ? `${grade.code} – ${grade.title}` : '[Grade]'}</strong>, reporting to the <strong>${employee.reportsTo || '[Manager/HoD]'}</strong>. The Employee shall perform the duties of this position and any other reasonable duties assigned by the Employer from time to time.</p>
 
     <h3>2. Commencement &amp; Duration</h3>
     <p class="clause">This Contract commences on <strong>${fmtDate(employee.contractStart || employee.hireDate)}</strong> and is a <strong>${employee.contractType || '[Contract Type]'}</strong> contract${employee.contractEnd ? `, ending on <strong>${fmtDate(employee.contractEnd)}</strong> unless renewed or lawfully terminated earlier` : ', continuing until lawfully terminated by either party in accordance with Clause 6'}.</p>
     ${probationClause}
 
     <h3>3. Place of Work</h3>
-    <p class="clause">The Employee's normal place of work shall be <span class="blank">&nbsp;</span>, or such other location as the Employer may reasonably require within the Republic of Uganda.</p>
+    <p class="clause">The Employee's normal place of work shall be ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}, or such other location as the Employer may reasonably require within the Republic of Uganda.</p>
 
     <h3>4. Hours of Work</h3>
-    <p class="clause">The Employee shall work <span class="blank">48</span> hours per week, Monday to <span class="blank">Saturday</span>, from <span class="blank">&nbsp;</span> to <span class="blank">&nbsp;</span>, with a rest break as scheduled by the Employer, and at least one rest day per week, in accordance with the Employment Act, 2006.</p>
+    <p class="clause">The Employee shall work <strong>48 hours</strong> per week, from <strong>9:00 AM to 5:00 PM</strong>, with breaktime for breakfast at <strong>11:00 AM</strong> and lunch at <strong>1:00 PM</strong>, and at least one rest day per week, in accordance with the Employment Act, 2006.</p>
 
     <h3>5. Remuneration</h3>
-    <p class="clause">The Employee shall be paid a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong> (Job Grade ${grade?.code || '—'}), payable monthly in arrears by bank transfer to account number <span class="blank">&nbsp;</span> at <span class="blank">&nbsp;</span> Bank, subject to statutory deductions including PAYE and NSSF contributions.</p>
+    <p class="clause">The Employee shall be paid a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong> (Job Grade ${grade?.code || '—'}), payable monthly in arrears by bank transfer to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>, subject to statutory deductions including PAYE and NSSF contributions.</p>
 
     <h3>6. Leave Entitlement</h3>
     <p class="clause">The Employee is entitled to twenty-one (21) working days of paid annual leave for each period of twelve (12) months' continuous service, in addition to public holidays. Sick leave, maternity/paternity leave, and compassionate leave shall be granted in accordance with the Employment Act, 2006 and the Employer's leave policy.</p>
@@ -352,7 +406,10 @@ const buildContractHtml = (employee) => {
     <p class="clause">This Contract is governed by the laws of the Republic of Uganda, including the Employment Act, 2006, the Employment (Standard Wage) Order, and the NSSF Act, as amended.</p>
 
     <h3>10. Special Conditions</h3>
-    <p class="clause">${'&nbsp;'.repeat(1)}<span class="blank" style="min-width:100%;display:block;height:20px;margin-bottom:6px;">&nbsp;</span><span class="blank" style="min-width:100%;display:block;height:20px;">&nbsp;</span></p>
+    <p class="clause" style="white-space:pre-wrap; direction:ltr; text-align:left; unicode-bidi:plaintext;">${(employee.specialConditions && employee.specialConditions.trim())
+        ? employee.specialConditions
+        : '<span class="blank" style="min-width:100%;display:block;height:20px;margin-bottom:6px;">&nbsp;</span><span class="blank" style="min-width:100%;display:block;height:20px;">&nbsp;</span>'
+      }</p>
 
     <div class="sigblock">
       <div class="sigcol"><div class="sigline">Signed for and on behalf of the Employer &nbsp;&nbsp; Name: __________________ &nbsp; Date: __________</div></div>
@@ -386,28 +443,121 @@ const buildAppointmentLetterHtml = (employee) => {
     <p class="clause">We are pleased to confirm your appointment as <strong>${employee.position || '[Job Title]'}</strong> in the <strong>${employee.department}</strong> department of ${COMPANY_INFO.name}, on the following terms:</p>
 
     <h3>1. Commencement</h3>
-    <p class="clause">Your employment shall commence on <strong>${fmtDate(employee.hireDate)}</strong>. You are required to report to <span class="blank">&nbsp;</span> (Line Manager) at our offices at <span class="blank">&nbsp;</span> on your first day at <span class="blank">&nbsp;</span> (time).</p>
+    <p class="clause">Your employment shall commence on <strong>${fmtDate(employee.hireDate)}</strong>. You are required to report to the <strong>${employee.reportsTo || '[Manager/HoD]'}</strong> at our offices at ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'} on your first day at <strong>9:00 AM</strong>.</p>
 
     <h3>2. Nature of Appointment</h3>
     <p class="clause">This is a <strong>${employee.contractType || '[Contract Type]'}</strong> appointment${employee.contractEnd ? `, running until <strong>${fmtDate(employee.contractEnd)}</strong>` : ''}.${isProbation ? ` You will serve a probationary period of <span class="blank">${DEFAULT_PROBATION_MONTHS} months</span>, during which your performance will be reviewed before confirmation.` : ''}</p>
 
     <h3>3. Job Grade &amp; Remuneration</h3>
-    <p class="clause">You are placed on Job Grade <strong>${grade?.code || '—'}</strong> (${grade?.title || '—'}), with a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong>, subject to statutory deductions (PAYE, NSSF), payable monthly by bank transfer to an account you shall provide to HR.</p>
+    <p class="clause">You are placed on Job Grade <strong>${grade?.code || '—'}</strong> (${grade?.title || '—'}), with a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong>, subject to statutory deductions (PAYE, NSSF), payable monthly by bank transfer to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>.</p>
 
-    <h3>4. Documents Required on Reporting</h3>
-    <p class="clause">Please bring the following on your first day: (a) a copy of your National ID / passport; (b) certified copies of academic and professional certificates; (c) two recent passport photographs; (d) bank account details; (e) NSSF number, if already registered; (f) contacts of two referees; (g) <span class="blank">&nbsp;</span>.</p>
+    <h3>4. Place of Work &amp; Hours</h3>
+    <p class="clause">Your normal place of work shall be ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}. Standard hours of work are <strong>48 hours</strong> per week, from <strong>9:00 AM to 5:00 PM</strong>, with breaktime for breakfast at <strong>11:00 AM</strong> and lunch at <strong>1:00 PM</strong>.</p>
 
-    <h3>5. General</h3>
+    <h3>5. Documents Required on Reporting</h3>
+    <p class="clause">Please bring the following on your first day: (a) a copy of your National ID / passport; (b) certified copies of academic and professional certificates; (c) two recent passport photographs; (d) bank account details; (e) NSSF number, if already registered; (f) contacts of two referees; (g) LC1 letter of resident place attached.</p>
+
+    <h3>6. General</h3>
     <p class="clause">Your full terms of employment, including hours of work, leave entitlement, termination notice, and conduct obligations, are set out in the accompanying Contract of Employment, which forms part of this offer.</p>
 
     <p class="clause">Please indicate your acceptance of this offer by signing and returning a copy of this letter by <span class="blank">&nbsp;</span>. We look forward to welcoming you to the team.</p>
 
     <div class="sigblock">
       <div class="sigcol"><div class="sigline">For ${COMPANY_INFO.name} &nbsp;&nbsp; Name: __________________ &nbsp; Title: __________________</div></div>
-      <div class="sigcol"><div class="sigline">Accepted by Employee &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
+      <div class="sigcol"><div class="sigline">Signed by Employee &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
     </div>
 
     <div class="footerNote">This is a general-purpose appointment letter template generated from HR system records. Review with a qualified HR/legal advisor before issuing, and attach the corresponding Contract of Employment.</div>
+  `;
+};
+
+// ─── Independent Service and Task Execution Agreement ──────────────────────
+// For engagementType === 'Independent Contractor'. Deliberately mirrors the
+// structure, data sourcing, and print/download pipeline of
+// buildContractHtml() (same letterhead, clause numbering style, signature
+// block, footer disclaimer) so the two document types feel like siblings —
+// but every clause is written to support a principal-to-principal service
+// relationship rather than a statutory employment relationship. It never
+// uses "Employer / Employee / Salary / Staff payroll" and never references
+// annual/sick leave, PAYE, NSSF, or overtime; fees are framed as a weekly
+// operational token plus a monthly project completion balance, derived from
+// the same grade record so figures never drift from the salary structure.
+const buildServiceAgreementHtml = (employee) => {
+  const grade = gradeByCode(employee.jobGradeCode);
+  const bd = gradeBreakdown(grade);
+  const name = employeeFullName(employee);
+  const startDate = employee.contractStart || employee.hireDate;
+  const start = toDateObj(startDate);
+  const computedEnd = start ? new Date(start.getFullYear(), start.getMonth() + SERVICE_TERM_MONTHS, start.getDate()) : null;
+  const endDate = employee.contractEnd || (computedEnd ? computedEnd.toISOString().slice(0, 10) : null);
+
+  const weeklyToken = bd?.weeklyAllowance || 0;
+  const monthlyBalance = (bd?.base || 0) + (bd?.welfare || 0);
+  const totalMonthly = (bd?.base || 0) + (bd?.welfare || 0) + (bd?.weeklyAllowanceMonthly || 0);
+
+  return `
+    <div class="headRow">
+      <div>${logoImgTag()}<h1>${COMPANY_INFO.name} - SMC Limited</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
+      <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(startDate)}</p>
+    </div>
+    <h2>Independent Service and Task Execution Agreement</h2>
+
+    <p class="clause">THIS INDEPENDENT SERVICE AND TASK EXECUTION AGREEMENT ("Agreement") is made between <strong>Slirus Global Limited - SMC Limited</strong> of ${COMPANY_INFO.address} (<strong>"the Company"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Service Provider"</strong>), collectively "the Parties."</p>
+
+    <h3>1. Nature of Relationship</h3>
+    <p class="clause">The Parties acknowledge that this Agreement creates a principal-to-principal commercial relationship. The Service Provider is an independent contractor engaged to deliver specified outputs and shall not be considered an employee, agent, partner, or representative of the Company for any purpose under Ugandan law. The Service Provider is solely responsible for their own personal tax obligations, social security contributions, and any statutory registrations arising from this Agreement.</p>
+
+    <h3>2. Scope of Services</h3>
+    <p class="clause">The Service Provider shall deliver the following operational outputs and project deliverables, in the capacity of <strong>${employee.position || '[Engagement Title]'}</strong> supporting the <strong>${employee.department}</strong> function, Reference Grade <strong>${grade ? `${grade.code} – ${grade.title}` : '[Grade]'}</strong>: periodic technical field support, digital asset updates, and inventory tracking as assigned per project phase, together with such further task-based deliverables as the Company may specify in writing from time to time. Coordination on task scheduling and deliverable review shall be with the Company's <strong>${employee.reportsTo || '[Project Coordinator]'}</strong>.</p>
+
+    <h3>3. Term and Expiration</h3>
+    <p class="clause">This Agreement shall run for a fixed term of six (6) months from <strong>${fmtDate(startDate)}</strong>, ending on <strong>${endDate ? fmtDate(endDate) : '[End Date]'}</strong>, after which it shall automatically expire unless reviewed, renegotiated, and renewed in writing by both Parties based on ongoing project requirements. This Agreement does not create any expectation of continued engagement beyond its stated term.</p>
+
+    <h3>4. Project Location</h3>
+    <p class="clause">Tasks under this Agreement shall generally be executed at or from ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}, or such other project site as a given task may require, at the Service Provider's own discretion as to method and route of execution.</p>
+
+    <h3>5. Service Fees and Payment Structure</h3>
+    <p class="clause">In consideration for the timely execution of the specified tasks, the Company shall disburse project facilitation fees and milestone service payments, structured as a weekly operational token and a final monthly project completion balance, upon presentation of verified task execution vouchers. Fees are disbursed to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>. No amount payable under this Agreement constitutes a salary, wage, or payroll payment.</p>
+    <table class="ref">
+      <thead><tr><th>Component</th><th>Basis</th><th>Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Weekly Operational Token</td><td>Paid each Saturday, 4 disbursements/month</td><td>${fmtMoney(weeklyToken)} × 4 = ${fmtMoney(bd?.weeklyAllowanceMonthly)}</td></tr>
+        <tr><td>Monthly Project Completion Balance</td><td>Base facilitation + project resource allowance, last Saturday of the month</td><td>${fmtMoney(bd?.base)} + ${fmtMoney(bd?.welfare)} = ${fmtMoney(monthlyBalance)}</td></tr>
+        <tr style="font-weight:700;"><td colspan="2">Total Monthly Project Budget</td><td>${fmtMoney(totalMonthly)}</td></tr>
+      </tbody>
+    </table>
+
+    <h3>6. Autonomy and Non-Exclusivity</h3>
+    <p class="clause">The Service Provider retains full discretion over the means, manner, and timeline used to achieve the agreed task outputs, provided deliverables meet the quality and deadlines specified per project phase. The Service Provider is not bound by fixed office hours, is not structurally subject to the Company's internal staff conduct rules, and is free to render similar services to other clients, provided this does not create a conflict with active task deliverables owed to the Company under this Agreement.</p>
+
+    <h3>7. Tools, Materials and Vouchers</h3>
+    <p class="clause">Except where the Company supplies specific equipment or digital assets for a task, the Service Provider shall furnish their own tools and resources necessary to execute the deliverables. Each disbursement under Clause 5 is conditioned on the Service Provider presenting a verified task execution voucher confirming completion of the corresponding deliverable.</p>
+
+    <h3>8. Confidentiality</h3>
+    <p class="clause">The Service Provider shall not, during or after the term of this Agreement, disclose any confidential business, financial, project, or client information belonging to the Company obtained in the course of executing tasks under this Agreement.</p>
+
+    <h3>9. Termination</h3>
+    <p class="clause">Either Party may terminate this Agreement prior to its stated expiration by giving <strong>2 weeks'</strong> written notice, or immediately in the event of material breach, including failure to deliver verified task outputs. Termination does not entitle the Service Provider to any facilitation fee or balance beyond deliverables verified up to the effective date of termination.</p>
+
+    <h3>10. Governing Law</h3>
+    <p class="clause">This Agreement is governed by the laws of the Republic of Uganda applicable to commercial service contracts between independent parties, including the Contracts Act, 2010. Nothing in this Agreement shall be construed to create rights or obligations under the Employment Act, 2006.</p>
+
+    <h3>11. Special Conditions</h3>
+    <p class="clause" style="white-space:pre-wrap; direction:ltr; text-align:left; unicode-bidi:plaintext;">${(employee.specialConditions && employee.specialConditions.trim())
+        ? employee.specialConditions
+        : '<span class="blank" style="min-width:100%;display:block;height:20px;margin-bottom:6px;">&nbsp;</span><span class="blank" style="min-width:100%;display:block;height:20px;">&nbsp;</span>'
+      }</p>
+
+    <div class="sigblock">
+      <div class="sigcol"><div class="sigline">Signed for and on behalf of the Company &nbsp;&nbsp; Name: __________________ &nbsp; Date: __________</div></div>
+      <div class="sigcol"><div class="sigline">Signed by the Service Provider &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
+    </div>
+    <div class="sigblock">
+      <div class="sigcol"><div class="sigline">Witness Name: __________________ &nbsp; Signature: __________</div></div>
+      <div class="sigcol"></div>
+    </div>
+
+    <div class="footerNote">This document is a general-purpose independent service agreement template generated from system records. It is not a substitute for review by a qualified legal advisor before use, and should be adapted to the specific project scope and any applicable regulations in force.</div>
   `;
 };
 
@@ -424,12 +574,143 @@ const buildPayslipHtml = (payslip) => `
       <tr><td>Gross Pay</td><td style="text-align:right">${fmtMoney(payslip.grossPay)}</td></tr>
       <tr><td>Allowances</td><td style="text-align:right">${fmtMoney(payslip.allowances)}</td></tr>
       <tr><td>PAYE Tax</td><td style="text-align:right">-${fmtMoney(payslip.taxAmount)}</td></tr>
-      <tr><td>Other Deductions</td><td style="text-align:right">-${fmtMoney(payslip.otherDeductions)}</td></tr>
+      <tr><td>NSSF (Employee, 5%)</td><td style="text-align:right">-${fmtMoney(payslip.otherDeductions)}</td></tr>
       <tr style="font-weight:700;font-size:14px;"><td>Net Pay</td><td style="text-align:right">${fmtMoney(payslip.netPay)}</td></tr>
     </tbody>
   </table>
   <p class="clause" style="font-size:11px;color:#9AAAB8;">Generated by ${payslip.generatedBy || 'HR System'}. This pay slip is issued electronically and is valid without signature.</p>
 `;
+
+// ─── Certificate of Internship (landscape, decorative) ─────────────────────
+// Deliberately a separate popup window (not openPrintWindow) because a
+// certificate needs a landscape page, an ornamental border, and script/serif
+// display fonts rather than the contract letterhead layout. Google Fonts are
+// loaded inside the popup itself so the main app bundle stays untouched.
+const openCertificateWindow = (title, bodyHtml) => {
+  const win = window.open('', '_blank', 'width=1100,height=800');
+  if (!win) { alert('Please allow pop-ups to download this document.'); return; }
+  win.document.write(`
+    <html>
+      <head>
+        <title>${title}</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Great+Vibes&family=Cormorant+Garamond:wght@400;500;600&display=swap" rel="stylesheet">
+        <style>
+          * { box-sizing: border-box; }
+          @page { size: landscape; margin: 0; }
+          html, body { margin: 0; padding: 0; }
+          body {
+            font-family: 'Cormorant Garamond', Georgia, serif;
+            color: #2A2A2A;
+            background: #EFEAE0;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh;
+            padding: 24px 0 90px;
+          }
+          .certPage {
+            width: 1050px; height: 740px;
+            background: #FFFDF9;
+            position: relative;
+            box-shadow: 0 6px 30px rgba(0,0,0,0.15);
+            flex-shrink: 0;
+          }
+          .certBorderOuter { position: absolute; inset: 18px; border: 2px solid #7C3AED; }
+          .certBorderInner { position: absolute; inset: 26px; border: 1px solid #C7A008; }
+          .corner { position: absolute; width: 46px; height: 46px; border: 3px solid #C7A008; }
+          .corner.tl { top: 22px; left: 22px; border-right: none; border-bottom: none; }
+          .corner.tr { top: 22px; right: 22px; border-left: none; border-bottom: none; }
+          .corner.bl { bottom: 22px; left: 22px; border-right: none; border-top: none; }
+          .corner.br { bottom: 22px; right: 22px; border-left: none; border-top: none; }
+          .certInner {
+            position: relative; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+            padding: 44px 70px 28px; text-align: center;
+          }
+          .certLogo { height: 52px; margin-bottom: 6px; }
+          .certCompany { font-family: 'Playfair Display', Georgia, serif; font-size: 15px; letter-spacing: 3px; text-transform: uppercase; color: #1A3C5E; margin: 0; }
+          .certKicker { font-family: Arial, Helvetica, sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: #7C3AED; margin: 18px 0 4px; }
+          .certTitle { font-family: 'Playfair Display', Georgia, serif; font-size: 38px; font-weight: 700; color: #1A3C5E; margin: 0 0 4px; letter-spacing: 1px; }
+          .certRule { width: 120px; height: 2px; background: #C7A008; margin: 10px auto 20px; }
+          .certPresented { font-family: Arial, Helvetica, sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: #7A8A9A; margin: 0 0 6px; }
+          .certName { font-family: 'Great Vibes', cursive; font-size: 50px; color: #7C3AED; margin: 0 0 14px; line-height: 1; }
+          .certBody { font-size: 17.5px; line-height: 1.7; color: #3A3A3A; max-width: 690px; margin: 0 auto; }
+          .certBody strong { color: #1A3C5E; }
+          .certFooter { display: flex; justify-content: space-between; align-items: flex-end; width: 100%; max-width: 780px; margin-top: auto; padding-top: 24px; }
+          .certSig { text-align: center; width: 220px; font-family: Arial, Helvetica, sans-serif; }
+          .certSigLine { border-top: 1px solid #1A1A1A; margin-bottom: 6px; padding-top: 6px; font-size: 12px; font-weight: 700; color: #1A3C5E; min-height: 14px; }
+          .certSigRole { font-size: 10.5px; color: #7A8A9A; text-transform: uppercase; letter-spacing: 1px; }
+          .certSeal { width: 76px; height: 76px; border-radius: 50%; border: 2.5px solid #C7A008; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', Georgia, serif; font-size: 9.5px; color: #C7A008; text-transform: uppercase; letter-spacing: 0.6px; line-height: 1.3; text-align: center; margin: 0 auto 6px; }
+          .certMeta { font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #9AAAB8; margin-top: 16px; letter-spacing: 0.4px; }
+          .no-print { font-family: Arial, Helvetica, sans-serif; margin-top: 22px; }
+          @media print {
+            body { background: #fff; padding: 0; }
+            .certPage { box-shadow: none; }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        ${bodyHtml}
+        <div class="no-print">
+          <button onclick="window.print()" style="padding:10px 18px;background:#7C3AED;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:Arial,Helvetica,sans-serif;">Print / Save as PDF</button>
+        </div>
+      </body>
+    </html>
+  `);
+  win.document.close();
+};
+
+// Certificate copy is deliberately warm/appreciative (unlike the contract
+// templates above, which are deliberately neutral/legal) — this document is
+// meant to be kept and shared by the intern, not filed for compliance.
+const buildInternshipCertificateHtml = (employee) => {
+  const name = employeeFullName(employee);
+  const firstName = employee?.firstName || name.split(' ')[0] || 'The intern';
+  const startDate = employee.contractStart || employee.hireDate;
+  const endDate = employee.contractEnd ? fmtDate(employee.contractEnd) : fmtDate(new Date());
+  const issueDate = fmtDate(new Date());
+  const certNo = `SH-CERT-${employee.employeeCode || generateEmployeeCode()}`;
+
+  return `
+    <div class="certPage">
+      <div class="certBorderOuter"></div>
+      <div class="certBorderInner"></div>
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <div class="certInner">
+        ${logoImgTag().replace('class="logo"', 'class="certLogo"')}
+        <p class="certCompany">${COMPANY_INFO.name}</p>
+        <p class="certKicker">This certificate is proudly presented to</p>
+        <h1 class="certTitle">Certificate of Internship</h1>
+        <div class="certRule"></div>
+        <p class="certPresented">Awarded to</p>
+        <p class="certName">${name}</p>
+        <p class="certBody">
+          In recognition of the successful completion of an internship as <strong>${employee.position || 'an Intern'}</strong>
+          in the <strong>${employee.department}</strong> department at <strong>${COMPANY_INFO.name}</strong>, from
+          <strong>${fmtDate(startDate)}</strong> to <strong>${endDate}</strong>. Throughout this period, ${firstName}
+          demonstrated commendable dedication, professionalism, and a genuine eagerness to learn, and made a
+          valued contribution to the team. We extend our sincere appreciation for their commitment and wish
+          them continued success in all their future endeavors.
+        </p>
+        <div class="certFooter">
+          <div class="certSig">
+            <div class="certSigLine">&nbsp;</div>
+            <div class="certSigRole">HR Manager</div>
+          </div>
+          <div class="certSig">
+            <div class="certSeal">${COMPANY_INFO.name}<br/>★</div>
+          </div>
+          <div class="certSig">
+            <div class="certSigLine">&nbsp;</div>
+            <div class="certSigRole">Executive Director</div>
+          </div>
+        </div>
+        <p class="certMeta">Certificate No. ${certNo} &nbsp;·&nbsp; Issued ${issueDate} &nbsp;·&nbsp; ${COMPANY_INFO.website}</p>
+      </div>
+    </div>
+  `;
+};
 
 // ─── Local-storage photo store (ID Card creator) ────────────────────────────
 // Photos never leave the device: they're read via a file/camera input,
@@ -563,7 +844,9 @@ const Avatar = ({ employeeId, name, size = 40 }) => {
 const EMPTY_EMPLOYEE = {
   firstName: '', lastName: '', email: '', phone: '', gender: GENDERS[0], dob: '',
   department: DEPARTMENTS[0], position: '', jobGradeCode: JOB_GRADES[0].code,
-  contractType: CONTRACT_TYPES[0], hireDate: '', contractStart: '', contractEnd: '',
+  engagementType: ENGAGEMENT_TYPES[0], contractType: CONTRACT_TYPES[0], hireDate: '', contractStart: '', contractEnd: '',
+  placeOfWork: '', bankAccountNumber: '', specialConditions: '',
+  origin: '', reportsTo: REPORTS_TO_OPTIONS[0],
 };
 
 const EmployeeFormModal = ({ initial, onClose, onSave }) => {
@@ -594,7 +877,8 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('First and last name are required.'); return; }
     if (!form.hireDate) { setError('Hire date is required.'); return; }
     setSaving(true); setError('');
-    const outcome = await onSave(form, photoDataUrl, isEdit);
+    const cleanedForm = { ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '' };
+    const outcome = await onSave(cleanedForm, photoDataUrl, isEdit);
     setSaving(false);
     if (!outcome.success) setError(outcome.error || 'Could not save the employee record.');
     else onClose();
@@ -610,7 +894,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
           </div>
           <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} style={ms.modalForm}>
           <div style={ms.body}>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 18 }}>
               <div style={{ width: 72, height: 72, borderRadius: '50%', overflow: 'hidden', background: '#F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #E2E8F0', flexShrink: 0 }}>
@@ -647,8 +931,19 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               <div>
                 <label style={cu.label}>Job grade</label>
                 <select style={cu.select} value={form.jobGradeCode} onChange={e => update('jobGradeCode', e.target.value)} disabled={saving}>
-                  {JOB_GRADES.map(g => <option key={g.code} value={g.code}>{g.code} · {g.title} ({fmtMoney(g.baseSalary)})</option>)}
+                  {JOB_GRADES.map(g => <option key={g.code} value={g.code}>{g.title} ({fmtMoney(g.baseSalary)} base)</option>)}
                 </select>
+              </div>
+              <div>
+                <label style={cu.label}>Engagement type</label>
+                <select style={cu.select} value={form.engagementType} onChange={e => update('engagementType', e.target.value)} disabled={saving}>
+                  {ENGAGEMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <p style={{ fontSize: 11, color: '#9AAAB8', margin: '4px 0 0' }}>
+                  {form.engagementType === 'Independent Contractor'
+                    ? 'Generates an Independent Service and Task Execution Agreement instead of a Contract of Employment.'
+                    : 'Generates a standard Contract of Employment and Letter of Appointment.'}
+                </p>
               </div>
               <div>
                 <label style={cu.label}>Contract type</label>
@@ -660,6 +955,32 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               <div><label style={cu.label}>Hire date</label><input type="date" style={s.loginInput} value={form.hireDate} onChange={e => update('hireDate', e.target.value)} disabled={saving} /></div>
               <div><label style={cu.label}>Contract start</label><input type="date" style={s.loginInput} value={form.contractStart} onChange={e => update('contractStart', e.target.value)} disabled={saving} /></div>
               <div><label style={cu.label}>Contract end (blank = open-ended)</label><input type="date" style={s.loginInput} value={form.contractEnd} onChange={e => update('contractEnd', e.target.value)} disabled={saving} /></div>
+
+              <div><label style={cu.label}>Place of work</label><input style={s.loginInput} placeholder="e.g. Head Office, Kampala" value={form.placeOfWork} onChange={e => update('placeOfWork', e.target.value)} disabled={saving} /></div>
+              <div><label style={cu.label}>HFB account number</label><input style={s.loginInput} placeholder="Housing Finance Bank account no." value={form.bankAccountNumber} onChange={e => update('bankAccountNumber', e.target.value)} disabled={saving} /></div>
+
+              <div><label style={cu.label}>Origin (home village/district)</label><input style={s.loginInput} placeholder="e.g. Mbarara, Uganda" value={form.origin} onChange={e => update('origin', e.target.value)} disabled={saving} /></div>
+              <div>
+                <label style={cu.label}>Reports to</label>
+                <select style={cu.select} value={form.reportsTo} onChange={e => update('reportsTo', e.target.value)} disabled={saving}>
+                  {REPORTS_TO_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 11, color: '#9AAAB8', margin: '10px 0 0' }}>
+              Standard hours of work: 48 hours/week, 9:00 AM – 5:00 PM, with breaktime for breakfast at 11:00 AM and lunch at 1:00 PM. Salary is paid monthly to the HFB account above at Housing Finance Bank.
+            </p>
+
+            <div style={{ marginTop: 18 }}>
+              <label style={cu.label}>Special conditions (Contract Clause 10)</label>
+              <textarea
+                style={{ ...s.loginInput, minHeight: 90, resize: 'vertical', whiteSpace: 'pre-wrap' }}
+                placeholder="Any special conditions for this employee's contract — left blank if none."
+                value={form.specialConditions}
+                onChange={e => update('specialConditions', e.target.value)}
+                disabled={saving}
+              />
             </div>
 
             {error && <p style={s.loginErr}>{error}</p>}
@@ -700,7 +1021,6 @@ const computeIdExpiry = (employee) => {
 
 const IdCardModal = ({ employee, onClose }) => {
   const canvasRef = useRef(null);
-  const grade = gradeByCode(employee.jobGradeCode);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -708,7 +1028,7 @@ const IdCardModal = ({ employee, onClose }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    const W = 440, H = 700;
+    const W = 440, H = 660;
     canvas.width = W; canvas.height = H;
     const cx = W / 2;
 
@@ -760,21 +1080,18 @@ const IdCardModal = ({ employee, onClose }) => {
       ctx.fillStyle = '#7C3AED'; ctx.font = 'bold 14px sans-serif';
       ctx.fillText(employee.position || '—', cx, pcy + pr + 56);
       ctx.fillStyle = '#7A8A9A'; ctx.font = '12px sans-serif';
-      ctx.fillText(`${employee.department || '—'}${grade ? ' · ' + grade.code : ''}`, cx, pcy + pr + 76);
+      ctx.fillText(employee.department || '—', cx, pcy + pr + 76);
 
       // Divider
       ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(40, pcy + pr + 97); ctx.lineTo(W - 40, pcy + pr + 97); ctx.stroke();
 
-      // QR code (bottom): Employee S/N, ID expiry date, company website
+      // QR code (bottom): all other details (S/N, expiry, website) live only
+      // inside the QR payload — nothing is printed as plain text on the card.
       const qrSize = 130, qrY = pcy + pr + 113;
       if (qrImg) ctx.drawImage(qrImg, cx - qrSize / 2, qrY, qrSize, qrSize);
-      ctx.fillStyle = '#1A3C5E'; ctx.font = 'bold 12px sans-serif';
-      ctx.fillText(`S/N: ${employee.employeeCode || '—'}`, cx, qrY + qrSize + 20);
       ctx.fillStyle = '#9AAAB8'; ctx.font = '11px sans-serif';
-      ctx.fillText(`Valid until ${expiry.toLocaleDateString('en-UG')}`, cx, qrY + qrSize + 36);
-      ctx.fillStyle = '#7C3AED'; ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(COMPANY_INFO.website.replace('https://', ''), cx, qrY + qrSize + 52);
+      ctx.fillText('Scan for verification details', cx, qrY + qrSize + 24);
 
       ctx.textAlign = 'left';
       setReady(true);
@@ -879,9 +1196,11 @@ const ContractActionModal = ({ employee, action, onClose, onConfirm }) => {
 };
 
 // ─── Employee Profile Modal (details, history, attendance) ──────────────────
-const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter }) => {
+const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate }) => {
   const grade = gradeByCode(employee.jobGradeCode);
   const status = deriveContractStatus(employee);
+  const isContractor = employee.engagementType === 'Independent Contractor';
+  const isIntern = employee.contractType === 'Intern';
   const history = [...(employee.employmentHistory || [])].sort((a, b) => (toDateObj(b.date) || 0) - (toDateObj(a.date) || 0));
 
   return (
@@ -901,8 +1220,17 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
         <div style={{ ...ms.actionBar, borderTop: 'none', flexWrap: 'wrap' }}>
           <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => onEdit(employee)}>✎ Edit Profile</button>
           <button style={{ ...ms.actionBtn, background: '#F3E8FF', color: '#7C3AED' }} onClick={() => onIdCard(employee)}>🪪 ID Card</button>
-          <button style={{ ...ms.actionBtn, background: '#ECFDF5', color: '#065F46' }} onClick={() => onDownloadContract(employee)}>📄 Download Contract</button>
-          <button style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412' }} onClick={() => onDownloadAppointmentLetter(employee)}>📄 Download Appointment Letter</button>
+          {isContractor ? (
+            <button style={{ ...ms.actionBtn, background: '#EEF2FF', color: '#4338CA' }} onClick={() => onDownloadServiceAgreement(employee)}>📄 Download Service Agreement</button>
+          ) : (
+            <>
+              <button style={{ ...ms.actionBtn, background: '#ECFDF5', color: '#065F46' }} onClick={() => onDownloadContract(employee)}>📄 Download Contract</button>
+              <button style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412' }} onClick={() => onDownloadAppointmentLetter(employee)}>📄 Download Appointment Letter</button>
+            </>
+          )}
+          {isIntern && (
+            <button style={{ ...ms.actionBtn, background: '#FEF3C7', color: '#92400E' }} onClick={() => onDownloadCertificate(employee)}>🎓 Download Certificate</button>
+          )}
         </div>
 
         <div style={ms.body}>
@@ -910,6 +1238,7 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Status</span><ContractStatusBadge status={status} /></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Job Grade</span><span style={cu.credVal}>{grade ? `${grade.code} · ${grade.title}` : '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Base Salary</span><span style={cu.credVal}>{fmtMoney(grade?.baseSalary)}</span></div>
+            <div style={cu.credRow}><span style={cu.credLabel}>Engagement Type</span><span style={cu.credVal}>{employee.engagementType || ENGAGEMENT_TYPES[0]}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Type</span><span style={cu.credVal}>{employee.contractType || '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Hire Date</span><span style={cu.credVal}>{fmtDate(employee.hireDate)}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Ends</span><span style={cu.credVal}>{employee.contractEnd ? fmtDate(employee.contractEnd) : 'Open-ended'}</span></div>
@@ -1052,7 +1381,7 @@ const PayslipModal = ({ payslip, onClose }) => (
         <div style={cu.credRow}><span style={cu.credLabel}>Gross Pay</span><span style={cu.credVal}>{fmtMoney(payslip.grossPay)}</span></div>
         <div style={cu.credRow}><span style={cu.credLabel}>Allowances</span><span style={cu.credVal}>{fmtMoney(payslip.allowances)}</span></div>
         <div style={cu.credRow}><span style={cu.credLabel}>PAYE Tax</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.taxAmount)}</span></div>
-        <div style={cu.credRow}><span style={cu.credLabel}>Other Deductions</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.otherDeductions)}</span></div>
+        <div style={cu.credRow}><span style={cu.credLabel}>NSSF (Employee, 5%)</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.otherDeductions)}</span></div>
         <div style={{ ...cu.credRow, borderBottom: 'none', paddingTop: 14 }}>
           <span style={cu.credLabel}>Net Pay</span>
           <span style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>{fmtMoney(payslip.netPay)}</span>
@@ -1367,8 +1696,12 @@ const HrManager = () => {
         await updateDoc(doc(db, 'employees', form.id), {
           firstName: form.firstName.trim(), lastName: form.lastName.trim(), email: form.email.trim(),
           phone: form.phone, gender: form.gender, dob: form.dob, department: form.department,
-          position: form.position, jobGradeCode: form.jobGradeCode, contractType: form.contractType,
+          position: form.position, jobGradeCode: form.jobGradeCode,
+          engagementType: form.engagementType || ENGAGEMENT_TYPES[0], contractType: form.contractType,
           hireDate: form.hireDate, contractStart: form.contractStart, contractEnd: form.contractEnd || null,
+          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
+          specialConditions: form.specialConditions || '',
+          origin: form.origin, reportsTo: form.reportsTo,
           ...(historyAdd.length ? { employmentHistory: [...(before.employmentHistory || []), ...historyAdd] } : {}),
         });
         if (photoDataUrl) savePhotoLocal(form.id, photoDataUrl);
@@ -1379,8 +1712,12 @@ const HrManager = () => {
         await setDoc(ref, {
           employeeCode, firstName: form.firstName.trim(), lastName: form.lastName.trim(), email: form.email.trim(),
           phone: form.phone, gender: form.gender, dob: form.dob, department: form.department, position: form.position,
-          jobGradeCode: form.jobGradeCode, contractType: form.contractType, hireDate: form.hireDate,
+          jobGradeCode: form.jobGradeCode, engagementType: form.engagementType || ENGAGEMENT_TYPES[0],
+          contractType: form.contractType, hireDate: form.hireDate,
           contractStart: form.contractStart || form.hireDate, contractEnd: form.contractEnd || null,
+          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
+          specialConditions: form.specialConditions || '',
+          origin: form.origin, reportsTo: form.reportsTo,
           contractStatus: 'active', status: 'active',
           leaveBalance: { ...DEFAULT_LEAVE_BALANCES }, leaveUsed: { Annual: 0, Sick: 0, Compassionate: 0 },
           employmentHistory: [{ date: form.hireDate, event: 'Hired', note: `${form.position || form.department} · ${form.jobGradeCode}` }],
@@ -1485,20 +1822,46 @@ const HrManager = () => {
     if (already && !window.confirm(`Pay slips already exist for ${payrollPeriod}. Run again and add more?`)) return;
     setRunningPayroll(true);
     try {
+      // Totals across the whole run — this is what gets handed to Accounts
+      // so the company's real payroll cost (including the employer's 10%
+      // NSSF contribution, not just net take-home pay) is registered as a
+      // proper ledger expense, and PAYE/NSSF withheld are tracked as the
+      // statutory liabilities they are until actually remitted to
+      // URA/NSSF — the whole point being that nothing about paying people
+      // stays "off the books" or unaccounted for.
+      let totalGross = 0, totalAllowances = 0, totalPAYE = 0, totalNSSFEmployee = 0, totalNSSFCompany = 0, totalNetPay = 0;
       for (const emp of activeEmployees) {
         const grade = gradeByCode(emp.jobGradeCode);
-        const gross = grade?.baseSalary || 0;
-        const allowances = Math.round(gross * 0.05); // transport/airtime allowance, illustrative
-        const tax = computeTax(gross + allowances);
-        const otherDeductions = Math.round(gross * 0.05); // NSSF-style 5% employee contribution, illustrative
-        const netPay = gross + allowances - tax - otherDeductions;
+        const bd = gradeBreakdown(grade) || { base: 0, welfare: 0, weeklyAllowance: 0, weeklyAllowanceMonthly: 0, totalAllowance: 0, bonuses: 0, payeTax: 0, nssfEmployee: 0, nssfCompany: 0, netSalary: 0 };
+        const gross = bd.base;
+        const allowances = bd.totalAllowance; // Welfare + (Weekly Allowance × 4); bonuses are separate, not part of the standard run
+        const payeTax = bd.payeTax; // 0 while base salary ≤ UGX 335,000 (2026 tax-free threshold)
+        const nssfEmployee = bd.nssfEmployee; // withheld from the employee (5% of base)
+        const netPay = gross + allowances - payeTax - nssfEmployee;
         await addDoc(collection(db, 'payslips'), {
           employeeId: emp.id, employeeName: employeeFullName(emp), jobGradeCode: emp.jobGradeCode,
-          period: payrollPeriod, grossPay: gross, allowances, taxAmount: tax, otherDeductions, netPay,
+          period: payrollPeriod, grossPay: gross, allowances, taxAmount: payeTax, otherDeductions: nssfEmployee, netPay,
+          nssfCompany: bd.nssfCompany,
           generatedAt: serverTimestamp(), generatedBy: auth.currentUser?.email || 'unknown',
         });
+        totalGross += gross; totalAllowances += allowances; totalPAYE += payeTax;
+        totalNSSFEmployee += nssfEmployee; totalNSSFCompany += bd.nssfCompany; totalNetPay += netPay;
       }
       await logAudit('Ran payroll', payrollPeriod, `${activeEmployees.length} pay slip(s) generated`);
+
+      // Hand off to Accounts: one disbursement record per payroll run,
+      // left `postedToLedger: false` until a Finance user in
+      // AccountsManager picks which cash/bank account actually paid net
+      // salaries out, then posts the matching journal entry. HR doesn't
+      // need to know the Chart of Accounts — it just declares what was
+      // paid, to whom (in aggregate), and for what period.
+      await addDoc(collection(db, 'payrollDisbursements'), {
+        period: payrollPeriod, employeeCount: activeEmployees.length,
+        totalGross, totalAllowances, totalPAYE, totalNSSFEmployee, totalNSSFCompany, totalNetPay,
+        totalCostToCompany: totalGross + totalAllowances + totalNSSFCompany,
+        source: 'payroll', postedToLedger: false,
+        generatedAt: serverTimestamp(), generatedBy: auth.currentUser?.email || 'unknown',
+      });
     } catch (err) {
       alert('Payroll run failed: ' + err.message);
     } finally {
@@ -1595,6 +1958,7 @@ const HrManager = () => {
     { label: 'Department', get: e => e.department },
     { label: 'Position', get: e => e.position },
     { label: 'Job Grade', get: e => e.jobGradeCode },
+    { label: 'Engagement Type', get: e => e.engagementType || ENGAGEMENT_TYPES[0] },
     { label: 'Contract Type', get: e => e.contractType },
     { label: 'Contract Status', get: e => CONTRACT_STATUS_CONFIG[deriveContractStatus(e)]?.label },
     { label: 'Hire Date', get: e => fmtDate(e.hireDate) },
@@ -1606,8 +1970,8 @@ const HrManager = () => {
     { label: 'Grade', get: p => p.jobGradeCode },
     { label: 'Gross Pay', get: p => p.grossPay },
     { label: 'Allowances', get: p => p.allowances },
-    { label: 'Tax', get: p => p.taxAmount },
-    { label: 'Other Deductions', get: p => p.otherDeductions },
+    { label: 'PAYE Tax', get: p => p.taxAmount },
+    { label: 'NSSF (Employee)', get: p => p.otherDeductions },
     { label: 'Net Pay', get: p => p.netPay },
   ]));
 
@@ -1709,7 +2073,7 @@ const HrManager = () => {
                   <thead>
                     <tr style={s.thead}>
                       <th style={s.th}>Employee</th><th style={s.th}>Department</th><th style={s.th}>Grade</th>
-                      <th style={s.th}>Contract</th><th style={s.th}>Status</th><th style={s.th}>Actions</th>
+                      <th style={s.th}>Engagement</th><th style={s.th}>Contract</th><th style={s.th}>Status</th><th style={s.th}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1726,6 +2090,11 @@ const HrManager = () => {
                         </td>
                         <td style={s.td}>{e.department}</td>
                         <td style={s.td}>{e.jobGradeCode}</td>
+                        <td style={s.td}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: e.engagementType === 'Independent Contractor' ? '#EEF2FF' : '#F0F4F8', color: e.engagementType === 'Independent Contractor' ? '#4338CA' : '#4A6B8A', borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            {e.engagementType || ENGAGEMENT_TYPES[0]}
+                          </span>
+                        </td>
                         <td style={s.td}>{e.contractType}</td>
                         <td style={s.td}><ContractStatusBadge status={deriveContractStatus(e)} /></td>
                         <td style={s.td}>
@@ -1733,8 +2102,17 @@ const HrManager = () => {
                             <button style={s.btnView} onClick={() => setProfileTarget(e)}>View</button>
                             {canEdit && <button style={s.btnView} onClick={() => { setEditingEmployee(e); setShowEmployeeForm(true); }}>Edit</button>}
                             <button style={s.btnShortlist} onClick={() => setIdCardTarget(e)}>ID Card</button>
-                            <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
-                            <button style={s.btnShortlist} onClick={() => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}>Letter</button>
+                            {e.engagementType === 'Independent Contractor' ? (
+                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
+                            ) : (
+                              <>
+                                <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
+                                <button style={s.btnShortlist} onClick={() => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}>Letter</button>
+                              </>
+                            )}
+                            {e.contractType === 'Intern' && (
+                              <button style={s.btnShortlist} onClick={() => openCertificateWindow(`Certificate of Internship — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}>Certificate</button>
+                            )}
                             {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteEmployee(e)} disabled={busyEmployeeId === e.id}>Delete</button>}
                           </div>
                         </td>
@@ -1751,7 +2129,7 @@ const HrManager = () => {
         {activeTab === 'contracts' && (
           <>
             <h2 style={{ ...s.sectionHead, margin: '0 0 4px' }}>Automated Lifecycle Management</h2>
-            <p style={{ ...s.pageSub, margin: '0 0 14px' }}>Active ➔ Expiring Soon ➔ Renewed / Terminated / Resigned / Expired</p>
+            <p style={{ ...s.pageSub, margin: '0 0 14px' }}>Contracts &amp; Service Agreements · Active ➔ Expiring Soon ➔ Renewed / Terminated / Resigned / Expired</p>
 
             <div style={s.toolbar}>
               <div style={s.tabs}>
@@ -1770,7 +2148,7 @@ const HrManager = () => {
                 <table style={s.table}>
                   <thead>
                     <tr style={s.thead}>
-                      <th style={s.th}>Employee</th><th style={s.th}>Contract Type</th><th style={s.th}>Ends</th>
+                      <th style={s.th}>Employee</th><th style={s.th}>Engagement</th><th style={s.th}>Contract Type</th><th style={s.th}>Ends</th>
                       <th style={s.th}>Status</th><th style={s.th}>Actions</th>
                     </tr>
                   </thead>
@@ -1778,23 +2156,30 @@ const HrManager = () => {
                     {filteredContracts.map(e => (
                       <tr key={e.id} style={s.tr}>
                         <td style={s.td}><span style={{ fontWeight: 700, color: '#1A3C5E' }}>{employeeFullName(e)}</span><div style={{ fontSize: 12, color: '#7A8A9A' }}>{e.employeeCode}</div></td>
+                        <td style={s.td}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: e.engagementType === 'Independent Contractor' ? '#EEF2FF' : '#F0F4F8', color: e.engagementType === 'Independent Contractor' ? '#4338CA' : '#4A6B8A', borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            {e.engagementType || ENGAGEMENT_TYPES[0]}
+                          </span>
+                        </td>
                         <td style={s.td}>{e.contractType}</td>
                         <td style={s.td}>{e.contractEnd ? fmtDate(e.contractEnd) : 'Open-ended'}</td>
                         <td style={s.td}><ContractStatusBadge status={e._status} /></td>
                         <td style={s.td}>
-                          {canWrite ? (
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              {e._status !== 'terminated' && e._status !== 'resigned' && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {e.engagementType === 'Independent Contractor' ? (
+                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Document</button>
+                            ) : (
+                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Document</button>
+                            )}
+                            {canWrite && e._status !== 'terminated' && e._status !== 'resigned' && (
+                              <>
                                 <button style={s.btnView} onClick={() => setContractAction({ employee: e, action: 'renew' })}>Renew</button>
-                              )}
-                              {e._status !== 'terminated' && e._status !== 'resigned' && (
                                 <button style={s.btnDelete} onClick={() => setContractAction({ employee: e, action: 'terminate' })}>Terminate</button>
-                              )}
-                              {e._status !== 'terminated' && e._status !== 'resigned' && (
                                 <button style={s.btnReject} onClick={() => setContractAction({ employee: e, action: 'resign' })}>Resign</button>
-                              )}
-                            </div>
-                          ) : <span style={{ fontSize: 12, color: '#9AAAB8' }}>Read-only</span>}
+                              </>
+                            )}
+                            {!canWrite && <span style={{ fontSize: 12, color: '#9AAAB8' }}>Read-only</span>}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1808,19 +2193,48 @@ const HrManager = () => {
         {/* ── Payroll & Grades ── */}
         {activeTab === 'payroll' && (
           <>
-            <h2 style={{ ...s.sectionHead, margin: '0 0 14px' }}>Job Grades</h2>
+            <div style={{ marginBottom: 4 }}>
+              <h2 style={{ ...s.sectionHead, margin: 0 }}>Slirus Salary Structure</h2>
+              <p style={{ ...s.pageSub, margin: '4px 0 14px' }}>Official job-grade pay structure. Raw Salary is the total monthly cost to the company per grade; Net Salary is the employee's take-home pay. PAYE uses Uganda's revised bands (effective 1 July 2026, tax-free up to UGX 335,000) — every current grade falls under that threshold, so PAYE is UGX 0 for now.</p>
+            </div>
             <div style={s.tableWrap}>
               <table style={s.table}>
-                <thead><tr style={s.thead}><th style={s.th}>Code</th><th style={s.th}>Title</th><th style={s.th}>Base Salary (monthly)</th><th style={s.th}>Headcount</th></tr></thead>
+                <thead>
+                  <tr style={s.thead}>
+                    <th style={s.th}>Category</th>
+                    <th style={s.th}>Raw Salary</th>
+                    <th style={s.th}>Base Salary</th>
+                    <th style={s.th}>PAYE</th>
+                    <th style={s.th}>NSSF (Employee)</th>
+                    <th style={s.th}>NSSF (Company)</th>
+                    <th style={s.th}>Welfare</th>
+                    <th style={s.th}>Weekly Allowance (×4/mo)</th>
+                    <th style={s.th}>Total Allowance</th>
+                    <th style={s.th}>Bonuses</th>
+                    <th style={s.th}>Net Salary</th>
+                    <th style={s.th}>Headcount</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {JOB_GRADES.map(g => (
-                    <tr key={g.code} style={s.tr}>
-                      <td style={s.td}><strong>{g.code}</strong></td>
-                      <td style={s.td}>{g.title}</td>
-                      <td style={s.td}>{fmtMoney(g.baseSalary)}</td>
-                      <td style={s.td}>{gradeDistribution[g.code] || 0}</td>
-                    </tr>
-                  ))}
+                  {JOB_GRADES.map(g => {
+                    const bd = gradeBreakdown(g);
+                    return (
+                      <tr key={g.code} style={s.tr}>
+                        <td style={s.td}><strong>{g.title}</strong><div style={{ fontSize: 11, color: '#9AAAB8' }}>{g.code}</div></td>
+                        <td style={s.td}>{fmtMoney(bd.rawSalary)}</td>
+                        <td style={s.td}>{fmtMoney(bd.base)}</td>
+                        <td style={s.td}>{bd.payeTax ? fmtMoney(bd.payeTax) : '—'}</td>
+                        <td style={s.td}>{fmtMoney(bd.nssfEmployee)}</td>
+                        <td style={s.td}>{fmtMoney(bd.nssfCompany)}</td>
+                        <td style={s.td}>{fmtMoney(bd.welfare)}</td>
+                        <td style={s.td}>{fmtMoney(bd.weeklyAllowance)} × 4 = {fmtMoney(bd.weeklyAllowanceMonthly)}</td>
+                        <td style={s.td}>{fmtMoney(bd.totalAllowance)}</td>
+                        <td style={s.td}>{bd.bonuses ? fmtMoney(bd.bonuses) : '—'}</td>
+                        <td style={{ ...s.td, fontWeight: 700, color: '#059669' }}>{fmtMoney(bd.netSalary)}</td>
+                        <td style={s.td}>{gradeDistribution[g.code] || 0}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1828,7 +2242,10 @@ const HrManager = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '28px 0 14px', flexWrap: 'wrap', gap: 10 }}>
               <div>
                 <h2 style={{ ...s.sectionHead, margin: 0 }}>Automated Payroll Engine</h2>
-                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>Grade base pay + allowances − PAYE tax − deductions = net pay, per employee.</p>
+                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>Base salary + welfare + (weekly allowance × 4) − PAYE − NSSF (employee, 5%) = net pay, per employee. Bonuses are tracked separately and are not part of the standard payroll run.</p>
+                <p style={{ fontSize: 12, color: '#9AAAB8', margin: '4px 0 0' }}>
+                  Running payroll also queues the period's total cost (incl. employer NSSF) for Accounts to post as a company expense — see Accounts &gt; Contractors & Payroll.
+                </p>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <input type="month" style={s.loginInput} value={payrollPeriod} onChange={e => setPayrollPeriod(e.target.value)} />
@@ -1848,14 +2265,16 @@ const HrManager = () => {
                 <div style={s.tableMsg}>No pay slips generated for {payrollPeriod} yet.</div>
               ) : (
                 <table style={s.table}>
-                  <thead><tr style={s.thead}><th style={s.th}>Employee</th><th style={s.th}>Grade</th><th style={s.th}>Gross</th><th style={s.th}>Tax</th><th style={s.th}>Net Pay</th><th style={s.th}></th></tr></thead>
+                  <thead><tr style={s.thead}><th style={s.th}>Employee</th><th style={s.th}>Grade</th><th style={s.th}>Gross</th><th style={s.th}>Allowances</th><th style={s.th}>PAYE</th><th style={s.th}>NSSF (Employee)</th><th style={s.th}>Net Pay</th><th style={s.th}></th></tr></thead>
                   <tbody>
                     {payslips.filter(p => p.period === payrollPeriod).map(p => (
                       <tr key={p.id} style={s.tr}>
                         <td style={s.td}>{p.employeeName}</td>
                         <td style={s.td}>{p.jobGradeCode}</td>
                         <td style={s.td}>{fmtMoney(p.grossPay)}</td>
-                        <td style={s.td}>{fmtMoney(p.taxAmount)}</td>
+                        <td style={s.td}>{fmtMoney(p.allowances)}</td>
+                        <td style={s.td}>{p.taxAmount ? `-${fmtMoney(p.taxAmount)}` : '—'}</td>
+                        <td style={s.td}>-{fmtMoney(p.otherDeductions)}</td>
                         <td style={{ ...s.td, fontWeight: 700, color: '#059669' }}>{fmtMoney(p.netPay)}</td>
                         <td style={s.td}><button style={s.btnView} onClick={() => setPayslipTarget(p)}>View Slip</button></td>
                       </tr>
@@ -2002,6 +2421,8 @@ const HrManager = () => {
           onIdCard={(e) => { setIdCardTarget(e); }}
           onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
           onDownloadAppointmentLetter={(e) => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}
+          onDownloadServiceAgreement={(e) => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}
+          onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Internship — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
         />
       )}
       {idCardTarget && <IdCardModal employee={idCardTarget} onClose={() => setIdCardTarget(null)} />}
@@ -2071,11 +2492,12 @@ const s = {
 
 const ms = {
   overlay:   { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 },
-  modal:     { background: '#fff', borderRadius: 12, width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' },
+  modal:     { background: '#fff', borderRadius: 12, width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.18)', overflow: 'hidden' },
+  modalForm: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
   header:    { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 24px', borderBottom: '1px solid #E2E8F0', background: '#F7F9FC', borderRadius: '12px 12px 0 0', flexShrink: 0 },
   actionBar: { display: 'flex', gap: 8, padding: '12px 24px', borderBottom: '1px solid #E2E8F0', flexWrap: 'wrap', flexShrink: 0 },
   actionBtn: { border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
-  body:      { overflowY: 'auto', padding: '20px 24px', flex: 1 },
+  body:      { overflowY: 'auto', padding: '20px 24px', flex: 1, minHeight: 0 },
   closeBtn:  { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#7A8A9A', lineHeight: 1, padding: 4 },
 };
 

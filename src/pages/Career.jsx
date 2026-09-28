@@ -1,5 +1,5 @@
 /**
- * Career.jsx – Slirus Holdings Careers & Internships
+ * Career.jsx – Slirus Global Limited Careers & Internships
  *
  * Fixes applied:
  *  1. Subscribes to settings/applicationStatus (Firestore) — Apply Now is
@@ -482,7 +482,7 @@ const Career = () => {
       <div className="hero-banner">
         <div className="container">
           <h1>Careers & Internships</h1>
-          <p>Join Slirus Holdings and help build the future of Uganda's digital and industrial infrastructure.</p>
+          <p>Join Slirus Global Limited and help build the future of Uganda's digital and industrial infrastructure.</p>
         </div>
       </div>
 

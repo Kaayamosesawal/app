@@ -1,5 +1,5 @@
 /**
- * projectPdf.js – PDF generators for Slirus Holdings project intake.
+ * projectPdf.js – PDF generators for Slirus Global Limited project intake.
  *
  * Two documents are produced from the same `project` data shape (the
  * ProjectRequest.jsx form values, or a Firestore `projectRequests` doc):
@@ -14,7 +14,7 @@
  *    a signature block) built from the same submitted data, ready to send
  *    to the client for sign-off.
  *
- * Both share the Slirus Holdings letterhead/footer from ./pdfBrand.
+ * Both share the Slirus Global Limited letterhead/footer from ./pdfBrand.
  */
 
 import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from './pdfBrand';
@@ -138,7 +138,7 @@ export const generateProjectRequestPDF = async (project) => {
   row('Submitted', fmtDate(project.submittedAt));
   row('Status', project.status || 'New');
 
-  drawFooter(pdf, { note: 'Slirus Holdings · Project Request' });
+  drawFooter(pdf, { note: 'Slirus Global Limited · Project Request' });
 
   const safe = (project.companyName || project.projectTitle || 'request').replace(/\s+/g, '_');
   pdf.save(`Slirus_Project_Request_${safe}.pdf`);
@@ -165,7 +165,7 @@ export const generateProjectProposalPDF = async (project) => {
   }
 
   pdf.setFontSize(11); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(180, 202, 224);
-  pdf.text('SLIRUS HOLDINGS LIMITED', PW / 2, 108, { align: 'center' });
+  pdf.text('SLIRUS GLOBAL LIMITED', PW / 2, 108, { align: 'center' });
 
   pdf.setFontSize(28); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(255, 255, 255);
   pdf.text('PROJECT PROPOSAL', PW / 2, 140, { align: 'center' });
@@ -185,7 +185,7 @@ export const generateProjectProposalPDF = async (project) => {
     ['Prepared For', `${project.contactName || '—'}${project.contactEmail ? ' · ' + project.contactEmail : ''}`],
     ['Reference',    refCode(project)],
     ['Date',         fmtDate(project.submittedAt)],
-    ['Prepared By',  'Slirus Holdings Limited'],
+    ['Prepared By',  'Slirus Global Limited'],
   ];
   meta.forEach(([label, value], i) => {
     pdf.setFontSize(9.5); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(150, 178, 204);
@@ -303,7 +303,7 @@ export const generateProjectProposalPDF = async (project) => {
   bullets([
     'Review this proposal and share any questions or requested changes.',
     'Sign and return the agreement to confirm scope, timeline, and budget.',
-    'Slirus Holdings schedules a kickoff call to begin the engagement.',
+    'Slirus Global Limited schedules a kickoff call to begin the engagement.',
   ]);
 
   // ── Signature block ─────────────────────────────────────────────────
@@ -323,10 +323,10 @@ export const generateProjectProposalPDF = async (project) => {
   pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(90, 122, 154);
   pdf.text(project.signatoryName || project.contactName || 'Client Signatory', M, sigY + 6);
   pdf.text(project.signatoryTitle || project.companyName || '', M, sigY + 11);
-  pdf.text('For Slirus Holdings Limited', M + sigColW + 12, sigY + 6);
+  pdf.text('For Slirus Global Limited', M + sigColW + 12, sigY + 6);
   pdf.text('Authorized Representative', M + sigColW + 12, sigY + 11);
 
-  drawFooter(pdf, { note: `Slirus Holdings · Proposal for ${project.companyName || 'Client'}`, confidential: true });
+  drawFooter(pdf, { note: `Slirus Global Limited · Proposal for ${project.companyName || 'Client'}`, confidential: true });
 
   const safe = (project.companyName || project.projectTitle || 'proposal').replace(/\s+/g, '_');
   pdf.save(`Slirus_Proposal_${safe}.pdf`);

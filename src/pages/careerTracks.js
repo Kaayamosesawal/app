@@ -7,7 +7,7 @@
  *                               eligibility, benefits
  *
  * Keep this file in sync with the TRACK_KEYS array in functions/index.js:
- *   const TRACK_KEYS = ['softwareDev', 'accounts', 'sales', 'internship'];
+ *   const TRACK_KEYS = ['softwareDev', 'accounts', 'sales', 'secretary', 'customerSupport', 'internship'];
  */
 
 export const CAREER_TRACKS = [
@@ -102,6 +102,70 @@ export const CAREER_TRACKS = [
       'Achieve monthly and quarterly sales targets.',
       'Market services through networking, digital channels, and direct outreach.',
       'Gather market intelligence to inform business strategy.',
+    ],
+  },
+
+  {
+    key:         'secretary',
+    type:        'Job',
+    title:       'Secretary',
+    tag:         'Job Opening',
+    color:       '#BE185D',
+    lightBg:     '#FDF2F8',
+    icon:        'fas fa-briefcase',
+    location:    'Lira City, Uganda',
+    employment:  'Full-time',
+    description:
+      'We are looking for an organized and professional Secretary to provide administrative support and ensure the smooth day-to-day running of our office, managing correspondence, records, and front-office duties.',
+    qualifications: [
+      "Bachelor's Degree or Diploma in Secretarial Studies, Office Administration, Business Administration, or a related field.",
+      'Proficiency in Microsoft Office (Word, Excel, Outlook) and general office software.',
+      'Certificate in Secretarial Studies or Office Management is an added advantage.',
+    ],
+    experience: [
+      'Minimum of 1 year of experience in a secretarial, administrative, or front-office role.',
+      'Fresh graduates with strong organizational skills and relevant internship experience may be considered.',
+    ],
+    responsibilities: [
+      'Manage correspondence, emails, and phone calls on behalf of management.',
+      'Schedule and coordinate meetings, appointments, and travel arrangements.',
+      'Prepare, format, and file official documents, letters, and reports.',
+      'Maintain and organize office records, both physical and digital.',
+      'Welcome and direct visitors and clients in a professional manner.',
+      'Take minutes during meetings and follow up on action points.',
+      'Order and manage office supplies and support day-to-day office operations.',
+    ],
+  },
+
+  {
+    key:         'customerSupport',
+    type:        'Job',
+    title:       'Customer Support',
+    tag:         'Job Opening',
+    color:       '#0369A1',
+    lightBg:     '#F0F9FF',
+    icon:        'fas fa-headset',
+    location:    'Lira City, Uganda',
+    employment:  'Full-time',
+    description:
+      'We are seeking a friendly and responsive Customer Support Officer to assist our clients, resolve inquiries, and ensure a positive experience with our products and services.',
+    qualifications: [
+      "Bachelor's Degree or Diploma in Business Administration, Communications, Information Technology, or a related field.",
+      'Excellent verbal and written communication skills in English.',
+      'Basic technical knowledge of IT products/services is an added advantage.',
+    ],
+    experience: [
+      'Minimum of 1 year of experience in customer service, support, or a client-facing role.',
+      'Fresh graduates with strong communication skills and a customer-first attitude may be considered.',
+    ],
+    responsibilities: [
+      'Respond promptly to customer inquiries via phone, email, and live chat.',
+      'Troubleshoot and resolve customer issues or escalate to the appropriate team.',
+      'Maintain accurate records of customer interactions and follow-ups.',
+      'Guide customers through product features, services, and onboarding processes.',
+      'Gather customer feedback to help improve products and service quality.',
+      'Collaborate with sales and technical teams to ensure customer satisfaction.',
+      'Follow up with clients to ensure issues are fully resolved.',
     ],
   },
 

@@ -1,5 +1,5 @@
 /**
- * WorkerLog.jsx – Slirus Holdings Worker Workspace
+ * WorkerLog.jsx – Slirus Global Limited Worker Workspace
  *
  * Self-service portal open to every registered team member (any active
  * `teamUsers/{uid}` profile — no department restriction), following the
@@ -717,7 +717,7 @@ const WorkerLog = () => {
   const downloadPayslip = useCallback((p) => {
     openPrintWindow(`Pay Slip — ${p.period}`, `
       <div class="headRow">
-        <div><h1>Slirus Holdings</h1><p class="muted">Official Pay Slip · ${p.period}</p></div>
+        <div><h1>Slirus Global Limited</h1><p class="muted">Official Pay Slip · ${p.period}</p></div>
         <p class="muted">Issued ${fmtDate(p.generatedAt)}</p>
       </div>
       <p><strong>Employee:</strong> ${p.employeeName} · Grade ${p.jobGradeCode || '—'}</p>
@@ -737,7 +737,7 @@ const WorkerLog = () => {
     const rows = payslips.map(p => `<tr><td>${p.period}</td><td>Pay Slip</td><td class="right">${money(p.netPay)}</td><td>${fmtDate(p.generatedAt)}</td></tr>`).join('');
     const totalReceived = payslips.reduce((sum, p) => sum + (Number(p.netPay) || 0), 0);
     openPrintWindow('Full Payment History', `
-      <div class="headRow"><div><h1>Slirus Holdings</h1><p class="muted">Payment History — ${employeeFullName}</p></div></div>
+      <div class="headRow"><div><h1>Slirus Global Limited</h1><p class="muted">Payment History — ${employeeFullName}</p></div></div>
       <table>
         <thead><tr><th>Period</th><th>Type</th><th class="right">Net Amount</th><th>Issued</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="4">No payments on record.</td></tr>'}</tbody>
@@ -749,7 +749,7 @@ const WorkerLog = () => {
   const downloadPersonalDocument = useCallback((d) => {
     openPrintWindow(d.title, `
       <div class="headRow">
-        <div><h1>Slirus Holdings</h1><p class="muted">${DOC_TYPE_MAP[d.type]?.label || 'Document'} · Version ${d.version || 1}</p></div>
+        <div><h1>Slirus Global Limited</h1><p class="muted">${DOC_TYPE_MAP[d.type]?.label || 'Document'} · Version ${d.version || 1}</p></div>
         <p class="muted">Issued ${fmtDate(d.publishedAt || d.updatedAt)}</p>
       </div>
       <p><strong>Issued to:</strong> ${employeeFullName} (${d.recipientEmail})</p>

@@ -380,7 +380,7 @@ const Terms = () => {
             {/* Intro Header */}
             <section className="pp-section" id="intro">
               <p>
-                Welcome to <strong>Slirus Holdings Limited</strong> (“Slirus”, “we”, “us”, or “our”).
+                Welcome to <strong>Slirus Global Limited Limited</strong> (“Slirus”, “we”, “us”, or “our”).
               </p>
               <p>
                 By accessing or using our website <a href="https://slirus.com" style={{color: '#2563eb', textDecoration: 'underline'}}>slirus.com</a>, mobile applications, and any of our ecosystem environments, you agree explicitly to be bound by these Terms of Use. If you disagree with these stipulations, please do not interact with our platforms.
@@ -396,7 +396,7 @@ const Terms = () => {
              <div className="pp-legal-card" id="sec-about">
   <h3><i className="fas fa-info-circle"></i> 1. About Us</h3>
   <p>
-    Slirus Holdings Limited is a Ugandan-registered technology company (URSB). We develop practical, locally relevant digital solutions that solve real challenges faced by Ugandan businesses, schools, and community organizations.
+    Slirus Global Limited Limited is a Ugandan-registered technology company (URSB). We develop practical, locally relevant digital solutions that solve real challenges faced by Ugandan businesses, schools, and community organizations.
   </p>
   <p>
     Our core digital platforms are designed for the Ugandan context working reliably online and offline, on low-bandwidth networks, and on affordable devices.
@@ -418,7 +418,7 @@ const Terms = () => {
               <div className="pp-legal-card" id="sec-acceptance">
                 <h3><i className="fas fa-check-double"></i> 2. Acceptance of Terms</h3>
                 <p>
-                  These Terms of Use represent a fully binding digital agreement constructed between yourself and Slirus Holdings Limited. We hold rights to alter or modify these clauses sequentially. Your baseline engagement following adjustments constitutes formal acceptance.
+                  These Terms of Use represent a fully binding digital agreement constructed between yourself and Slirus Global Limited Limited. We hold rights to alter or modify these clauses sequentially. Your baseline engagement following adjustments constitutes formal acceptance.
                 </p>
               </div>
 
@@ -473,7 +473,7 @@ const Terms = () => {
               <div className="pp-legal-card" id="sec-ip">
                 <h3><i className="fas fa-copyright"></i> 6. Intellectual Property</h3>
                 <ul>
-                  <li>All content, logos, software logic, designs, and visual frameworks on our platforms are protected assets of Slirus Holdings.</li>
+                  <li>All content, logos, software logic, designs, and visual frameworks on our platforms are protected assets of Slirus Global Limited.</li>
                   <li>You are explicitly limited to a non-exclusive, non-transferable, revocable license to access features.</li>
                   <li>You may not copy, adjust, redistribute, or try to reverse-engineer our components without express written signatures.</li>
                 </ul>
@@ -501,7 +501,7 @@ const Terms = () => {
               <div className="pp-legal-card" id="sec-liability">
                 <h3><i className="fas fa-shield-alt"></i> 9. Limitation of Liability</h3>
                 <p>
-                  To the maximum extent permitted by law, Slirus Holdings shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising out of or related to your use of our services.
+                  To the maximum extent permitted by law, Slirus Global Limited shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising out of or related to your use of our services.
                 </p>
                 <p>
                   Our total cumulative liability metrics shall not exceed the absolute financial calculation you paid to us within the trailing twelve (12) months.
@@ -512,7 +512,7 @@ const Terms = () => {
               <div className="pp-legal-card" id="sec-indemnity">
                 <h3><i className="fas fa-handshake"></i> 10. Indemnification</h3>
                 <p>
-                  You agree to safely indemnify, protect, and hold harmless Slirus Holdings, its associated board directors, officers, operational employees, and subsidiaries against any legal actions or incoming damages originating from breaches of these parameters.
+                  You agree to safely indemnify, protect, and hold harmless Slirus Global Limited, its associated board directors, officers, operational employees, and subsidiaries against any legal actions or incoming damages originating from breaches of these parameters.
                 </p>
               </div>
 
