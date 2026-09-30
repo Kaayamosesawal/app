@@ -497,12 +497,12 @@ const buildServiceAgreementHtml = (employee) => {
 
   return `
     <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name} - SMC Limited</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
+      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
       <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(startDate)}</p>
     </div>
     <h2>Independent Service and Task Execution Agreement</h2>
 
-    <p class="clause">THIS INDEPENDENT SERVICE AND TASK EXECUTION AGREEMENT ("Agreement") is made between <strong>Slirus Global Limited - SMC Limited</strong> of ${COMPANY_INFO.address} (<strong>"the Company"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Service Provider"</strong>), collectively "the Parties."</p>
+    <p class="clause">THIS INDEPENDENT SERVICE AND TASK EXECUTION AGREEMENT ("Agreement") is made between <strong>Slirus Global Limited</strong> of ${COMPANY_INFO.address} (<strong>"the Company"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Service Provider"</strong>), collectively "the Parties."</p>
 
     <h3>1. Nature of Relationship</h3>
     <p class="clause">The Parties acknowledge that this Agreement creates a principal-to-principal commercial relationship. The Service Provider is an independent contractor engaged to deliver specified outputs and shall not be considered an employee, agent, partner, or representative of the Company for any purpose under Ugandan law. The Service Provider is solely responsible for their own personal tax obligations, social security contributions, and any statutory registrations arising from this Agreement.</p>
