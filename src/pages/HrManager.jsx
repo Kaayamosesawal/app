@@ -167,7 +167,7 @@ const IDLE_WARN_MS  = 18 * 60 * 1000;
 // contracts or appointment letters.
 const COMPANY_INFO = {
   name: 'Slirus Global Limited',
-  address: 'P.O Box 331921, Lira -Uganda',
+  address: 'P.O Box 332485, Lira -Uganda',
   phone: '+256 776 079 495',
   email: 'hr@slirus.com',
   website: 'https://slirus.com',
