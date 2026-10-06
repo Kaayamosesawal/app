@@ -1,6 +1,7 @@
 import React from 'react';
 import Layout from '../components/Layout';
 import Hero from '../components/Hero';
+import { useState, useEffect } from 'react';
 
 const products = [
   {
@@ -72,6 +73,22 @@ const stats = [
 ];
 
 const Home = () => {
+  // ── Welcome poster pop-up (auto-closes after 5 seconds) ──
+  const POPUP_IMAGE = '/Banner-2.png'; // image in /public
+  const [showPopup, setShowPopup] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowPopup(false), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!showPopup) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowPopup(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showPopup]);
+
   return (
     <Layout>
       <style>{`
@@ -685,6 +702,57 @@ const Home = () => {
         </a>
       </div>
 
+
+      {/* ── Welcome Poster Pop-up ── */}
+      {showPopup && (
+        <div className="welcome-popup-overlay" onClick={() => setShowPopup(false)}>
+          <style>{`
+            .welcome-popup-overlay {
+              position: fixed; inset: 0; z-index: 9999;
+              background: rgba(2, 6, 23, 0.7);
+              display: flex; align-items: center; justify-content: center;
+              padding: 20px;
+              animation: welcomePopupFade 0.3s ease;
+            }
+            .welcome-popup-box {
+              position: relative;
+              width: min(92vw, 900px);
+              border-radius: 16px;
+              box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+            }
+            .welcome-popup-box img {
+              display: block; width: 100%; height: auto;
+              border-radius: 16px;
+            }
+            .welcome-popup-close {
+              position: absolute; top: 10px; right: 10px;
+              width: 36px; height: 36px;
+              border-radius: 50%; border: none;
+              background: rgba(15, 23, 42, 0.85); color: white;
+              font-size: 22px; line-height: 1;
+              display: flex; align-items: center; justify-content: center;
+              cursor: pointer;
+              transition: background 0.2s, transform 0.2s;
+            }
+            .welcome-popup-close:hover { background: #dc2626; transform: scale(1.08); }
+            @keyframes welcomePopupFade {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+          `}</style>
+          <div className="welcome-popup-box" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="welcome-popup-close"
+              aria-label="Close welcome poster"
+              onClick={() => setShowPopup(false)}
+            >
+              &times;
+            </button>
+            <img src={POPUP_IMAGE} alt="Welcome to Slirus Global Limited: Tech. Trade. Transform." />
+          </div>
+        </div>
+      )}
     </Layout>
   );
 };
