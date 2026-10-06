@@ -371,12 +371,12 @@ const About = () => {
             <div className="vm-card">
               <div className="vm-card-icon"><i className="fas fa-eye"></i></div>
               <h3>Our Vision</h3>
-              <p>To become a recognized entity building world-class digital solutions that accelerate Uganda's digital transformation and contribute to a more prosperous, innovative, and connected Uganda.</p>
+              <p>To be a leading Ugandan enterprise, recognized across Africa and beyond, where technology, trade, and transformation come together to build a more prosperous, innovative, and connected Uganda.</p>
             </div>
             <div className="vm-card">
               <div className="vm-card-icon"><i className="fas fa-bullseye"></i></div>
               <h3>Our Mission</h3>
-              <p>To combine up-to-date technical expertise with fresh perspectives understanding each client's unique needs and transforming them into effective, scalable digital realities that create lasting impact.</p>
+              <p>To harness technology, drive trade, and transform communities by delivering software and digital solutions, fashion and lifestyle products, agricultural supply, and general commerce that are affordable, reliable, and built on fresh thinking and professional execution.</p>
             </div>
           </div>
         </div>
