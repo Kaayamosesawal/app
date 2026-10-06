@@ -62,7 +62,7 @@ const Textarea = ({ error, ...props }) => (
 // ─── Step Bar ─────────────────────────────────────────────────────────────────
 const STEPS = ['Your Details', 'Your Project', 'What You Need', 'Timeline & Budget', 'What Success Looks Like', 'Last Step', 'Review'];
 
-// ─── Service catalogue (all 4 lines — request isn't limited to Software Dev) ──
+// ─── Service catalogue (mirrors Services.jsx: 4 tech services + Fashions, AgriSolutions, General Trade) ──
 const SERVICE_CATEGORIES = [
   {
     id: 'Custom Software Development',
@@ -84,7 +84,50 @@ const SERVICE_CATEGORIES = [
     blurb: 'Security audits, endpoint protection, backups, and incident response.',
     subServices: ['Security Audits & Risk Assessments', 'Endpoint & Network Security', 'Data Backup & Disaster Recovery', 'Incident Response & Monitoring'],
   },
+  {
+    id: 'Slirus Fashions',
+    kind: 'business',
+    blurb: 'Fashion design, textile manufacturing, apparel and lifestyle products, and e-commerce.',
+    subServices: [
+      'Fashion Designing',
+      'Textile Manufacturing',
+      'Wholesale & Retail of Apparel and Lifestyle Products',
+      'General Merchandise Import & Export',
+      'E-commerce Operations',
+    ],
+  },
+  {
+    id: 'Slirus AgriSolutions',
+    kind: 'business',
+    blurb: 'Agricultural produce, farming inputs, and modern agricultural machinery.',
+    subServices: [
+      'Agricultural Production',
+      'Produce Processing',
+      'Wholesale & Retail of Agricultural Products and Farming Inputs',
+      'Agricultural Import & Export',
+      'Seeds, Fertilizers & Agro-Chemicals',
+      'Modern Agricultural Machinery',
+    ],
+  },
+  {
+    id: 'Slirus General Trade',
+    kind: 'business',
+    blurb: 'General trade and commerce, partnerships, logistics, consultancy, real estate, and project management.',
+    subServices: [
+      'Manufacturing & Distribution of Goods',
+      'Marketing, Import & Export',
+      'Strategic Partnerships & Joint Ventures',
+      'Intellectual Property Acquisition & Protection',
+      'Logistics Services',
+      'Consultancy Services',
+      'Real Estate Services',
+      'Project Management Services',
+    ],
+  },
 ];
+
+// Technology services vs. the other Slirus divisions (used to tailor wording and the dropdown groups)
+const isBusinessService = (id) => SERVICE_CATEGORIES.find(c => c.id === id)?.kind === 'business';
 
 const StepBar = ({ step }) => (
   <div style={s.stepBar}>
@@ -222,14 +265,19 @@ const StepOverview = ({ form, errors, onChange, onChangeArr }) => {
     <h3 style={s.sectionTitle}>Your Project</h3>
     <p style={s.sectionHint}>Tell us what you're trying to do, in your own words.</p>
 
-    <Field label="Which Service Are You Interested In?" required hint="We cover software development, IT consulting, network infrastructure, and cybersecurity." error={errors.serviceCategory}>
+    <Field label="Which Service Are You Interested In?" required hint="We cover technology services, fashion, agriculture, and general trade." error={errors.serviceCategory}>
       <Select
         value={form.serviceCategory}
         error={errors.serviceCategory}
         onChange={e => { onChange('serviceCategory', e.target.value); onChange('specificServices', []); }}
       >
         <option value="">Pick the service that fits best…</option>
-        {SERVICE_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+        <optgroup label="Slirus Technologies">
+          {SERVICE_CATEGORIES.filter(c => c.kind !== 'business').map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+        </optgroup>
+        <optgroup label="Our Other Divisions">
+          {SERVICE_CATEGORIES.filter(c => c.kind === 'business').map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+        </optgroup>
       </Select>
       {activeCategory && <span style={s.hint}>{activeCategory.blurb}</span>}
     </Field>
@@ -292,7 +340,9 @@ const StepScope = ({ form, errors, onChangeArr, onAddRow, onRemoveRow, onChange 
     <h3 style={s.sectionTitle}>What You Need</h3>
     <p style={s.sectionHint}>This helps us stay focused on exactly what you're asking for.</p>
 
-    <Field label="What Should We Create or Deliver?" hint='Be as specific as you can — e.g. "A new homepage and 3 landing pages" instead of "some website work."' error={errors.deliv_0}>
+    <Field label="What Should We Create or Deliver?" hint={isBusinessService(form.serviceCategory)
+      ? 'Be as specific as you can — e.g. "200 branded polo shirts" or "5 tonnes of maize seed" instead of "some stock."'
+      : 'Be as specific as you can — e.g. "A new homepage and 3 landing pages" instead of "some website work."'} error={errors.deliv_0}>
       {form.deliverables.map((d, i) => (
         <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
           <span style={s.numBadge}>{i + 1}</span>
@@ -310,8 +360,13 @@ const StepScope = ({ form, errors, onChangeArr, onAddRow, onRemoveRow, onChange 
       <button style={s.addBtn} onClick={() => onAddRow('deliverables', '')}>+ Add Another</button>
     </Field>
 
-    <Field label="Anything It Needs to Work With?" hint="For example, a certain website platform, or a certain file type it needs to be delivered in. Leave blank if you're not sure — we can figure it out together.">
-      <Textarea value={form.technicalRequirements} onChange={e => onChange('technicalRequirements', e.target.value)} placeholder="Any specific platforms, formats, or tools this needs to work with…" rows={4} />
+    <Field
+      label={isBusinessService(form.serviceCategory) ? 'Any Specifications or Requirements?' : 'Anything It Needs to Work With?'}
+      hint={isBusinessService(form.serviceCategory)
+        ? 'For example, sizes, materials, quantities, quality or grade, packaging, or delivery location. Leave blank if you\'re not sure — we can figure it out together.'
+        : "For example, a certain website platform, or a certain file type it needs to be delivered in. Leave blank if you're not sure — we can figure it out together."}
+    >
+      <Textarea value={form.technicalRequirements} onChange={e => onChange('technicalRequirements', e.target.value)} placeholder={isBusinessService(form.serviceCategory) ? 'Any sizes, materials, quantities, standards, or delivery details we should know about…' : 'Any specific platforms, formats, or tools this needs to work with…'} rows={4} />
     </Field>
 
     <Field label="Do You Already Have a Logo or Brand Materials?" hint="Colors, fonts, existing text, anything you'd like us to use.">
@@ -322,9 +377,9 @@ const StepScope = ({ form, errors, onChangeArr, onAddRow, onRemoveRow, onChange 
 
 // ─── Step 4: Timeline & Budget ─────────────────────────────────────────────────
 const BUDGET_RANGES = [
-  'Under Ugx 500,000',
-  'Ugx 500,000 – 5,000,000',
-  'Ugx 5000,000 – 25,000,000',
+  'UGX 200,000 – 400,000',
+  'Above UGX 400,000 – 800,000',
+  'Above UGX 800,000 – 1,000,000+',
 ];
 
 const StepTimeline = ({ form, errors, onChange }) => (
@@ -341,7 +396,7 @@ const StepTimeline = ({ form, errors, onChange }) => (
       </Field>
     </div>
 
-    <Field label="What's Your Budget?" required error={errors.budgetRange}>
+    <Field label="What's Your Budget?" required hint="All amounts are in Uganda Shillings (UGX)." error={errors.budgetRange}>
       <Select value={form.budgetRange} error={errors.budgetRange} onChange={e => onChange('budgetRange', e.target.value)}>
         <option value="">Pick the range that fits best…</option>
         {BUDGET_RANGES.map(r => <option key={r}>{r}</option>)}
