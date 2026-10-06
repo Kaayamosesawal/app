@@ -150,6 +150,66 @@ const otherServices = [
   },
 ];
 
+const divisions = [
+  {
+    id: 'slirus-fashions',
+    icon: 'fas fa-tshirt',
+    color: '#db2777',
+    lightColor: '#fdf2f8',
+    borderColor: '#f9a8d4',
+    title: 'Slirus Fashions',
+    tagline: 'Fashion design, textile production, and apparel distribution under one roof.',
+    description:
+      'Slirus Fashions covers the full apparel value chain, from creative design and textile manufacturing to wholesale, retail, and online distribution of apparel and lifestyle products.',
+    bullets: [
+      'Fashion designing',
+      'Textile manufacturing',
+      'Wholesale and retail distribution of apparel and lifestyle products',
+      'General merchandise import and export',
+      'E-commerce operations',
+    ],
+  },
+  {
+    id: 'slirus-agrisolutions',
+    icon: 'fas fa-seedling',
+    color: '#16a34a',
+    lightColor: '#f0fdf4',
+    borderColor: '#86efac',
+    title: 'Slirus AgriSolutions',
+    tagline: 'Agricultural products, farming inputs, and modern machinery for productive farming.',
+    description:
+      'Slirus AgriSolutions is engaged in the production, processing, and trade of agricultural products and produce, and supplies the inputs and equipment that farmers need to grow.',
+    bullets: [
+      'Production of agricultural products and produce',
+      'Processing of agricultural products and produce',
+      'Wholesale and retail of agricultural products and farming inputs',
+      'Import and export of agricultural products and farming inputs',
+      'Supply of seeds, fertilizers, and agro-chemicals',
+      'Supply of modern agricultural machinery',
+    ],
+  },
+  {
+    id: 'slirus-general-trade',
+    icon: 'fas fa-exchange-alt',
+    color: '#7c3aed',
+    lightColor: '#f5f3ff',
+    borderColor: '#c4b5fd',
+    title: 'Slirus General Trade',
+    tagline: 'General trade and commerce, supported by partnerships, logistics, and professional services.',
+    description:
+      'Slirus General Trade handles the manufacturing, marketing, and movement of goods and services, and backs this with strategic partnerships and supporting business services.',
+    bullets: [
+      'Manufacturing, marketing, import, export, and distribution of all types of goods and services',
+      'Strategic partnerships and joint ventures',
+      'Acquisition and protection of intellectual property',
+      'Logistics services',
+      'Consultancy services',
+      'Real estate services',
+      'Project management services',
+    ],
+  },
+];
+
 const Services = () => {
   return (
     <Layout>
@@ -320,6 +380,34 @@ const Services = () => {
           font-size: 13px; color: #64748b; line-height: 1.65;
         }
 
+        /* ── Business Divisions ── */
+        .division-section {
+          padding: 90px 8%;
+          background: white;
+        }
+        .division-bullets {
+          list-style: none;
+          margin: 0;
+          padding: 32px 40px;
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 14px 24px;
+        }
+        .division-bullets li {
+          display: flex; gap: 12px; align-items: flex-start;
+          font-size: 14px; color: #475569; line-height: 1.65;
+        }
+        .division-bullets li i {
+          font-size: 15px; margin-top: 4px; flex-shrink: 0;
+        }
+        @media (max-width: 900px) {
+          .division-bullets { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 768px) {
+          .division-section { padding: 60px 5%; }
+          .division-bullets { padding: 24px; }
+        }
+
         /* ── CTA ── */
         .services-cta {
           text-align: center;
@@ -431,6 +519,44 @@ const Services = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── OTHER BUSINESS DIVISIONS ── */}
+      <section className="division-section">
+        <div className="container">
+          <p className="section-label">Beyond Technology</p>
+          <h2 className="section-heading">Our Other Business Divisions</h2>
+          <p className="section-sub">
+            Slirus Global also operates in fashion, agriculture, and general trade, bringing the same professionalism to every sector we serve.
+          </p>
+
+          {divisions.map((division) => (
+            <div className="service-block" key={division.id} id={division.id}>
+              <div className="service-block-header">
+                <div
+                  className="service-block-icon"
+                  style={{ background: division.lightColor, border: `1px solid ${division.borderColor}` }}
+                >
+                  <i className={division.icon} style={{ color: division.color }}></i>
+                </div>
+                <div className="service-block-meta">
+                  <div className="service-block-title">{division.title}</div>
+                  <div className="service-block-tagline">{division.tagline}</div>
+                  <p className="service-block-desc">{division.description}</p>
+                </div>
+              </div>
+
+              <ul className="division-bullets">
+                {division.bullets.map((bullet, i) => (
+                  <li key={i}>
+                    <i className="fas fa-check-circle" style={{ color: division.color }}></i>
+                    <span>{bullet}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ))}
         </div>
