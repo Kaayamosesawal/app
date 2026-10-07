@@ -462,6 +462,8 @@ const ProjectDetailModal = ({ project, onClose, onStatusChange, statusUpdating }
           </Sec>
 
           <Sec title="Project Overview">
+            <Row label="Service"      val={project.serviceCategory} />
+            <Row label="Specific Services" val={(project.specificServices || []).join(' · ')} />
             <Row label="Description"  val={project.projectDescription} />
             <Row label="Objectives"   val={(project.objectives || []).join(' · ')} />
             <Row label="Audience"     val={project.targetAudience} />
@@ -470,7 +472,10 @@ const ProjectDetailModal = ({ project, onClose, onStatusChange, statusUpdating }
 
           <Sec title="Scope">
             <Row label="Deliverables"     val={(project.deliverables || []).join(' · ')} />
-            <Row label="Technical Reqs"   val={project.technicalRequirements} />
+            <Row
+              label={['Slirus Fashions', 'Slirus AgriSolutions', 'Slirus General Trade'].includes(project.serviceCategory) ? 'Specifications' : 'Technical Reqs'}
+              val={project.technicalRequirements}
+            />
             <Row label="Brand Assets"     val={project.brandAssets} />
           </Sec>
 
@@ -1039,6 +1044,7 @@ const Admin = () => {
             to:      proj.contactEmail,
             name:    proj.contactName,
             program: proj.projectTitle,
+            service: proj.serviceCategory,
           }),
         }).catch(err => console.warn('[Email] Project status email failed:', err));
       }
@@ -1146,7 +1152,8 @@ const Admin = () => {
         || p.companyName?.toLowerCase().includes(q)
         || p.contactName?.toLowerCase().includes(q)
         || p.contactEmail?.toLowerCase().includes(q)
-        || p.projectTitle?.toLowerCase().includes(q);
+        || p.projectTitle?.toLowerCase().includes(q)
+        || p.serviceCategory?.toLowerCase().includes(q);
     })
     .sort((a, b) => (b.submittedAt?.toDate?.() || 0) - (a.submittedAt?.toDate?.() || 0));
 
@@ -1399,7 +1406,7 @@ const Admin = () => {
 
           <input
             style={s.searchInput}
-            placeholder="Search company, contact, or project title…"
+            placeholder="Search company, contact, project, or service…"
             value={projectSearch}
             onChange={e => setProjectSearch(e.target.value)}
           />
@@ -1431,6 +1438,9 @@ const Admin = () => {
                         {proj.companyName}
                       </button>
                       <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{proj.projectTitle}</div>
+                      {proj.serviceCategory && (
+                        <div style={{ fontSize: 11, color: '#2E6DA4', fontWeight: 600, marginTop: 2 }}>{proj.serviceCategory}</div>
+                      )}
                     </td>
                     <td style={s.td}>
                       <span style={{ fontSize: 13, color: '#1A3C5E', fontWeight: 600 }}>{proj.contactName}</span>

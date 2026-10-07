@@ -19,8 +19,9 @@
  *  - Global Dashboard: real-time, read-only view over Sales / HR / Finance
  *    summary documents, plus live counts pulled from existing collections.
  *  - Contracts & Agreements: create SLAs, Service Contract Agreements, and
- *    other professional agreements for contractual IT work (Software
- *    Development, Network & Infrastructure, IT Consultancy, Cybersecurity).
+ *    other professional agreements for contractual work across all Slirus
+ *    services (Software Development, Network & Infrastructure, IT Consultancy,
+ *    Cybersecurity, Slirus Fashions, Slirus AgriSolutions, Slirus General Trade).
  *    Terms are entered as a bulleted, add/remove list of conditions. Saves
  *    to the `contracts` Firestore collection (also read by Admin.jsx) and
  *    downloads a Client Copy + Company Copy PDF via utils/contractPdf.js.
@@ -467,10 +468,22 @@ const CreateUserModal = ({ onClose, onCreate }) => {
   );
 };
 
+// Example contract titles shown as a placeholder, matched to the selected service category.
+const CONTRACT_TITLE_EXAMPLES = {
+  'Software Development':       'e.g. Web Platform Development Contract – Q3 2026',
+  'Network & Infrastructure':   'e.g. Network Monitoring SLA – Q3 2026',
+  'IT Consultancy':             'e.g. Digital Transformation Advisory Agreement – 2026',
+  'Other / IT Cybersecurity':   'e.g. Security Audit Statement of Work – Q3 2026',
+  'Slirus Fashions':            'e.g. Staff Uniform Supply Agreement – Q3 2026',
+  'Slirus AgriSolutions':       'e.g. Seed & Fertilizer Supply Agreement – 2026',
+  'Slirus General Trade':       'e.g. Goods Distribution Agreement – 2026',
+};
+
 // ─── Contract / Agreement Form Modal ────────────────────────────────────────
 // Covers SLAs, Service Contract Agreements, and other professional
-// agreements for the four IT contractual-job categories (Software
-// Development, Network & Infrastructure, IT Consultancy, Cybersecurity).
+// agreements for every contractual-job category (Software Development,
+// Network & Infrastructure, IT Consultancy, Cybersecurity, Slirus Fashions,
+// Slirus AgriSolutions, Slirus General Trade).
 // Terms & conditions are entered as a bulleted, add/remove list of text
 // fields rather than a single free-text box, so each clause stays a
 // distinct, addressable item both on screen and in the generated PDFs.
@@ -555,7 +568,7 @@ const ContractFormModal = ({ initial, onClose, onSave }) => {
             </div>
 
             <label style={{ ...cu.label, marginTop: 12 }}>Contract title / reference</label>
-            <input style={s.loginInput} value={form.contractTitle} onChange={e => update('contractTitle', e.target.value)} disabled={saving} placeholder="e.g. Network Monitoring SLA – Q3 2026" />
+            <input style={s.loginInput} value={form.contractTitle} onChange={e => update('contractTitle', e.target.value)} disabled={saving} placeholder={CONTRACT_TITLE_EXAMPLES[form.serviceCategory] || 'e.g. Network Monitoring SLA – Q3 2026'} />
 
             <h4 style={{ ...ms.secTitle, marginTop: 18, color: '#2E6DA4' }}>Client</h4>
             <div style={{ display: 'flex', gap: 10 }}>
@@ -1345,8 +1358,8 @@ const CeoManager = () => {
               <div>
                 <h2 style={{ ...s.sectionHead, margin: 0 }}>Contracts & Professional Agreements</h2>
                 <p style={{ ...s.pageSub, margin: '4px 0 0' }}>
-                  SLAs, Service Contract Agreements, and other agreements for contractual IT work — Software Development,
-                  Network & Infrastructure, IT Consultancy, and Cybersecurity.
+                  SLAs, Service Contract Agreements, and other agreements for contractual work — Software Development,
+                  Network & Infrastructure, IT Consultancy, Cybersecurity, Fashions, AgriSolutions, and General Trade.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>

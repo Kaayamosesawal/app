@@ -110,7 +110,7 @@ export const drawLetterhead = (pdf, {
  * onto every page currently in the document. Call once, after all content
  * has been added, right before pdf.save().
  */
-export const drawFooter = (pdf, { note = 'Slirus Global Limited Limited', confidential = false, margin = 20 } = {}) => {
+export const drawFooter = (pdf, { note = 'Slirus Global Limited', confidential = false, margin = 20 } = {}) => {
   const PW = pdf.internal.pageSize.getWidth();
   const PH = pdf.internal.pageSize.getHeight();
   const total = pdf.internal.getNumberOfPages();

@@ -31,6 +31,19 @@ const fmtDate = (value) => {
 
 const refCode = (project) => (project?.id ? String(project.id).slice(0, 12).toUpperCase() : '—');
 
+// Non-tech Slirus divisions (mirrors Services.jsx / ProjectRequest.jsx). For these the
+// "technical requirements" field is really a set of specifications (sizes, materials, quantities…).
+const BUSINESS_SERVICES = ['Slirus Fashions', 'Slirus AgriSolutions', 'Slirus General Trade'];
+const reqLabel = (project) =>
+  BUSINESS_SERVICES.includes(project?.serviceCategory) ? 'Specifications' : 'Technical Requirements';
+
+// Always show budgets in UGX. New requests already use "UGX …"; this also tidies older
+// records saved as "Ugx …" or with a "$" so every PDF reads consistently.
+const fmtBudget = (value) => {
+  if (!value) return value;
+  return String(value).replace(/\bugx\b/gi, 'UGX').replace(/\$\s?/g, 'UGX ');
+};
+
 // ─── 1. Project Request Summary ────────────────────────────────────────────
 export const generateProjectRequestPDF = async (project) => {
   const { jsPDF } = await import('jspdf');
@@ -110,6 +123,8 @@ export const generateProjectRequestPDF = async (project) => {
   y += 2;
 
   section('Project Overview');
+  row('Service', project.serviceCategory);
+  row('Specific Services', (project.specificServices || []).join(' · '));
   multiRow('Description', project.projectDescription);
   bulletList('Goals', project.objectives);
   multiRow('Target Audience', project.targetAudience);
@@ -117,13 +132,13 @@ export const generateProjectRequestPDF = async (project) => {
 
   section('Scope');
   bulletList('Deliverables', project.deliverables);
-  multiRow('Technical Requirements', project.technicalRequirements);
+  multiRow(reqLabel(project), project.technicalRequirements);
   multiRow('Brand Assets', project.brandAssets);
 
   section('Timeline & Budget');
   row('Start Date', project.startDate);
   row('Deadline', project.hardDeadline);
-  row('Budget Range', project.budgetRange);
+  row('Budget Range', fmtBudget(project.budgetRange));
 
   section('Success Metrics');
   multiRow('KPIs', project.kpis);
@@ -180,10 +195,11 @@ export const generateProjectProposalPDF = async (project) => {
   pdf.setFontSize(11); pdf.setTextColor(180, 202, 224);
   pdf.text(`Prepared for ${project.companyName || 'Client'}`, PW / 2, 162 + titleLines.length * 7 + 4, { align: 'center' });
 
-  const metaY = 250;
+  const metaY = project.serviceCategory ? 244 : 250;
   const meta = [
     ['Prepared For', `${project.contactName || '—'}${project.contactEmail ? ' · ' + project.contactEmail : ''}`],
     ['Reference',    refCode(project)],
+    ...(project.serviceCategory ? [['Service', project.serviceCategory]] : []),
     ['Date',         fmtDate(project.submittedAt)],
     ['Prepared By',  'Slirus Global Limited'],
   ];
@@ -264,12 +280,20 @@ export const generateProjectProposalPDF = async (project) => {
   }
 
   h2('Scope of Work', 2);
+  if (project.serviceCategory) {
+    subHead('Service Requested');
+    body(project.serviceCategory);
+    if ((project.specificServices || []).filter(Boolean).length) {
+      subHead('Specific Services');
+      bullets(project.specificServices);
+    }
+  }
   if ((project.deliverables || []).filter(Boolean).length) {
     subHead('Deliverables');
     bullets(project.deliverables);
   }
   if (project.technicalRequirements) {
-    subHead('Technical Requirements');
+    subHead(reqLabel(project));
     body(project.technicalRequirements);
   }
   if (project.brandAssets) {
@@ -285,7 +309,7 @@ export const generateProjectProposalPDF = async (project) => {
   infoGrid([
     ['Proposed Start', project.startDate],
     ['Target Completion', project.hardDeadline || 'To be agreed'],
-    ['Estimated Investment', project.budgetRange],
+    ['Estimated Investment', fmtBudget(project.budgetRange)],
   ]);
   checkY(8);
   pdf.setFontSize(8.5); pdf.setFont('helvetica', 'italic'); pdf.setTextColor(140, 140, 140);

@@ -23,12 +23,15 @@ export const CONTRACT_TYPES = [
   'Other Professional Agreement',
 ];
 
-// The four IT contractual-job categories this company offers.
+// Contractual-job categories this company offers: four IT services plus the Fashions, AgriSolutions and General Trade divisions.
 export const SERVICE_CATEGORIES = [
   { key: 'software_development', label: 'Software Development' },
   { key: 'network_infrastructure', label: 'Network & Infrastructure' },
   { key: 'it_consultancy', label: 'IT Consultancy' },
   { key: 'cybersecurity', label: 'Other / IT Cybersecurity' },
+  { key: 'fashions', label: 'Slirus Fashions' },
+  { key: 'agri_solutions', label: 'Slirus AgriSolutions' },
+  { key: 'general_trade', label: 'Slirus General Trade' },
 ];
 
 export const CONTRACT_STATUSES = ['Draft', 'Active', 'Expired', 'Terminated'];

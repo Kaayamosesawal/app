@@ -262,7 +262,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
                 <td style="vertical-align:middle;">
                   <p style="margin:0;font-size:17px;font-weight:700;color:#1e293b;
                             letter-spacing:-0.3px;font-family:Arial,Helvetica,sans-serif;">
-                    Slirus <span style="color:#475569;font-weight:400;">Limited</span>
+                    Slirus Global<span style="color:#475569;font-weight:400;">Limited</span>
                   </p>
                   <p style="margin:2px 0 0;font-size:10px;font-weight:700;letter-spacing:2px;
                             color:#94a3b8;text-transform:uppercase;
@@ -319,7 +319,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
             </p>
             <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
-              P.O Box 331921, Lira - Uganda &nbsp;&middot;&nbsp; info@slirus.com
+              P.O Box 332485, Lira - Uganda &nbsp;&middot;&nbsp; info@slirus.com
             </p>
             <p style="margin:0 0 10px;font-size:11px;color:#94a3b8;line-height:1.6;
                       font-family:Arial,Helvetica,sans-serif;">
@@ -348,6 +348,63 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
 
 </body>
 </html>`;
+
+// ─── Service catalogue (mirrors Services.jsx / ProjectRequest.jsx) ───────────
+// Keys must match the `serviceCategory` values sent by ProjectRequest.jsx.
+// Only whitelisted keys are ever rendered, so client input is never injected
+// into the email HTML. Unknown or missing services simply skip the paragraph.
+const SERVICE_INFO = {
+  'Custom Software Development': {
+    division: 'Slirus Technologies',
+    focus: 'Our software engineers will review the platforms, features, and integrations you described.',
+  },
+  'IT Consulting & Digital Transformation': {
+    division: 'Slirus Technologies',
+    focus: 'Our consultants will review your current systems and goals so we can shape a practical roadmap.',
+  },
+  'Network Infrastructure Management': {
+    division: 'Slirus Technologies',
+    focus: 'Our network engineers will review your infrastructure, coverage, and support needs.',
+  },
+  'Cybersecurity & Data Protection': {
+    division: 'Slirus Technologies',
+    focus: 'Our security specialists will review the systems and data you need protected.',
+  },
+  'Slirus Fashions': {
+    division: 'Slirus Fashions',
+    focus: 'Our fashion team will review the designs, materials, quantities, and delivery details you shared.',
+  },
+  'Slirus AgriSolutions': {
+    division: 'Slirus AgriSolutions',
+    focus: 'Our agribusiness team will review the produce, farming inputs, or machinery, along with the quantities and delivery details you shared.',
+  },
+  'Slirus General Trade': {
+    division: 'Slirus General Trade',
+    focus: 'Our trade and commerce team will review the goods, services, and logistics you described.',
+  },
+};
+
+// HTML paragraph naming the requested service (empty string when unknown).
+const serviceParagraph = (service) => {
+  const info = SERVICE_INFO[service];
+  if (!info) return '';
+  return `
+          <p>
+            You've requested our <strong>${service}</strong> service, which is handled by
+            <strong>${info.division}</strong>. ${info.focus}
+          </p>`;
+};
+
+// Plain-text equivalent, returned as an array of lines (empty when unknown).
+const serviceLines = (service) => {
+  const info = SERVICE_INFO[service];
+  if (!info) return [];
+  return [
+    `You've requested our ${service} service, handled by ${info.division}.`,
+    info.focus,
+    '',
+  ];
+};
 
 // ─── Plain-text fallback builder ─────────────────────────────────────────────
 //
@@ -426,6 +483,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       '',
       `Thank you for submitting your project request: ${program}.`,
       '',
+      ...serviceLines(extra.service),
       'We have received your request and our project review team will carefully',
       'assess the scope, timeline, and requirements you shared. We aim to respond',
       'with a tailored proposal within 2–3 business days.',
@@ -437,6 +495,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       '',
       `Great news — we have accepted your project: ${program}.`,
       '',
+      ...serviceLines(extra.service),
       'A member of our team will be in touch shortly to discuss next steps,',
       'including scope confirmation, timeline alignment, and contract details.',
       '',
@@ -467,7 +526,7 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     '',
     divider,
     `© ${year} Slirus Global Limited`,
-    'P.O Box 331921, Lira, Uganda',
+    'P.O Box 332485, Lira, Uganda',
     'info@slirus.com  |  https://slirus.com',
     '',
     type === 'account_created'
@@ -615,7 +674,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             help bring <strong>${program}</strong> to life. We have successfully received
             your project request, and we sincerely appreciate the trust you've placed in
             our team to support your goals.
-          </p>
+          </p>${serviceParagraph(extra.service)}
           <p>
             Your submission is now with our project review team, who will carefully assess
             the scope, timeline, and requirements you've shared. We take every request
@@ -646,7 +705,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             We're delighted to let you know that after reviewing your request, our team
             has accepted <strong>${program}</strong> and we're excited to begin working
             with you.
-          </p>
+          </p>${serviceParagraph(extra.service)}
           <p>
             A member of our team will be in touch shortly to discuss next steps, including
             scope confirmation, timeline alignment, and contract details, so we can get
@@ -757,7 +816,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
 // ─── POST /api/send-email ─────────────────────────────────────────────────────
 app.post('/api/send-email', async (req, res) => {
-  const { type, to, name, program, password, department, role, portalUrl } = req.body ?? {};
+  const { type, to, name, program, service, password, department, role, portalUrl } = req.body ?? {};
   const isAccountEmail = ACCOUNT_EMAIL_TYPES.has(type);
 
   // account_created has its own required-field shape (no `program`, but
@@ -785,7 +844,9 @@ app.post('/api/send-email', async (req, res) => {
 
   const extra = isAccountEmail
     ? { to, password, department, role, portalUrl: portalUrl || portalUrlFor(department) }
-    : {};
+    : PROJECT_EMAIL_TYPES.has(type)
+      ? { service }
+      : {};
 
   const content = buildEmailContent(type, name, program, extra);
   if (!content) {
