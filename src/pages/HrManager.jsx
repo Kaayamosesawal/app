@@ -1235,11 +1235,22 @@ const bcGrad = (ctx, x0, y0, x1, y1, stops) => {
 };
 
 // Company logo (public/Slirus.png); falls back to a drawn "S" monogram if it can't load.
-const bcDrawLogo = (ctx, img, cx, cy, d, onDark) => {
+// With `fitCircle`, the logo is scaled so its whole bounding box (corner to corner)
+// sits inside a circle of diameter `d`, and anything outside that circle is clipped.
+const bcDrawLogo = (ctx, img, cx, cy, d, onDark, fitCircle = false) => {
   if (img) {
-    const r = Math.min(d / img.width, d / img.height);
+    const r = fitCircle
+      ? d / Math.hypot(img.width, img.height)
+      : Math.min(d / img.width, d / img.height);
     const w = img.width * r, h = img.height * r;
-    ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+    if (fitCircle) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, d / 2, 0, Math.PI * 2); ctx.clip();
+      ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+    }
     return;
   }
   ctx.save();
@@ -1291,7 +1302,8 @@ const drawBusinessCardFront = (ctx, { logoImg, bleed = 0 }) => {
   ctx.lineWidth = 7 * k;
   ctx.strokeStyle = bcGrad(ctx, lcx - ld / 2, lcy - ld / 2, lcx + ld / 2, lcy + ld / 2, [[0, BC_SKY], [1, '#0A3FB8']]);
   ctx.beginPath(); ctx.arc(lcx, lcy, ld / 2 - 3.5 * k, 0, Math.PI * 2); ctx.stroke();
-  bcDrawLogo(ctx, logoImg, lcx, lcy, ld * 0.84, false);
+  // Fit the logo inside the white circle, just clear of the blue ring
+  bcDrawLogo(ctx, logoImg, lcx, lcy, (ld - 14 * k) * 0.92, false, true);
 
   // Company name
   const tcx = fx(644);
