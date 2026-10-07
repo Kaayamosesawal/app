@@ -1133,6 +1133,495 @@ const IdCardModal = ({ employee, onClose }) => {
   );
 };
 
+// ─── Business Card (front + back) ──────────────────────────────────────────
+// Standard business card: 3.5" × 2" (88.9 × 50.8 mm) rendered at 300 DPI
+// (1050 × 600 px) with a 0.125" (3 mm) bleed on all sides for the print-ready
+// PDF. Layout follows the approved Slirus template: dark "Tech • Trade •
+// Transform" front, white back carrying the employee's details, contact
+// rows, service icons and a "Scan to connect" vCard QR code.
+const BC_W = 1050;
+const BC_H = 600;
+const BC_BLEED = 37.5; // 0.125" at 300 DPI
+const BC_NAVY = '#04122E';
+const BC_BLUE = '#0A5CFF';
+const BC_SKY = '#1E90FF';
+const BC_FONT = '"Segoe UI", Arial, Helvetica, sans-serif';
+const BC_ADDRESS = 'P.O Box 332485 - Lira City';
+const BC_SLOGAN = 'Smart Solutions for a Stronger Tomorrow';
+const BC_TAGLINE = 'Tech • Trade • Transform';
+
+// Template artwork is laid out on a 905 px-wide reference; X scales by the width
+// ratio, Y by each side's own height, and type sizes follow X so text never stretches.
+const BC_KX = BC_W / 905;
+const bcFrontX = (x) => (x - 193) * BC_KX;
+const bcFrontY = (y) => (y - 63) * (BC_H / 424);
+const bcBackX = (x) => (x - 193) * BC_KX;
+const bcBackY = (y) => (y - 529) * (BC_H / 434);
+
+const bcFont = (px, weight = 'bold') => `${weight} ${px}px ${BC_FONT}`;
+
+// Draws letter-spaced text, stretching the gaps so the run is exactly `targetWidth` wide.
+const bcSpacedFit = (ctx, text, x, y, targetWidth, align = 'left', colorFn) => {
+  const chars = [...text];
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  const sum = widths.reduce((a, w) => a + w, 0);
+  const gap = chars.length > 1 ? Math.max(0, (targetWidth - sum) / (chars.length - 1)) : 0;
+  const total = sum + gap * (chars.length - 1);
+  let cx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+  ctx.textAlign = 'left';
+  chars.forEach((c, i) => {
+    if (colorFn) ctx.fillStyle = colorFn(c);
+    ctx.fillText(c, cx, y);
+    cx += widths[i] + gap;
+  });
+};
+
+// Draws letter-spaced text with a fixed gap between characters.
+const bcSpaced = (ctx, text, x, y, gap, align = 'left') => {
+  const chars = [...text];
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  const total = widths.reduce((a, w) => a + w, 0) + gap * (chars.length - 1);
+  let cx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+  ctx.textAlign = 'left';
+  chars.forEach((c, i) => { ctx.fillText(c, cx, y); cx += widths[i] + gap; });
+};
+
+// Picks the font size (up to maxPx) at which `text` is `targetWidth` wide.
+const bcFitPx = (ctx, text, targetWidth, weight, maxPx) => {
+  ctx.font = bcFont(100, weight);
+  const px = (100 * targetWidth) / Math.max(1, ctx.measureText(text).width);
+  return Math.min(px, maxPx);
+};
+
+// Extends polygon vertices that sit on the card edge out into the bleed area,
+// following the diagonal edge so shapes keep their angle into the bleed.
+const bcBleedPoly = (pts, b) => {
+  const W = BC_W, H = BC_H, eps = 0.5;
+  return pts.map(([x, y], i) => {
+    const onL = x <= eps, onR = x >= W - eps, onT = y <= eps, onB = y >= H - eps;
+    if (!(onL || onR || onT || onB)) return [x, y];
+    const tx = onL ? -b : onR ? W + b : x;
+    const ty = onT ? -b : onB ? H + b : y;
+    if ((onL || onR) && (onT || onB)) return [tx, ty];
+    const same = (p) => (onL && p[0] <= eps) || (onR && p[0] >= W - eps) || (onT && p[1] <= eps) || (onB && p[1] >= H - eps);
+    const prev = pts[(i - 1 + pts.length) % pts.length];
+    const next = pts[(i + 1) % pts.length];
+    const n = !same(prev) ? prev : !same(next) ? next : null;
+    if (!n) return [tx, ty];
+    if (onL || onR) {
+      if (Math.abs(x - n[0]) < eps) return [tx, y];
+      const t = (tx - n[0]) / (x - n[0]);
+      return [tx, n[1] + (y - n[1]) * t];
+    }
+    if (Math.abs(y - n[1]) < eps) return [x, ty];
+    const t = (ty - n[1]) / (y - n[1]);
+    return [n[0] + (x - n[0]) * t, ty];
+  });
+};
+
+const bcFillPoly = (ctx, pts, fill, b) => {
+  const p = bcBleedPoly(pts, b);
+  ctx.beginPath();
+  p.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+};
+
+const bcGrad = (ctx, x0, y0, x1, y1, stops) => {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  stops.forEach(([o, c]) => g.addColorStop(o, c));
+  return g;
+};
+
+// Company logo (public/Slirus.png); falls back to a drawn "S" monogram if it can't load.
+const bcDrawLogo = (ctx, img, cx, cy, d, onDark) => {
+  if (img) {
+    const r = Math.min(d / img.width, d / img.height);
+    const w = img.width * r, h = img.height * r;
+    ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+    return;
+  }
+  ctx.save();
+  ctx.lineWidth = d * 0.07;
+  ctx.strokeStyle = onDark ? '#FFFFFF' : BC_NAVY;
+  ctx.beginPath(); ctx.arc(cx, cy, d * 0.44, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = onDark ? '#FFFFFF' : BC_NAVY;
+  ctx.font = bcFont(d * 0.62, '900');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('S', cx, cy + d * 0.03);
+  ctx.restore();
+};
+
+// ── Front ───────────────────────────────────────────────────────────────────
+const drawBusinessCardFront = (ctx, { logoImg, bleed = 0 }) => {
+  const W = BC_W, H = BC_H, b = bleed, k = BC_KX;
+  const fx = bcFrontX, fy = bcFrontY;
+  ctx.save();
+  ctx.translate(b, b);
+  ctx.textBaseline = 'alphabetic';
+
+  // Deep navy background
+  ctx.fillStyle = bcGrad(ctx, 0, 0, W, H, [[0, '#04153A'], [0.5, '#020B22'], [1, '#031638']]);
+  ctx.fillRect(-b, -b, W + 2 * b, H + 2 * b);
+
+  // Top-left blue diagonal stripes
+  bcFillPoly(ctx, [[fx(193), fy(63)], [fx(430), fy(63)], [fx(193), fy(310)]],
+    bcGrad(ctx, 0, 0, fx(430), fy(310), [[0, '#0B3FA8'], [1, '#08225F']]), b);
+  bcFillPoly(ctx, [[fx(193), fy(63)], [fx(375), fy(63)], [fx(193), fy(262)]],
+    bcGrad(ctx, 0, 0, fx(375), fy(262), [[0, '#1E7BFF'], [1, '#0A4FD6']]), b);
+  bcFillPoly(ctx, [[fx(193), fy(63)], [fx(335), fy(63)], [fx(193), fy(222)]],
+    bcGrad(ctx, 0, 0, fx(335), fy(222), [[0, '#47A6FF'], [1, '#1565E8']]), b);
+
+  // Bottom-right stripes: blue, silver, bright blue
+  bcFillPoly(ctx, [[fx(1098), fy(222)], [fx(1098), fy(280)], [fx(975), fy(487)], [fx(868), fy(487)]],
+    bcGrad(ctx, W, fy(222), fx(868), H, [[0, '#0A5CFF'], [1, '#0A2E8A']]), b);
+  bcFillPoly(ctx, [[fx(1098), fy(280)], [fx(1098), fy(345)], [fx(1020), fy(487)], [fx(975), fy(487)]],
+    bcGrad(ctx, W, fy(280), fx(975), H, [[0, '#F1F4F8'], [1, '#8A95A6']]), b);
+  bcFillPoly(ctx, [[fx(1098), fy(345)], [fx(1098), fy(487)], [fx(1020), fy(487)]],
+    bcGrad(ctx, W, fy(345), fx(1020), H, [[0, '#2AA0FF'], [1, '#0A5CFF']]), b);
+
+  // Logo in a white badge with a blue glow ring
+  const lcx = fx(644) - 8 * k, lcy = fy(203), ld = 205 * k;
+  ctx.save();
+  ctx.shadowColor = 'rgba(30,144,255,0.75)'; ctx.shadowBlur = 26;
+  ctx.beginPath(); ctx.arc(lcx, lcy, ld / 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#FFFFFF'; ctx.fill();
+  ctx.restore();
+  ctx.lineWidth = 7 * k;
+  ctx.strokeStyle = bcGrad(ctx, lcx - ld / 2, lcy - ld / 2, lcx + ld / 2, lcy + ld / 2, [[0, BC_SKY], [1, '#0A3FB8']]);
+  ctx.beginPath(); ctx.arc(lcx, lcy, ld / 2 - 3.5 * k, 0, Math.PI * 2); ctx.stroke();
+  bcDrawLogo(ctx, logoImg, lcx, lcy, ld * 0.84, false);
+
+  // Company name
+  const tcx = fx(644);
+  const name = 'SLIRUS GLOBAL LIMITED';
+  const namePx = bcFitPx(ctx, name, 608 * k, '800', 200);
+  ctx.font = bcFont(namePx, '800'); ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
+  ctx.fillText(name, tcx, fy(342) + 6 * k);
+
+  // Tagline: TECH • TRADE • TRANSFORM (blue bullets)
+  ctx.font = bcFont(19 * k, '600'); ctx.fillStyle = '#E8EEFA';
+  bcSpacedFit(ctx, BC_TAGLINE.toUpperCase(), tcx, fy(374), 535 * k, 'center', (c) => (c === '•' ? BC_BLUE : '#E8EEFA'));
+
+  // Short blue rule + slogan
+  ctx.fillStyle = BC_BLUE;
+  ctx.fillRect(tcx - 38 * k, fy(411), 77 * k, 3 * k);
+  ctx.font = bcFont(12.5 * k, '600'); ctx.fillStyle = '#CFE0FF';
+  bcSpacedFit(ctx, BC_SLOGAN.toUpperCase(), tcx - 12 * k, fy(446), 488 * k, 'center');
+
+  ctx.restore();
+};
+
+// ── Back-side icon helpers ──────────────────────────────────────────────────
+const BC_ICON_PATHS = {
+  phone: 'M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z',
+  email: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z',
+  pin: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z',
+  globe: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',
+};
+
+const bcContactIcon = (ctx, kind, cx, cy, r) => {
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = BC_BLUE; ctx.fill();
+  const s = r * 1.15;
+  ctx.save();
+  ctx.translate(cx - s / 2, cy - s / 2);
+  ctx.scale(s / 24, s / 24);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill(new Path2D(BC_ICON_PATHS[kind]));
+  ctx.restore();
+};
+
+const bcIconLaptop = (ctx, cx, cy, s) => {
+  ctx.save();
+  ctx.strokeStyle = BC_BLUE; ctx.fillStyle = BC_BLUE; ctx.lineWidth = s * 0.07;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const sw = s * 0.74, sh = s * 0.5, sx = cx - sw / 2, sy = cy - s * 0.42;
+  ctx.strokeRect(sx, sy, sw, sh);
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.5, cy + s * 0.14); ctx.lineTo(cx + s * 0.5, cy + s * 0.14);
+  ctx.lineTo(cx + s * 0.4, cy + s * 0.3); ctx.lineTo(cx - s * 0.4, cy + s * 0.3);
+  ctx.closePath(); ctx.stroke();
+  ctx.font = bcFont(s * 0.26, 'bold'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('</>', cx, sy + sh / 2 + 1);
+  ctx.restore();
+};
+
+const bcIconHandshake = (ctx, cx, cy, s) => {
+  ctx.save();
+  ctx.translate(cx - s / 2, cy - s * 0.36);
+  const u = s / 80;
+  ctx.scale(u, u);
+  ctx.strokeStyle = BC_BLUE; ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeRect(1, 12, 10, 28);
+  ctx.strokeRect(69, 12, 10, 28);
+  ctx.beginPath();
+  ctx.moveTo(11, 16); ctx.lineTo(27, 9); ctx.lineTo(41, 14); ctx.lineTo(53, 9); ctx.lineTo(69, 16);
+  ctx.moveTo(11, 36); ctx.lineTo(25, 44); ctx.lineTo(36, 49); ctx.lineTo(47, 44); ctx.lineTo(69, 36);
+  ctx.moveTo(27, 9); ctx.lineTo(22, 26); ctx.lineTo(34, 38);
+  ctx.moveTo(41, 14); ctx.lineTo(33, 27); ctx.lineTo(44, 40);
+  ctx.moveTo(53, 9); ctx.lineTo(47, 24); ctx.lineTo(55, 34);
+  ctx.stroke();
+  ctx.restore();
+};
+
+const bcIconChart = (ctx, cx, cy, s) => {
+  ctx.save();
+  ctx.strokeStyle = BC_BLUE; ctx.fillStyle = BC_BLUE; ctx.lineWidth = s * 0.07;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const bw = s * 0.15, base = cy + s * 0.34, x0 = cx - s * 0.34;
+  [[0, 0.22], [1, 0.38], [2, 0.54]].forEach(([i, h]) => {
+    ctx.strokeRect(x0 + i * (bw + s * 0.09), base - s * h, bw, s * h);
+  });
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.4, cy - s * 0.02); ctx.lineTo(cx - s * 0.08, cy - s * 0.2);
+  ctx.lineTo(cx + s * 0.06, cy - s * 0.1); ctx.lineTo(cx + s * 0.42, cy - s * 0.4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + s * 0.44, cy - s * 0.44); ctx.lineTo(cx + s * 0.24, cy - s * 0.42); ctx.lineTo(cx + s * 0.4, cy - s * 0.24);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+};
+
+// ── Back ────────────────────────────────────────────────────────────────────
+// `card` = { name, position, phone, email, website }
+const drawBusinessCardBack = (ctx, { logoImg, qrImg, card, bleed = 0 }) => {
+  const W = BC_W, H = BC_H, b = bleed, k = BC_KX;
+  const bx = bcBackX, by = bcBackY;
+  ctx.save();
+  ctx.translate(b, b);
+  ctx.textBaseline = 'alphabetic';
+
+  // White card
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-b, -b, W + 2 * b, H + 2 * b);
+
+  // Right-hand dark panel with a curved edge and a blue border stripe
+  const panel = (dx) => {
+    ctx.beginPath();
+    ctx.moveTo(bx(988) + dx, -b);
+    ctx.lineTo(bx(988) + dx, 0);
+    ctx.bezierCurveTo(bx(940) + dx, by(580), bx(888) + dx, by(640), bx(890) + dx, by(705));
+    ctx.bezierCurveTo(bx(893) + dx, by(780), bx(950) + dx, by(890), bx(1005) + dx, by(963));
+    ctx.lineTo(bx(1005) + dx, H + b);
+    ctx.lineTo(W + b, H + b);
+    ctx.lineTo(W + b, -b);
+    ctx.closePath();
+  };
+  panel(-17 * k);
+  ctx.fillStyle = bcGrad(ctx, 0, 0, 0, H, [[0, '#2A8CFF'], [0.5, '#0A5CFF'], [1, '#0A3FB8']]);
+  ctx.fill();
+  panel(0);
+  ctx.fillStyle = bcGrad(ctx, 0, 0, W, H, [[0, '#061B4D'], [1, '#020B22']]);
+  ctx.fill();
+
+  // QR code (vCard) + caption
+  const qcx = bx(1016), qcy = by(732), qs = 124;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(qcx - qs / 2, qcy - qs / 2, qs, qs);
+  if (qrImg) ctx.drawImage(qrImg, qcx - qs / 2 + 4, qcy - qs / 2 + 4, qs - 8, qs - 8);
+  ctx.fillStyle = '#FFFFFF'; ctx.font = bcFont(14 * k, '600');
+  bcSpaced(ctx, 'SCAN TO', qcx, by(805), 2.6 * k, 'center');
+  bcSpaced(ctx, 'CONNECT', qcx, by(822), 2.6 * k, 'center');
+
+  // Logo + vertical rule + company name
+  bcDrawLogo(ctx, logoImg, bx(307), by(604), 124 * k, false);
+  ctx.fillStyle = BC_NAVY;
+  ctx.fillRect(bx(388), by(572), 2.2, by(636) - by(572));
+  const nx = bx(412);
+  const co = 'SLIRUS GLOBAL LIMITED';
+  const coPx = bcFitPx(ctx, co, 384 * k, '800', 200);
+  ctx.font = bcFont(coPx, '800'); ctx.textAlign = 'left'; ctx.fillStyle = BC_NAVY;
+  ctx.fillText(co, nx, by(603));
+  ctx.font = bcFont(12.5 * k, '700');
+  bcSpacedFit(ctx, BC_TAGLINE.toUpperCase(), bx(421), by(623), 368 * k, 'left', (c) => (c === '•' ? BC_BLUE : BC_NAVY));
+
+  // Employee name + position
+  const left = bx(249);
+  const namePx = bcFitPx(ctx, card.name, 640 - left, '800', 34 * k);
+  ctx.font = bcFont(namePx, '800'); ctx.fillStyle = BC_NAVY; ctx.textAlign = 'left';
+  ctx.fillText(card.name, left, by(701));
+  ctx.font = bcFont(17 * k, '700'); ctx.fillStyle = BC_BLUE;
+  bcSpaced(ctx, card.position.toUpperCase(), left + 2, by(724), 3.2 * k);
+
+  // Contact rows
+  const rows = [
+    ['phone', card.phone, 751],
+    ['email', card.email, 783],
+    ['pin', BC_ADDRESS, 815],
+    ['globe', card.website, 843],
+  ];
+  rows.forEach(([kind, text, yImg]) => {
+    const cy = by(yImg);
+    bcContactIcon(ctx, kind, bx(267), cy, 15.5 * k);
+    const maxW = bx(628) - bx(300) - 10;
+    let px = 20.5 * k;
+    ctx.font = bcFont(px, '500');
+    const w = ctx.measureText(text).width;
+    if (w > maxW) { px = Math.max(13, px * (maxW / w)); ctx.font = bcFont(px, '500'); }
+    ctx.fillStyle = BC_NAVY; ctx.textAlign = 'left';
+    ctx.fillText(text, bx(300), cy + px * 0.33);
+  });
+
+  // Mid column: vertical rule, tagline text, blue underline
+  ctx.fillStyle = BC_BLUE;
+  ctx.fillRect(bx(637), by(731), 2.4, by(842) - by(731));
+  ctx.font = bcFont(20 * k, '500'); ctx.fillStyle = BC_NAVY; ctx.textAlign = 'left';
+  ['Innovative', 'Solutions for a', 'Smarter Tomorrow'].forEach((line, i) => {
+    ctx.fillText(line, bx(669), by(752 + i * 20.5));
+  });
+  ctx.fillStyle = BC_BLUE;
+  ctx.fillRect(bx(669), by(808), 75 * k, 4);
+
+  // Bottom row: TECH | TRADE | TRANSFORM
+  const iconY = by(896), labelY = by(940), is = 78 * k;
+  bcIconLaptop(ctx, bx(313), iconY, is);
+  bcIconHandshake(ctx, bx(529), iconY, is);
+  bcIconChart(ctx, bx(737), iconY, is);
+  ctx.fillStyle = BC_BLUE;
+  ctx.fillRect(bx(425), by(882), 2.4, by(936) - by(882));
+  ctx.fillRect(bx(635), by(882), 2.4, by(936) - by(882));
+  ctx.font = bcFont(15.5 * k, '800'); ctx.fillStyle = BC_NAVY;
+  bcSpaced(ctx, 'TECH', bx(313), labelY, 2.4 * k, 'center');
+  bcSpaced(ctx, 'TRADE', bx(529), labelY, 2.4 * k, 'center');
+  bcSpaced(ctx, 'TRANSFORM', bx(737), labelY, 2.4 * k, 'center');
+
+  ctx.restore();
+};
+
+// vCard payload for the back-of-card "Scan to connect" QR code.
+const buildBusinessCardVCard = (employee, card) => [
+  'BEGIN:VCARD',
+  'VERSION:3.0',
+  `N:${employee.lastName || ''};${employee.firstName || ''};;;`,
+  `FN:${card.name}`,
+  `ORG:${COMPANY_INFO.name}`,
+  `TITLE:${card.position}`,
+  `TEL;TYPE=WORK,VOICE:${card.phone}`,
+  `EMAIL;TYPE=WORK:${card.email}`,
+  `URL:${card.website}`,
+  'ADR;TYPE=WORK:;;P.O Box 332485;Lira City;;;Uganda',
+  'END:VCARD',
+].join('\n');
+
+const BusinessCardModal = ({ employee, onClose }) => {
+  const frontRef = useRef(null);
+  const backRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [useCompanyContact, setUseCompanyContact] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // Everything printed on the card comes from the employee's database record.
+  const card = useMemo(() => ({
+    name: employeeFullName(employee) || 'Employee',
+    position: employee.position || employee.department || 'Team Member',
+    phone: (!useCompanyContact && employee.phone) || COMPANY_INFO.phone,
+    email: (!useCompanyContact && employee.email) || COMPANY_INFO.email,
+    website: COMPANY_INFO.website,
+  }), [employee, useCompanyContact]);
+
+  const loadAssets = async () => {
+    const qrUrl = await QRCode.toDataURL(buildBusinessCardVCard(employee, card), {
+      width: 400, margin: 1, errorCorrectionLevel: 'M',
+      color: { dark: '#04122E', light: '#FFFFFF' },
+    }).catch(() => null);
+    const [logoImg, qrImg] = await Promise.all([loadImageSafe(COMPANY_INFO.logo), loadImageSafe(qrUrl)]);
+    return { logoImg, qrImg };
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    (async () => {
+      const { logoImg, qrImg } = await loadAssets();
+      if (cancelled || !frontRef.current || !backRef.current) return;
+      frontRef.current.width = BC_W; frontRef.current.height = BC_H;
+      backRef.current.width = BC_W;  backRef.current.height = BC_H;
+      drawBusinessCardFront(frontRef.current.getContext('2d'), { logoImg });
+      drawBusinessCardBack(backRef.current.getContext('2d'), { logoImg, qrImg, card });
+      setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [employee, card]);
+
+  const fileBase = employee.employeeCode || 'employee';
+
+  const downloadPng = (canvasRef, side) => {
+    const a = document.createElement('a');
+    a.download = `${fileBase}-business-card-${side}.png`;
+    a.href = canvasRef.current.toDataURL('image/png');
+    a.click();
+  };
+
+  // Print-ready PDF: front + back pages at 3.5" × 2" plus a 0.125" bleed on every side.
+  const downloadPrintPdf = async () => {
+    setBusy(true); setError('');
+    try {
+      const { jsPDF } = await import('jspdf');
+      const { logoImg, qrImg } = await loadAssets();
+      const W = BC_W + BC_BLEED * 2, H = BC_H + BC_BLEED * 2;
+      const make = (draw) => {
+        const c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        draw(c.getContext('2d'));
+        return c;
+      };
+      const front = make((ctx) => drawBusinessCardFront(ctx, { logoImg, bleed: BC_BLEED }));
+      const back = make((ctx) => drawBusinessCardBack(ctx, { logoImg, qrImg, card, bleed: BC_BLEED }));
+      const pw = (W / 300) * 25.4, ph = (H / 300) * 25.4;
+      const pdf = new jsPDF({ unit: 'mm', format: [pw, ph], orientation: 'landscape' });
+      pdf.addImage(front.toDataURL('image/png'), 'PNG', 0, 0, pw, ph);
+      pdf.addPage([pw, ph], 'landscape');
+      pdf.addImage(back.toDataURL('image/png'), 'PNG', 0, 0, pw, ph);
+      pdf.save(`${fileBase}-business-card-print.pdf`);
+    } catch (err) {
+      console.error('[BusinessCard] PDF failed:', err);
+      setError('Could not create the print PDF. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sideLabel = { fontSize: 11, fontWeight: 700, color: '#7A8A9A', textTransform: 'uppercase', letterSpacing: 0.6, margin: '0 0 6px', textAlign: 'left' };
+  const cardCanvas = { width: '100%', display: 'block', borderRadius: 6, boxShadow: '0 2px 10px rgba(0,0,0,0.18)' };
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #0A5CFF' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Business Card</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{card.name} · {card.position}</p>
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+        <div style={{ ...ms.body, textAlign: 'center' }}>
+          <p style={sideLabel}>Front</p>
+          <canvas ref={frontRef} style={cardCanvas} />
+          <p style={{ ...sideLabel, marginTop: 16 }}>Back</p>
+          <canvas ref={backRef} style={cardCanvas} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start', marginTop: 16, fontSize: 13, color: '#1A3C5E', cursor: 'pointer' }}>
+            <input type="checkbox" checked={useCompanyContact} onChange={e => setUseCompanyContact(e.target.checked)} />
+            Print the company phone &amp; email instead of this employee's
+          </label>
+          <p style={{ fontSize: 12, color: '#7A8A9A', margin: '8px 0 0', textAlign: 'left' }}>
+            Card shows: {card.phone} · {card.email}. Standard size 3.5″ × 2″ (88.9 × 50.8 mm). The print PDF adds a 3 mm (0.125″) bleed on all sides.
+          </p>
+          {error && <p style={{ fontSize: 12, color: '#DC2626', margin: '8px 0 0', textAlign: 'left' }}>{error}</p>}
+        </div>
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+          <button style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
+          <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => downloadPng(frontRef, 'front')} disabled={!ready}>⬇ Front PNG</button>
+          <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => downloadPng(backRef, 'back')} disabled={!ready}>⬇ Back PNG</button>
+          <button style={{ ...ms.actionBtn, background: '#0A5CFF', color: '#fff' }} onClick={downloadPrintPdf} disabled={!ready || busy}>{busy ? 'Preparing…' : '⬇ Print PDF'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Contract Action Modal (Renew / Terminate / Resign) ─────────────────────
 const ContractActionModal = ({ employee, action, onClose, onConfirm }) => {
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
@@ -1499,6 +1988,7 @@ const HrManager = () => {
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [profileTarget, setProfileTarget] = useState(null);
   const [idCardTarget, setIdCardTarget] = useState(null);
+  const [businessCardTarget, setBusinessCardTarget] = useState(null);
   const [busyEmployeeId, setBusyEmployeeId] = useState(null);
 
   // Attendance (read-only, for the profile modal)
@@ -2102,6 +2592,7 @@ const HrManager = () => {
                             <button style={s.btnView} onClick={() => setProfileTarget(e)}>View</button>
                             {canEdit && <button style={s.btnView} onClick={() => { setEditingEmployee(e); setShowEmployeeForm(true); }}>Edit</button>}
                             <button style={s.btnShortlist} onClick={() => setIdCardTarget(e)}>ID Card</button>
+                            <button style={s.btnShortlist} onClick={() => setBusinessCardTarget(e)}>Business Card</button>
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
                             ) : (
@@ -2426,6 +2917,7 @@ const HrManager = () => {
         />
       )}
       {idCardTarget && <IdCardModal employee={idCardTarget} onClose={() => setIdCardTarget(null)} />}
+      {businessCardTarget && <BusinessCardModal employee={businessCardTarget} onClose={() => setBusinessCardTarget(null)} />}
       {contractAction && (
         <ContractActionModal
           employee={contractAction.employee}
