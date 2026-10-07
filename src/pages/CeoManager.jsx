@@ -91,42 +91,42 @@ const emptyPermissions = () =>
 //   • HR Officer → department 'HR'       (HrManager)
 const JOB_ROLES = [
   {
-    key: 'Secretary', department: 'Administration', portal: 'Secretary Workspace',
+    key: 'Secretary', department: 'Administration', portal: 'Secretary Workspace', path: '/secretary-manager',
     modules: ['documents'],
     blurb: 'Company records, notices, memos, appointments and broadcasts.',
   },
   {
-    key: 'Accountant', department: 'Finance', portal: 'Accounts',
+    key: 'Accountant', department: 'Finance', portal: 'Accounts', path: '/accounts-manager',
     modules: ['finance'],
     blurb: 'Ledger, invoices, payroll posting, tax and compliance.',
   },
   {
-    key: 'HR Officer', department: 'HR', portal: 'Human Resource',
+    key: 'HR Officer', department: 'HR', portal: 'Human Resource', path: '/hr-manager',
     modules: ['hr', 'recruiting'],
     blurb: 'Employees, contracts, leave, payroll runs and recruitment.',
   },
   {
-    key: 'Sales Officer', department: 'Sales', portal: 'Sales',
+    key: 'Sales Officer', department: 'Sales', portal: 'Sales', path: '/sales-manager',
     modules: ['sales'],
     blurb: 'Leads, clients, campaigns, proposals and targets.',
   },
   {
-    key: 'Marketing Officer', department: 'Marketing', portal: 'Sales',
+    key: 'Marketing Officer', department: 'Marketing', portal: 'Sales', path: '/sales-manager',
     modules: ['sales'],
     blurb: 'Campaigns, leads and client feedback.',
   },
   {
-    key: 'Operations Officer', department: 'Operations', portal: "Worker's Log",
+    key: 'Operations Officer', department: 'Operations', portal: "Worker's Log", path: '/worker-log',
     modules: ['projects'],
     blurb: 'Project requests and day-to-day operations.',
   },
   {
-    key: 'Technical Staff', department: 'Engineering', portal: "Worker's Log",
+    key: 'Technical Staff', department: 'Engineering', portal: "Worker's Log", path: '/worker-log',
     modules: ['projects'], actions: ['read'],
     blurb: 'Read access to project requests; logs work in the Worker\'s Log.',
   },
   {
-    key: 'Executive', department: 'Executive', portal: 'Read-only overview',
+    key: 'Executive', department: 'Executive', portal: 'Read-only overview', path: '/portals',
     modules: ['sales', 'hr', 'finance', 'recruiting', 'projects', 'documents', 'contracts'], actions: ['read'],
     blurb: 'Read-only visibility across the business.',
   },
@@ -469,7 +469,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
     const outcome = await onCreate(form);
     setSubmitting(false);
     if (outcome.success) {
-      setResult({ password: outcome.password, emailSent: outcome.emailSent, emailError: outcome.emailError, granted: outcome.granted || [] });
+      setResult({ password: outcome.password, emailSent: outcome.emailSent, emailError: outcome.emailError, granted: outcome.granted || [], portalPath: outcome.portalPath });
     } else {
       setError(outcome.error || 'Could not create the account.');
     }
@@ -516,6 +516,10 @@ const CreateUserModal = ({ onClose, onCreate }) => {
                 <span style={cu.credVal}>{form.email}</span>
               </div>
               <div style={cu.credRow}>
+                <span style={cu.credLabel}>Sign-in link</span>
+                <span style={cu.credVal}>{window.location.origin}{result.portalPath}</span>
+              </div>
+              <div style={cu.credRow}>
                 <span style={cu.credLabel}>Temporary password</span>
                 <span style={{ ...cu.credVal, fontFamily: 'monospace', fontSize: 15 }}>{result.password}</span>
               </div>
@@ -557,7 +561,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
                 <div style={{ flex: 1.4 }}>
                   <label style={cu.label}>Role</label>
                   <select style={cu.select} value={form.role} onChange={e => selectJobRole(e.target.value)} disabled={submitting}>
-                    {JOB_ROLES.map(r => <option key={r.key} value={r.key}>{r.key}</option>)}
+                    {JOB_ROLES.map(r => <option key={r.key} value={r.key}>{r.key} — {r.department}</option>)}
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
@@ -1108,6 +1112,8 @@ const CeoManager = () => {
             password,
             department,
             role,
+            level,
+            access: describePermissions(permissions),
           }),
         });
         if (emailRes.ok) {
@@ -1126,7 +1132,7 @@ const CeoManager = () => {
         email,
         `Department: ${department} · Role: ${role} (${level}) · Access: ${describePermissions(permissions).join('; ') || 'none'} · Welcome email: ${emailSent ? 'sent' : 'failed'}`
       );
-      return { success: true, password, emailSent, emailError, granted: describePermissions(permissions) };
+      return { success: true, password, emailSent, emailError, granted: describePermissions(permissions), portalPath: JOB_ROLE_MAP[role]?.path || '/portals' };
     } catch (err) {
       console.error('Create user error:', err);
       return { success: false, error: err.message };

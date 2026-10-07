@@ -62,8 +62,8 @@ import Layout from '../components/Layout';
 const CEO_EMAIL = (import.meta.env.VITE_CEO_EMAIL || 'kaayamosesawal@gmail.com').toLowerCase();
 
 const COMPANY_INFO = {
-  name: 'Slirus Global Limited - SMC Limited',
-  address: 'P.O Box 331921, Lira -Uganda',
+  name: 'Slirus Global Limited',
+  address: 'P.O Box 332485, Lira -Uganda',
   phone: '+256 776 079 495',
   email: 'accounts@slirus.com',
   website: 'https://slirus.com',
