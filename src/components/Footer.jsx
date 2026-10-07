@@ -43,20 +43,7 @@ const Footer = () => {
             <Link to="/about" className="ft-link">About Us</Link>
             <Link to="/services" className="ft-link">Our Services</Link>
             <Link to="/apply" className="ft-link">Careers</Link>
-          </nav>
-        </div>
-
-        {/* Sectors */}
-        <div className="ft-col">
-          <h4 className="ft-col-head">Staff Portals</h4>
-          <nav className="ft-link-list">
-            <Link to="/admin" className="ft-link">Admin</Link>
-            <Link to="/ceo-manager" className="ft-link">Manager</Link>
-            <Link to="/accounts-manager" className="ft-link">Accounts</Link>
-            <Link to="/hr-manager" className="ft-link">Human Resource</Link>
-            <Link to="/sales-manager" className="ft-link">Sales</Link>
-            <Link to="/secretary-manager" className="ft-link">Secretary</Link>
-            <Link to="/worker-log" className="ft-link">Worker's Log</Link>
+            <Link to="/portals" className="ft-link">Staff Portals</Link>
           </nav>
         </div>
 
@@ -119,7 +106,7 @@ const Footer = () => {
         }
         .ft-inner {
           display: grid;
-          grid-template-columns: 1.6fr 1fr 1fr 1.2fr;
+          grid-template-columns: 1.6fr 1fr 1.2fr;
           gap: 48px 32px;
           max-width: 1140px;
           margin: 0 auto;
