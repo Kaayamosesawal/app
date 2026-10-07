@@ -15,7 +15,7 @@ import AccountsManager from './pages/AccountsManager';
 import SalesManager from './pages/SalesManager';
 import SecretaryManager from './pages/SecretaryManager';
 import WorkerLog from './pages/WorkerLog';
-import WorkerLog from './pages/Portals';
+import Portals from './pages/Portals';
 
 
 function App() {
