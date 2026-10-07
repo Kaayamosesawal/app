@@ -61,13 +61,15 @@ const FEATURES = [
   { key: 'projects',   label: 'Project Requests' },
   { key: 'users',      label: 'User Management' },
   { key: 'audit',      label: 'Audit Log' },
+  { key: 'documents',  label: 'Documents & Notices' },
+  { key: 'contracts',  label: 'Contracts & Agreements' },
 ];
 
 const PERMISSIONS = ['read', 'write', 'edit', 'delete', 'approve'];
 const PERMISSION_LABELS = { read: 'Read', write: 'Write', edit: 'Edit', delete: 'Delete', approve: 'Approve' };
 
-const DEPARTMENTS = ['Sales', 'HR', 'Finance', 'Operations', 'Engineering', 'Marketing', 'Executive'];
-const ROLES = ['Staff', 'Team Lead', 'Manager', 'Director'];
+const DEPARTMENTS = ['Sales', 'HR', 'Finance', 'Operations', 'Engineering', 'Marketing', 'Executive', 'Administration'];
+const ROLES = ['Staff', 'Team Lead', 'Manager', 'Director']; // seniority levels (see LEVEL_ACTIONS)
 
 const IDLE_LIMIT_MS = 20 * 60 * 1000;   // auto sign-out after 20 idle minutes
 const IDLE_WARN_MS  = 18 * 60 * 1000;   // warn at 18 minutes
@@ -78,6 +80,83 @@ const emptyPermissions = () =>
     acc[f.key] = PERMISSIONS.reduce((p, perm) => { p[perm] = false; return p; }, {});
     return acc;
   }, {});
+
+// ─── Role-based provisioning ────────────────────────────────────────────────
+// A job role decides WHERE a person works (department) and WHICH modules they
+// get; their seniority level decides WHAT they can do inside those modules.
+// The department / role values below are exactly what the portals and the
+// Firestore rules check:
+//   • Secretary  → role 'Secretary' / department 'Administration' (SecretaryManager + isSecretary())
+//   • Accountant → department 'Finance'  (AccountsManager)
+//   • HR Officer → department 'HR'       (HrManager)
+const JOB_ROLES = [
+  {
+    key: 'Secretary', department: 'Administration', portal: 'Secretary Workspace',
+    modules: ['documents'],
+    blurb: 'Company records, notices, memos, appointments and broadcasts.',
+  },
+  {
+    key: 'Accountant', department: 'Finance', portal: 'Accounts',
+    modules: ['finance'],
+    blurb: 'Ledger, invoices, payroll posting, tax and compliance.',
+  },
+  {
+    key: 'HR Officer', department: 'HR', portal: 'Human Resource',
+    modules: ['hr', 'recruiting'],
+    blurb: 'Employees, contracts, leave, payroll runs and recruitment.',
+  },
+  {
+    key: 'Sales Officer', department: 'Sales', portal: 'Sales',
+    modules: ['sales'],
+    blurb: 'Leads, clients, campaigns, proposals and targets.',
+  },
+  {
+    key: 'Marketing Officer', department: 'Marketing', portal: 'Sales',
+    modules: ['sales'],
+    blurb: 'Campaigns, leads and client feedback.',
+  },
+  {
+    key: 'Operations Officer', department: 'Operations', portal: "Worker's Log",
+    modules: ['projects'],
+    blurb: 'Project requests and day-to-day operations.',
+  },
+  {
+    key: 'Technical Staff', department: 'Engineering', portal: "Worker's Log",
+    modules: ['projects'], actions: ['read'],
+    blurb: 'Read access to project requests; logs work in the Worker\'s Log.',
+  },
+  {
+    key: 'Executive', department: 'Executive', portal: 'Read-only overview',
+    modules: ['sales', 'hr', 'finance', 'recruiting', 'projects', 'documents', 'contracts'], actions: ['read'],
+    blurb: 'Read-only visibility across the business.',
+  },
+];
+const JOB_ROLE_MAP = JOB_ROLES.reduce((acc, r) => { acc[r.key] = r; return acc; }, {});
+
+// What each seniority level may do inside the modules its role grants.
+const LEVEL_ACTIONS = {
+  'Staff':     ['read', 'write', 'edit'],
+  'Team Lead': ['read', 'write', 'edit', 'approve'],
+  'Manager':   ['read', 'write', 'edit', 'approve', 'delete'],
+  'Director':  ['read', 'write', 'edit', 'approve', 'delete'],
+};
+
+// Builds the full permission matrix for a job role at a given level.
+const permissionsForRole = (roleKey, level = 'Staff') => {
+  const perms = emptyPermissions();
+  const role = JOB_ROLE_MAP[roleKey];
+  if (!role) return perms;
+  const allowed = (LEVEL_ACTIONS[level] || LEVEL_ACTIONS.Staff)
+    .filter(a => !role.actions || role.actions.includes(a));
+  role.modules.forEach(m => allowed.forEach(a => { perms[m][a] = true; }));
+  return perms;
+};
+
+// Human-readable summary, e.g. ['Documents & Notices (Read, Write, Edit)'].
+const describePermissions = (perms) =>
+  FEATURES
+    .filter(f => Object.values(perms?.[f.key] || {}).some(Boolean))
+    .map(f => `${f.label} (${PERMISSIONS.filter(p => perms[f.key][p]).map(p => PERMISSION_LABELS[p]).join(', ')})`);
 
 const generatePassword = (length = 14) => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*';
@@ -309,6 +388,20 @@ const RoleMatrixModal = ({ targetUser, onClose, onSave }) => {
         </div>
 
         <div style={ms.body}>
+          {JOB_ROLE_MAP[targetUser.role] && (
+            <div style={{ background: '#F0F4F8', border: '1px solid #DCE4EC', borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: '#1A3C5E' }}>
+                <strong>{targetUser.role}</strong> · {targetUser.level || ROLES[0]} · {targetUser.department}
+              </span>
+              <button
+                type="button"
+                style={rm.miniBtn}
+                onClick={() => setPermissions(permissionsForRole(targetUser.role, targetUser.level || ROLES[0]))}
+              >
+                Apply role defaults
+              </button>
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
               <thead>
@@ -356,13 +449,18 @@ const RoleMatrixModal = ({ targetUser, onClose, onSave }) => {
 
 // ─── Create User Modal ───────────────────────────────────────────────────────
 const CreateUserModal = ({ onClose, onCreate }) => {
-  const [form, setForm] = useState({ name: '', email: '', department: DEPARTMENTS[0], role: ROLES[0] });
+  const [form, setForm] = useState({ name: '', email: '', department: JOB_ROLES[0].department, role: JOB_ROLES[0].key, level: ROLES[0] });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null); // { password, emailSent, emailError }
   const [copied, setCopied] = useState(false);
 
   const update = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
+
+  // Picking a job role also sets its department, so the two can never disagree.
+  const selectJobRole = (key) => setForm(prev => ({ ...prev, role: key, department: JOB_ROLE_MAP[key].department }));
+  const selectedRole = JOB_ROLE_MAP[form.role];
+  const previewGranted = describePermissions(permissionsForRole(form.role, form.level));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -371,7 +469,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
     const outcome = await onCreate(form);
     setSubmitting(false);
     if (outcome.success) {
-      setResult({ password: outcome.password, emailSent: outcome.emailSent, emailError: outcome.emailError });
+      setResult({ password: outcome.password, emailSent: outcome.emailSent, emailError: outcome.emailError, granted: outcome.granted || [] });
     } else {
       setError(outcome.error || 'Could not create the account.');
     }
@@ -394,7 +492,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
               {result ? 'Account Created' : 'New Team Account'}
             </h3>
             <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
-              {result ? 'Share these credentials securely.' : 'Provisions a login and an empty permission set.'}
+              {result ? 'Share these credentials securely.' : 'Provisions a login with the access that goes with the chosen role.'}
             </p>
           </div>
           {!result && <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>}
@@ -427,8 +525,22 @@ const CreateUserModal = ({ onClose, onCreate }) => {
               <p style={{ fontSize: 12, color: '#7A8A9A', marginTop: 14, lineHeight: 1.6 }}>
                 This password is shown only once{result.emailSent ? ' here, though it has also been emailed to them' : ''}.
                 {result.emailSent ? ' Ask them to change it on first sign-in.' : ' Send it to them through a secure, private channel and ask them to change it on first sign-in.'}
-                {' '}No roles have been granted yet — open <strong>Roles &amp; Permissions</strong> from the user table to configure access.
               </p>
+              <div style={{ background: '#F0F4F8', border: '1px solid #DCE4EC', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1A3C5E', marginBottom: 4 }}>
+                  Access granted automatically · {form.role} ({form.level}) · {form.department}
+                </div>
+                {result.granted.length ? (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: '#475569', lineHeight: 1.6 }}>
+                    {result.granted.map(g => <li key={g}>{g}</li>)}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: '#475569' }}>No module permissions for this role.</div>
+                )}
+                <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 6 }}>
+                  Fine-tune anytime from <strong>Roles &amp; Permissions</strong> in the user table.
+                </div>
+              </div>
               <button style={{ ...ms.actionBtn, background: '#1A3C5E', color: '#fff', marginTop: 16, width: '100%' }} onClick={onClose}>
                 Done
               </button>
@@ -442,18 +554,29 @@ const CreateUserModal = ({ onClose, onCreate }) => {
               <input type="email" style={s.loginInput} value={form.email} onChange={e => update('email', e.target.value)} disabled={submitting} />
 
               <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={cu.label}>Department</label>
-                  <select style={cu.select} value={form.department} onChange={e => update('department', e.target.value)} disabled={submitting}>
-                    {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1.4 }}>
                   <label style={cu.label}>Role</label>
-                  <select style={cu.select} value={form.role} onChange={e => update('role', e.target.value)} disabled={submitting}>
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                  <select style={cu.select} value={form.role} onChange={e => selectJobRole(e.target.value)} disabled={submitting}>
+                    {JOB_ROLES.map(r => <option key={r.key} value={r.key}>{r.key}</option>)}
                   </select>
                 </div>
+                <div style={{ flex: 1 }}>
+                  <label style={cu.label}>Level</label>
+                  <select style={cu.select} value={form.level} onChange={e => update('level', e.target.value)} disabled={submitting}>
+                    {ROLES.map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ background: '#F0F4F8', border: '1px solid #DCE4EC', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
+                <div style={{ fontSize: 12.5, color: '#1A3C5E', fontWeight: 700 }}>
+                  Department: {form.department} · Portal: {selectedRole.portal}
+                </div>
+                <div style={{ fontSize: 12, color: '#5A7A9A', margin: '3px 0 6px' }}>{selectedRole.blurb}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1A3C5E' }}>Access this account will receive:</div>
+                <ul style={{ margin: '3px 0 0', paddingLeft: 18, fontSize: 12.5, color: '#475569', lineHeight: 1.6 }}>
+                  {previewGranted.map(g => <li key={g}>{g}</li>)}
+                </ul>
               </div>
 
               {error && <p style={s.loginErr}>{error}</p>}
@@ -944,7 +1067,10 @@ const CeoManager = () => {
     });
   }, []);
 
-  const handleCreateUser = useCallback(async ({ name, email, department, role }) => {
+  const handleCreateUser = useCallback(async ({ name, email, department: requestedDepartment, role, level = ROLES[0] }) => {
+    // The role is the source of truth: its department and permissions are applied here, not trusted from the form.
+    const department = JOB_ROLE_MAP[role]?.department || requestedDepartment;
+    const permissions = permissionsForRole(role, level);
     try {
       const password = generatePassword();
       const res = await authFetch('/api/create-user', {
@@ -957,9 +1083,9 @@ const CeoManager = () => {
       const { uid } = await res.json();
 
       await setDoc(doc(db, 'teamUsers', uid), {
-        name, email, department, role,
+        name, email, department, role, level,
         status: 'active',
-        permissions: emptyPermissions(),
+        permissions,
         createdAt: serverTimestamp(),
         createdBy: auth.currentUser?.email || 'unknown',
       });
@@ -998,9 +1124,9 @@ const CeoManager = () => {
       await logAudit(
         'Created user account',
         email,
-        `Department: ${department} · Role: ${role} · Welcome email: ${emailSent ? 'sent' : 'failed'}`
+        `Department: ${department} · Role: ${role} (${level}) · Access: ${describePermissions(permissions).join('; ') || 'none'} · Welcome email: ${emailSent ? 'sent' : 'failed'}`
       );
-      return { success: true, password, emailSent, emailError };
+      return { success: true, password, emailSent, emailError, granted: describePermissions(permissions) };
     } catch (err) {
       console.error('Create user error:', err);
       return { success: false, error: err.message };
@@ -1324,7 +1450,10 @@ const CeoManager = () => {
                           <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{u.email}</div>
                         </td>
                         <td style={s.td}>{u.department || '—'}</td>
-                        <td style={s.td}>{u.role || '—'}</td>
+                        <td style={s.td}>
+                          {u.role || '—'}
+                          {u.level && <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{u.level}</div>}
+                        </td>
                         <td style={s.td}><StatusBadge status={u.status} /></td>
                         <td style={s.td}>{permissionCount(u.permissions)} granted</td>
                         <td style={s.td}>
