@@ -275,7 +275,7 @@ const buildEmailHtml = (title, bodyHtml, department = 'HR Department', recipient
                 <td style="vertical-align:middle;">
                   <p style="margin:0;font-size:17px;font-weight:700;color:#1e293b;
                             letter-spacing:-0.3px;font-family:Arial,Helvetica,sans-serif;">
-                    Slirus Global<span style="color:#475569;font-weight:400;">Limited</span>
+                    Slirus Global <span style="color:#475569;font-weight:400;">Limited</span>
                   </p>
                   <p style="margin:2px 0 0;font-size:10px;font-weight:700;letter-spacing:2px;
                             color:#94a3b8;text-transform:uppercase;
@@ -930,7 +930,7 @@ app.post('/api/send-email', async (req, res) => {
   const isProjectEmail = PROJECT_EMAIL_TYPES.has(type);
   const senderAddress  = isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
   const department_    = isProjectEmail ? 'Client Relations' : 'HR Department';
-  const replyToAddress = isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
+  const replyToAddress = isProjectEmail ? 'info@slirus.com' : 'Slirus HR Team';
 
   try {
     const html      = buildEmailHtml(content.title, content.body, department_, to);
