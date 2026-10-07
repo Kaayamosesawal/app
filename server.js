@@ -13,6 +13,12 @@
  *   POST /api/delete-user         – (CEO-only) Permanently delete a Firebase Auth user
  *   GET  /api/health              – Health check for uptime monitors & Render keep-alive
  *
+ * Careers: the four recruitment email types (application_received, shortlisted,
+ * unqualified, position_closed) cover both jobs and the five departmental
+ * Learning-Based Internships from careerTracks.js. Internship wording is chosen
+ * automatically when `program` contains "Internship" (e.g. "Learning-Based
+ * Internship – Technology"), so no client change is needed.
+ *
  * "CEO-only" routes require an `Authorization: Bearer <Firebase ID token>` header.
  * The token is verified server-side with firebase-admin and the decoded email
  * must match CEO_EMAIL — this is the real authorization boundary; the matching
@@ -67,14 +73,21 @@ const PORTAL_BASE_URL = (process.env.PORTAL_BASE_URL || process.env.CLIENT_ORIGI
 
 // Department → portal route. Update these paths if your router uses
 // different slugs; this is the single place that mapping lives.
+// Keep the department names in sync with DEPARTMENTS in HrManager.jsx.
 const DEPARTMENT_PORTAL_PATHS = {
-  Sales:       '/sales-manager',
-  HR:          '/hr-manager',
-  Finance:     '/accounts-manager',
-  Operations:  '/secretary-manager',
-  Engineering: '/worker-log',
-  Marketing:   '/worker-log',
-  Executive:   '/ceo-manager',
+  Sales:              '/sales-manager',
+  HR:                 '/hr-manager',
+  Finance:            '/accounts-manager',
+  Operations:         '/secretary-manager',
+  Engineering:        '/worker-log',
+  Marketing:          '/worker-log',
+  Executive:          '/ceo-manager',
+  // Business units / career tracks (Fashions, AgriSolutions, trade, corporate)
+  Fashions:           '/worker-log',
+  AgriSolutions:      '/worker-log',
+  Logistics:          '/worker-log',
+  'Customer Support': '/worker-log',
+  Administration:     '/secretary-manager',
 };
 const portalUrlFor = (department) => `${PORTAL_BASE_URL}${DEPARTMENT_PORTAL_PATHS[department] || '/login'}`;
 
@@ -406,6 +419,49 @@ const serviceLines = (service) => {
   ];
 };
 
+// ─── Career wording (jobs vs. learning-based internships) ────────────────────
+// careerTracks.js titles the five departmental internships
+// "Learning-Based Internship – <Department>", and Apply.jsx sends that title as
+// `program`. Detecting "internship" in it lets the same four recruitment email
+// types read naturally for internships ("programme" instead of "position")
+// without any change to the client or the request shape.
+const isInternshipProgram = (program = '') => /internship/i.test(String(program));
+
+const careerWording = (program) => {
+  const intern = isInternshipProgram(program);
+  return intern
+    ? {
+        intern,
+        noun:         'programme',
+        roleWord:     'programme',
+        closedTitle:  'Programme Currently Closed',
+        closedSubject:'Application Update — Programme Closed',
+        closedClause: 'the current intake for this programme has been formally closed',
+      }
+    : {
+        intern,
+        noun:         'position',
+        roleWord:     'role',
+        closedTitle:  'Position Currently Closed',
+        closedSubject:'Application Update — Position Closed',
+        closedClause: 'the recruitment process for this position has been formally closed',
+      };
+};
+
+// Short note added to the "application received" email for internships.
+const INTERNSHIP_NOTE_HTML = `
+          <p>
+            Please note that our learning-based internships are structured programmes
+            focused on training, mentorship, and hands-on experience in your chosen
+            department. They are not salaried positions.
+          </p>`;
+const INTERNSHIP_NOTE_LINES = [
+  'Please note that our learning-based internships are structured programmes',
+  'focused on training, mentorship, and hands-on experience in your chosen',
+  'department. They are not salaried positions.',
+  '',
+];
+
 // ─── Plain-text fallback builder ─────────────────────────────────────────────
 //
 //  Sending a text/plain alternative alongside the HTML part is one of the
@@ -415,6 +471,8 @@ const serviceLines = (service) => {
 const buildPlainText = (title, name, program, type, department, extra = {}) => {
   const year = new Date().getFullYear();
   const divider = '─'.repeat(56);
+  const w = careerWording(program);
+  const accountIsIntern = /intern/i.test(extra.role || '');
 
   const bodies = {
     account_created: [
@@ -431,24 +489,32 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       'This is a temporary password. For your security, please sign in and',
       'change it immediately — do not share it or forward this email.',
       '',
+      ...(accountIsIntern
+        ? [
+            'Your access is intended for the duration of your learning-based',
+            'internship and may be limited to the tools relevant to your department.',
+            '',
+          ]
+        : []),
       'If you were not expecting this account, please contact your',
       'administrator right away.',
     ],
     application_received: [
       `Dear ${name},`,
       '',
-      `We have successfully received your application for the ${program} position`,
+      `We have successfully received your application for the ${program} ${w.noun}`,
       'at Slirus Global Limited. Thank you for the time and effort you invested.',
       '',
       'Our hiring team is reviewing all profiles and will contact you directly',
       'if your background aligns with our current needs.',
       '',
+      ...(w.intern ? INTERNSHIP_NOTE_LINES : []),
       'Thank you for your patience and for considering a career with Slirus Global Limited.',
     ],
     shortlisted: [
       `Dear ${name},`,
       '',
-      `Congratulations — you have been nominated for the ${program} position`,
+      `Congratulations — you have been nominated for the ${program} ${w.noun}`,
       'at Slirus Global Limited.',
       '',
       'A member of our HR team will contact you shortly to discuss next steps,',
@@ -459,11 +525,11 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     unqualified: [
       `Dear ${name},`,
       '',
-      `Thank you for applying for the ${program} position at Slirus Global Limited.`,
+      `Thank you for applying for the ${program} ${w.noun} at Slirus Global Limited.`,
       '',
       'After careful review, we regret to inform you that your application will',
-      'not be progressing further at this time, as your current background does',
-      'not fully align with the specific requirements for this role.',
+      `not be progressing further at this time, as your current background does`,
+      `not fully align with the specific requirements for this ${w.roleWord}.`,
       '',
       'We encourage you to monitor our careers page for future openings.',
       'We wish you the very best in your professional endeavours.',
@@ -471,10 +537,10 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
     position_closed: [
       `Dear ${name},`,
       '',
-      `Thank you for your interest in the ${program} position at Slirus Global Limited.`,
+      `Thank you for your interest in the ${program} ${w.noun} at Slirus Global Limited.`,
       '',
-      'We regret to inform you that we are no longer accepting applications for',
-      'this role, as the recruitment process has been formally closed.',
+      `We regret to inform you that we are no longer accepting applications for`,
+      `this ${w.roleWord}, as ${w.closedClause}.`,
       '',
       'We encourage you to visit our careers page for future openings.',
     ],
@@ -540,6 +606,8 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
 // `extra` carries fields that don't apply to the recruitment/project emails
 // (password, department, role, portalUrl) — only 'account_created' reads it.
 const buildEmailContent = (type, name, program, extra = {}) => {
+  const w = careerWording(program);
+
   switch (type) {
 
     case 'application_received':
@@ -550,7 +618,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             We are pleased to confirm that we have successfully received your application
-            for the <strong>${program}</strong> position at Slirus Global Limited. We sincerely
+            for the <strong>${program}</strong> ${w.noun} at Slirus Global Limited. We sincerely
             appreciate the time and effort you have invested in your application.
           </p>
           <p>
@@ -563,7 +631,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             Should your background and expertise meet our specific needs, a member of our
             Human Resources team will reach out to you directly via email or telephone to
             discuss the next steps in our recruitment process.
-          </p>
+          </p>${w.intern ? INTERNSHIP_NOTE_HTML : ''}
           <p style="margin-top:24px;">
             Thank you for your patience and for considering a career with Slirus Global Limited.
             We wish you the very best in your professional endeavours.
@@ -581,7 +649,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             We are delighted to inform you that you have been <strong>Nominated</strong>
-            for the <strong>${program}</strong> position at Slirus Global Limited.
+            for the <strong>${program}</strong> ${w.noun} at Slirus Global Limited.
           </p>
           <p>
             After a comprehensive review of your qualifications, our hiring team has
@@ -610,13 +678,13 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           <p>Dear <strong>${name}</strong>,</p>
           <p>
             Thank you for your interest in Slirus Global Limited and for taking the time to
-            apply for the <strong>${program}</strong> position.
+            apply for the <strong>${program}</strong> ${w.noun}.
           </p>
           <p>
             After a careful and thorough review of all applications received, we regret
             to inform you that your application will not be progressing further at this
             time. This decision was made because your current background does not fully
-            align with the specific requirements we are seeking for this particular role.
+            align with the specific requirements we are seeking for this particular ${w.roleWord}.
           </p>
           <p>
             We genuinely appreciate the effort you put into your application and encourage
@@ -633,19 +701,18 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'position_closed':
       return {
-        subject: `Application Update — Position Closed | Slirus Global Limited`,
-        title:   'Position Currently Closed',
+        subject: `${w.closedSubject} | Slirus Global Limited`,
+        title:   w.closedTitle,
         body: `
           <p>Dear <strong>${name}</strong>,</p>
           <p>
-            Thank you for your interest in the <strong>${program}</strong> position at
+            Thank you for your interest in the <strong>${program}</strong> ${w.noun} at
             Slirus Global Limited. We genuinely appreciate the time, effort, and professional
             consideration you invested in your application.
           </p>
           <p>
             Please be advised that we are currently no longer accepting applications for
-            this specific role, as the recruitment process for this position has been
-            formally closed.
+            this specific ${w.roleWord}, as ${w.closedClause}.
           </p>
           <p>
             We were impressed by your initiative and strongly encourage you to continue
@@ -753,6 +820,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
     case 'account_created': {
       const { password = '', department = 'General', role = 'Staff', portalUrl = PORTAL_BASE_URL } = extra;
+      const accountIsIntern = /intern/i.test(role);
       return {
         subject: `Your Slirus Global Limited Account Is Ready | Sign-In Details Inside`,
         title:   'Your Account Has Been Created',
@@ -798,7 +866,11 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           <p style="margin-top:8px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
             🔒 For your security, please sign in and change this password immediately.
             Do not share it or forward this email to anyone.
-          </p>
+          </p>${accountIsIntern ? `
+          <p>
+            Your access is intended for the duration of your learning-based internship
+            and may be limited to the tools relevant to your department.
+          </p>` : ''}
           <p style="margin-top:24px;">
             If you were not expecting this account, please contact your administrator
             right away.

@@ -31,7 +31,7 @@
  *    into each employee's profile — this file does not capture biometrics.
  *
  * Branding on generated documents (ID card, Contract, Appointment Letter,
- * Pay Slip, Certificate of Internship) uses the company logo at
+ * Pay Slip, Certificate of Completion) uses the company logo at
  * `/Slirus.png` in the public folder —
  * place it there before generating real documents. The ID card's QR code
  * is rendered with the `qrcode` npm package (`npm install qrcode`).
@@ -56,7 +56,12 @@ import QRCode from 'qrcode';
 // — never trust a client-side check alone.
 const CEO_EMAIL = (import.meta.env.VITE_CEO_EMAIL || 'kaayamosesawal@gmail.com').toLowerCase();
 
-const DEPARTMENTS = ['Sales', 'HR', 'Finance', 'Operations', 'Engineering', 'Marketing', 'Executive'];
+const DEPARTMENTS = [
+  'Sales', 'HR', 'Finance', 'Operations', 'Engineering', 'Marketing', 'Executive',
+  // Business units / career tracks added for the Slirus Fashions, AgriSolutions,
+  // trade and corporate-services teams (and their learning-based interns).
+  'Fashions', 'AgriSolutions', 'Logistics', 'Customer Support', 'Administration',
+];
 
 // Official "Slirus Salary Structure" — kept in sync with the signed-off
 // paper structure (Category / Raw Salary / Base Salary / NSSF / Welfare /
@@ -130,7 +135,29 @@ const gradeBreakdown = (grade) => {
   };
 };
 
-const CONTRACT_TYPES = ['Probation', 'Fixed-Term', 'Permanent', 'Intern', 'Consultant'];
+// Learning-based interns are NOT salaried staff: they are excluded from payroll
+// and get a Placement Letter + Certificate of Completion instead of a Contract of
+// Employment / Letter of Appointment. Older records saved as plain 'Intern' are
+// still recognised via isInternContract().
+const INTERN_CONTRACT_TYPE = 'Learning-Based Intern';
+const CONTRACT_TYPES = ['Probation', 'Fixed-Term', 'Permanent', INTERN_CONTRACT_TYPE, 'Consultant'];
+const isInternContract = (type) => type === INTERN_CONTRACT_TYPE || type === 'Intern';
+const INTERNSHIP_DURATION_WEEKS = 10;
+const INTERN_STATUSES = ['Currently enrolled', 'Recent graduate'];
+// Mirrors the "Area you want to learn in" options on the careers Apply form.
+const INTERNSHIP_FOCUS_AREAS = [
+  'Software Development', 'Cybersecurity & Cloud',
+  'Fashion Design & Production', 'E-commerce & Retail',
+  'Agronomy & Farm Advisory', 'Agro-inputs & Machinery', 'Produce Handling & Quality',
+  'Sales & Marketing', 'Logistics & Import/Export',
+  'Accounts & Finance', 'Administration & Secretarial', 'Customer Support',
+];
+const addWeeksISO = (isoDate, weeks) => {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + weeks * 7);
+  return d.toISOString().slice(0, 10);
+};
 const GENDERS = ['Female', 'Male', 'Other', 'Prefer not to say'];
 const REPORTS_TO_OPTIONS = ['Manager', 'HoD'];
 
@@ -471,6 +498,57 @@ const buildAppointmentLetterHtml = (employee) => {
   `;
 };
 
+// ─── Letter of Internship Placement (learning-based, non-salaried) ──────────
+// Replaces the Contract of Employment + Letter of Appointment for interns —
+// deliberately says nothing about salary, PAYE, NSSF, or job grades.
+const buildInternshipPlacementLetterHtml = (employee) => {
+  const name = employeeFullName(employee);
+  const start = employee.contractStart || employee.hireDate;
+  const end = employee.contractEnd
+    ? fmtDate(employee.contractEnd)
+    : fmtDate(addWeeksISO(typeof start === 'string' ? start : toDateObj(start)?.toISOString?.().slice(0, 10), INTERNSHIP_DURATION_WEEKS));
+
+  return `
+    <div class="headRow">
+      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
+      <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(employee.hireDate)}</p>
+    </div>
+    <h2>Letter of Internship Placement</h2>
+
+    <p class="clause">Dear ${name},</p>
+    <p class="clause"><strong>RE: LEARNING-BASED INTERNSHIP — ${employee.department} DEPARTMENT</strong></p>
+
+    <p class="clause">We are pleased to offer you a place on the <strong>Learning-Based Internship Programme</strong> at ${COMPANY_INFO.name}${employee.position ? ` as <strong>${employee.position}</strong>` : ''} in the <strong>${employee.department}</strong> department${employee.internFocusArea ? `, focusing on <strong>${employee.internFocusArea}</strong>` : ''}${employee.internInstitution ? `. This placement is in connection with your studies at <strong>${employee.internInstitution}</strong>${employee.internProgramme ? ` (${employee.internProgramme})` : ''}` : ''}.</p>
+
+    <h3>1. Duration</h3>
+    <p class="clause">The internship runs for <strong>${INTERNSHIP_DURATION_WEEKS} weeks</strong>, from <strong>${fmtDate(start)}</strong> to <strong>${end}</strong>. You will report to the <strong>${employee.reportsTo || '[Manager/HoD]'}</strong> at ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}.</p>
+
+    <h3>2. Nature of the Placement</h3>
+    <p class="clause">This is a learning-based placement. It is <strong>not a contract of employment</strong>: you will not be placed on the payroll, no salary is payable, and no PAYE or NSSF deductions apply. Nothing in this letter guarantees later employment, although well-performing interns receive priority consideration when suitable vacancies open.</p>
+
+    <h3>3. Your Role and Learning Plan</h3>
+    <p class="clause">You will shadow and support experienced staff, complete assigned learning tasks and small projects under supervision, keep a weekly logbook, attend team meetings and training sessions, and present a short report on what you have learned at the end of the programme.</p>
+
+    <h3>4. What We Provide</h3>
+    <p class="clause">Structured on-the-job training and mentorship; hands-on exposure to real company work; logbook and assessment sign-off for your institution; a Certificate of Completion on successful completion; and a recommendation letter where performance warrants. Any transport, lunch support, or allowance is offered at the Company's discretion and will be confirmed in writing.</p>
+
+    <h3>5. Conduct and Confidentiality</h3>
+    <p class="clause">You are expected to follow Company policies, observe professional conduct and working hours set by your supervisor, and keep all Company and client information confidential, during and after the internship.</p>
+
+    <h3>6. Documents Required on Reporting</h3>
+    <p class="clause">Please bring: (a) a copy of your National ID / passport; (b) an introduction or placement letter from your institution, if required for academic credit; and (c) two recent passport photographs.</p>
+
+    <p class="clause">Please indicate your acceptance by signing and returning a copy of this letter by <span class="blank">&nbsp;</span>. We look forward to welcoming you.</p>
+
+    <div class="sigblock">
+      <div class="sigcol"><div class="sigline">For ${COMPANY_INFO.name} &nbsp;&nbsp; Name: __________________ &nbsp; Title: __________________</div></div>
+      <div class="sigcol"><div class="sigline">Accepted by Intern &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
+    </div>
+
+    <div class="footerNote">This is a general-purpose internship placement letter generated from HR system records. Review with a qualified HR/legal advisor before issuing.</div>
+  `;
+};
+
 // ─── Independent Service and Task Execution Agreement ──────────────────────
 // For engagementType === 'Independent Contractor'. Deliberately mirrors the
 // structure, data sourcing, and print/download pipeline of
@@ -581,7 +659,7 @@ const buildPayslipHtml = (payslip) => `
   <p class="clause" style="font-size:11px;color:#9AAAB8;">Generated by ${payslip.generatedBy || 'HR System'}. This pay slip is issued electronically and is valid without signature.</p>
 `;
 
-// ─── Certificate of Internship (landscape, decorative) ─────────────────────
+// ─── Certificate of Completion — Learning-Based Internship (landscape, decorative) ─────────────────────
 // Deliberately a separate popup window (not openPrintWindow) because a
 // certificate needs a landscape page, an ornamental border, and script/serif
 // display fonts rather than the contract letterhead layout. Google Fonts are
@@ -681,17 +759,19 @@ const buildInternshipCertificateHtml = (employee) => {
         ${logoImgTag().replace('class="logo"', 'class="certLogo"')}
         <p class="certCompany">${COMPANY_INFO.name}</p>
         <p class="certKicker">This certificate is proudly presented to</p>
-        <h1 class="certTitle">Certificate of Internship</h1>
+        <h1 class="certTitle">Certificate of Completion</h1>
+        <p class="certPresented" style="margin-top:2px;">Learning-Based Internship Programme</p>
         <div class="certRule"></div>
         <p class="certPresented">Awarded to</p>
         <p class="certName">${name}</p>
         <p class="certBody">
-          In recognition of the successful completion of an internship as <strong>${employee.position || 'an Intern'}</strong>
-          in the <strong>${employee.department}</strong> department at <strong>${COMPANY_INFO.name}</strong>, from
-          <strong>${fmtDate(startDate)}</strong> to <strong>${endDate}</strong>. Throughout this period, ${firstName}
-          demonstrated commendable dedication, professionalism, and a genuine eagerness to learn, and made a
-          valued contribution to the team. We extend our sincere appreciation for their commitment and wish
-          them continued success in all their future endeavors.
+          In recognition of the successful completion of the <strong>Learning-Based Internship Programme</strong> as
+          <strong>${employee.position || 'a Learning-Based Intern'}</strong> in the <strong>${employee.department}</strong>
+          department${employee.internFocusArea ? `, with a focus on <strong>${employee.internFocusArea}</strong>,` : ''}
+          at <strong>${COMPANY_INFO.name}</strong>, from <strong>${fmtDate(startDate)}</strong> to <strong>${endDate}</strong>.
+          Through structured training, mentorship, and supervised hands-on assignments, ${firstName}
+          demonstrated commendable dedication, professionalism, and a genuine eagerness to learn. We extend
+          our sincere appreciation for their commitment and wish them continued success in all their future endeavors.
         </p>
         <div class="certFooter">
           <div class="certSig">
@@ -847,7 +927,19 @@ const EMPTY_EMPLOYEE = {
   engagementType: ENGAGEMENT_TYPES[0], contractType: CONTRACT_TYPES[0], hireDate: '', contractStart: '', contractEnd: '',
   placeOfWork: '', bankAccountNumber: '', specialConditions: '',
   origin: '', reportsTo: REPORTS_TO_OPTIONS[0],
+  // Learning-based internship details (only used when contractType is an intern type)
+  internStatus: INTERN_STATUSES[0], internInstitution: '', internProgramme: '', internFocusArea: '',
 };
+
+// Intern-only details saved on the employee doc (cleared when not an intern).
+const internFieldsFromForm = (form) => isInternContract(form.contractType)
+  ? {
+      internStatus: form.internStatus || INTERN_STATUSES[0],
+      internInstitution: (form.internInstitution || '').trim(),
+      internProgramme: (form.internProgramme || '').trim(),
+      internFocusArea: form.internFocusArea || '',
+    }
+  : { internStatus: '', internInstitution: '', internProgramme: '', internFocusArea: '' };
 
 const EmployeeFormModal = ({ initial, onClose, onSave }) => {
   const isEdit = !!initial;
@@ -858,7 +950,15 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
   const [error, setError] = useState('');
   const fileRef = useRef(null);
 
-  const update = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
+  const update = (field, val) => setForm(prev => {
+    const next = { ...prev, [field]: val };
+    // Learning-based internships run a fixed 10 weeks — pre-fill the end date.
+    if ((field === 'contractType' || field === 'contractStart') && isInternContract(next.contractType) && next.contractStart && !next.contractEnd) {
+      next.contractEnd = addWeeksISO(next.contractStart, INTERNSHIP_DURATION_WEEKS);
+    }
+    return next;
+  });
+  const isInternForm = isInternContract(form.contractType);
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -876,6 +976,9 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
     e.preventDefault();
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('First and last name are required.'); return; }
     if (!form.hireDate) { setError('Hire date is required.'); return; }
+    if (isInternContract(form.contractType) && (!(form.internInstitution || '').trim() || !(form.internProgramme || '').trim() || !form.internFocusArea)) {
+      setError('For a learning-based intern, please fill in the institution, programme of study, and focus area.'); return;
+    }
     setSaving(true); setError('');
     const cleanedForm = { ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '' };
     const outcome = await onSave(cleanedForm, photoDataUrl, isEdit);
@@ -930,9 +1033,15 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
 
               <div>
                 <label style={cu.label}>Job grade</label>
-                <select style={cu.select} value={form.jobGradeCode} onChange={e => update('jobGradeCode', e.target.value)} disabled={saving}>
-                  {JOB_GRADES.map(g => <option key={g.code} value={g.code}>{g.title} ({fmtMoney(g.baseSalary)} base)</option>)}
-                </select>
+                {isInternForm ? (
+                  <p style={{ fontSize: 12, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 10px', margin: 0 }}>
+                    Not applicable — learning-based interns are not on payroll.
+                  </p>
+                ) : (
+                  <select style={cu.select} value={form.jobGradeCode} onChange={e => update('jobGradeCode', e.target.value)} disabled={saving}>
+                    {JOB_GRADES.map(g => <option key={g.code} value={g.code}>{g.title} ({fmtMoney(g.baseSalary)} base)</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label style={cu.label}>Engagement type</label>
@@ -948,7 +1057,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               <div>
                 <label style={cu.label}>Contract type</label>
                 <select style={cu.select} value={form.contractType} onChange={e => update('contractType', e.target.value)} disabled={saving}>
-                  {CONTRACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {[...CONTRACT_TYPES, ...(form.contractType && !CONTRACT_TYPES.includes(form.contractType) ? [form.contractType] : [])].map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
 
@@ -968,8 +1077,36 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               </div>
             </div>
 
+            {isInternForm && (
+              <div style={{ marginTop: 16, padding: 14, background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10 }}>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: '#92400E', margin: '0 0 4px' }}>Learning-Based Internship Details</h4>
+                <p style={{ fontSize: 11, color: '#92400E', margin: '0 0 12px' }}>
+                  {INTERNSHIP_DURATION_WEEKS}-week learning programme · not on payroll · receives a Placement Letter and a Certificate of Completion.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={cu.label}>Current status</label>
+                    <select style={cu.select} value={form.internStatus} onChange={e => update('internStatus', e.target.value)} disabled={saving}>
+                      {INTERN_STATUSES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={cu.label}>Institution</label><input style={s.loginInput} placeholder="e.g. Lira University" value={form.internInstitution} onChange={e => update('internInstitution', e.target.value)} disabled={saving} /></div>
+                  <div><label style={cu.label}>Programme / course of study</label><input style={s.loginInput} placeholder="e.g. BSc Computer Science" value={form.internProgramme} onChange={e => update('internProgramme', e.target.value)} disabled={saving} /></div>
+                  <div>
+                    <label style={cu.label}>Focus area</label>
+                    <select style={cu.select} value={form.internFocusArea} onChange={e => update('internFocusArea', e.target.value)} disabled={saving}>
+                      <option value="">Select…</option>
+                      {INTERNSHIP_FOCUS_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <p style={{ fontSize: 11, color: '#9AAAB8', margin: '10px 0 0' }}>
-              Standard hours of work: 48 hours/week, 9:00 AM – 5:00 PM, with breaktime for breakfast at 11:00 AM and lunch at 1:00 PM. Salary is paid monthly to the HFB account above at Housing Finance Bank.
+              {isInternForm
+                ? 'Interns follow the schedule set by their department supervisor. Learning-based internships are unsalaried and are not included in payroll runs.'
+                : 'Standard hours of work: 48 hours/week, 9:00 AM – 5:00 PM, with breaktime for breakfast at 11:00 AM and lunch at 1:00 PM. Salary is paid monthly to the HFB account above at Housing Finance Bank.'}
             </p>
 
             <div style={{ marginTop: 18 }}>
@@ -1697,11 +1834,11 @@ const ContractActionModal = ({ employee, action, onClose, onConfirm }) => {
 };
 
 // ─── Employee Profile Modal (details, history, attendance) ──────────────────
-const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate }) => {
+const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate, onDownloadPlacementLetter }) => {
   const grade = gradeByCode(employee.jobGradeCode);
   const status = deriveContractStatus(employee);
   const isContractor = employee.engagementType === 'Independent Contractor';
-  const isIntern = employee.contractType === 'Intern';
+  const isIntern = isInternContract(employee.contractType);
   const history = [...(employee.employmentHistory || [])].sort((a, b) => (toDateObj(b.date) || 0) - (toDateObj(a.date) || 0));
 
   return (
@@ -1723,6 +1860,8 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
           <button style={{ ...ms.actionBtn, background: '#F3E8FF', color: '#7C3AED' }} onClick={() => onIdCard(employee)}>🪪 ID Card</button>
           {isContractor ? (
             <button style={{ ...ms.actionBtn, background: '#EEF2FF', color: '#4338CA' }} onClick={() => onDownloadServiceAgreement(employee)}>📄 Download Service Agreement</button>
+          ) : isIntern ? (
+            <button style={{ ...ms.actionBtn, background: '#ECFDF5', color: '#065F46' }} onClick={() => onDownloadPlacementLetter(employee)}>📄 Download Placement Letter</button>
           ) : (
             <>
               <button style={{ ...ms.actionBtn, background: '#ECFDF5', color: '#065F46' }} onClick={() => onDownloadContract(employee)}>📄 Download Contract</button>
@@ -1737,8 +1876,8 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
         <div style={ms.body}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 12, marginBottom: 20 }}>
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Status</span><ContractStatusBadge status={status} /></div>
-            <div style={cu.credRow}><span style={cu.credLabel}>Job Grade</span><span style={cu.credVal}>{grade ? `${grade.code} · ${grade.title}` : '—'}</span></div>
-            <div style={cu.credRow}><span style={cu.credLabel}>Base Salary</span><span style={cu.credVal}>{fmtMoney(grade?.baseSalary)}</span></div>
+            <div style={cu.credRow}><span style={cu.credLabel}>Job Grade</span><span style={cu.credVal}>{isIntern ? 'Not applicable' : grade ? `${grade.code} · ${grade.title}` : '—'}</span></div>
+            <div style={cu.credRow}><span style={cu.credLabel}>Base Salary</span><span style={cu.credVal}>{isIntern ? 'Learning-based (unsalaried)' : fmtMoney(grade?.baseSalary)}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Engagement Type</span><span style={cu.credVal}>{employee.engagementType || ENGAGEMENT_TYPES[0]}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Type</span><span style={cu.credVal}>{employee.contractType || '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Hire Date</span><span style={cu.credVal}>{fmtDate(employee.hireDate)}</span></div>
@@ -1746,6 +1885,14 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
             <div style={cu.credRow}><span style={cu.credLabel}>Email</span><span style={cu.credVal}>{employee.email || '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Phone</span><span style={cu.credVal}>{employee.phone || '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Leave Balance (Annual)</span><span style={cu.credVal}>{(employee.leaveBalance?.Annual ?? DEFAULT_LEAVE_BALANCES.Annual)} days</span></div>
+            {isIntern && (
+              <>
+                <div style={cu.credRow}><span style={cu.credLabel}>Intern Status</span><span style={cu.credVal}>{employee.internStatus || '—'}</span></div>
+                <div style={cu.credRow}><span style={cu.credLabel}>Institution</span><span style={cu.credVal}>{employee.internInstitution || '—'}</span></div>
+                <div style={cu.credRow}><span style={cu.credLabel}>Programme</span><span style={cu.credVal}>{employee.internProgramme || '—'}</span></div>
+                <div style={cu.credRow}><span style={cu.credLabel}>Focus Area</span><span style={cu.credVal}>{employee.internFocusArea || '—'}</span></div>
+              </>
+            )}
           </div>
 
           <h4 style={{ fontSize: 13, fontWeight: 700, color: '#1A3C5E', margin: '0 0 10px' }}>Employment History</h4>
@@ -2204,6 +2351,7 @@ const HrManager = () => {
           placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
           specialConditions: form.specialConditions || '',
           origin: form.origin, reportsTo: form.reportsTo,
+          ...internFieldsFromForm(form),
           ...(historyAdd.length ? { employmentHistory: [...(before.employmentHistory || []), ...historyAdd] } : {}),
         });
         if (photoDataUrl) savePhotoLocal(form.id, photoDataUrl);
@@ -2220,9 +2368,10 @@ const HrManager = () => {
           placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
           specialConditions: form.specialConditions || '',
           origin: form.origin, reportsTo: form.reportsTo,
+          ...internFieldsFromForm(form),
           contractStatus: 'active', status: 'active',
           leaveBalance: { ...DEFAULT_LEAVE_BALANCES }, leaveUsed: { Annual: 0, Sick: 0, Compassionate: 0 },
-          employmentHistory: [{ date: form.hireDate, event: 'Hired', note: `${form.position || form.department} · ${form.jobGradeCode}` }],
+          employmentHistory: [{ date: form.hireDate, event: isInternContract(form.contractType) ? 'Internship started' : 'Hired', note: `${form.position || form.department} · ${isInternContract(form.contractType) ? 'Learning-Based Internship' : form.jobGradeCode}` }],
           createdAt: serverTimestamp(), createdBy: auth.currentUser?.email || 'unknown',
         });
         if (photoDataUrl) savePhotoLocal(ref.id, photoDataUrl);
@@ -2318,8 +2467,9 @@ const HrManager = () => {
 
   // ── Payroll engine ─────────────────────────────────────────────────────
   const runPayroll = useCallback(async () => {
-    const activeEmployees = employees.filter(e => (e.status || 'active') === 'active');
-    if (activeEmployees.length === 0) { alert('No active employees to run payroll for.'); return; }
+    // Learning-based interns are unsalaried, so they never receive pay slips.
+    const activeEmployees = employees.filter(e => (e.status || 'active') === 'active' && !isInternContract(e.contractType));
+    if (activeEmployees.length === 0) { alert('No active salaried employees to run payroll for (learning-based interns are excluded).'); return; }
     const already = payslips.some(p => p.period === payrollPeriod);
     if (already && !window.confirm(`Pay slips already exist for ${payrollPeriod}. Run again and add more?`)) return;
     setRunningPayroll(true);
@@ -2607,14 +2757,16 @@ const HrManager = () => {
                             <button style={s.btnShortlist} onClick={() => setBusinessCardTarget(e)}>Business Card</button>
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
+                            ) : isInternContract(e.contractType) ? (
+                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}>Placement Letter</button>
                             ) : (
                               <>
                                 <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
                                 <button style={s.btnShortlist} onClick={() => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}>Letter</button>
                               </>
                             )}
-                            {e.contractType === 'Intern' && (
-                              <button style={s.btnShortlist} onClick={() => openCertificateWindow(`Certificate of Internship — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}>Certificate</button>
+                            {isInternContract(e.contractType) && (
+                              <button style={s.btnShortlist} onClick={() => openCertificateWindow(`Certificate of Completion — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}>Certificate</button>
                             )}
                             {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteEmployee(e)} disabled={busyEmployeeId === e.id}>Delete</button>}
                           </div>
@@ -2671,6 +2823,8 @@ const HrManager = () => {
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Document</button>
+                            ) : isInternContract(e.contractType) ? (
+                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}>Document</button>
                             ) : (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Document</button>
                             )}
@@ -2924,8 +3078,9 @@ const HrManager = () => {
           onIdCard={(e) => { setIdCardTarget(e); }}
           onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
           onDownloadAppointmentLetter={(e) => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}
+          onDownloadPlacementLetter={(e) => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}
           onDownloadServiceAgreement={(e) => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}
-          onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Internship — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
+          onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Completion — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
         />
       )}
       {idCardTarget && <IdCardModal employee={idCardTarget} onClose={() => setIdCardTarget(null)} />}
