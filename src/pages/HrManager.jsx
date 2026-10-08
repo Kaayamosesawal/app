@@ -758,8 +758,8 @@ const buildInternshipCertificateHtml = (employee) => {
       <div class="certInner">
         ${logoImgTag().replace('class="logo"', 'class="certLogo"')}
         <p class="certCompany">${COMPANY_INFO.name}</p>
-        <p class="certKicker">This certificate is proudly presented to</p>
         <h1 class="certTitle">Certificate of Completion</h1>
+        <p class="certKicker">This certificate is proudly presented for</p>
         <p class="certPresented" style="margin-top:2px;">Learning-Based Internship Programme</p>
         <div class="certRule"></div>
         <p class="certPresented">Awarded to</p>
@@ -771,7 +771,7 @@ const buildInternshipCertificateHtml = (employee) => {
           at <strong>${COMPANY_INFO.name}</strong>, from <strong>${fmtDate(startDate)}</strong> to <strong>${endDate}</strong>.
           Through structured training, mentorship, and supervised hands-on assignments, ${firstName}
           demonstrated commendable dedication, professionalism, and a genuine eagerness to learn. We extend
-          our sincere appreciation for their commitment and wish them continued success in all their future endeavors.
+          our sincere appreciation for the commitment and wish you continued success in all your future endeavors.
         </p>
         <div class="certFooter">
           <div class="certSig">

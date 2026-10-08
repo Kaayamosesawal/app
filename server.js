@@ -23,6 +23,8 @@
  *   CLIENT_ORIGIN             – Production frontend URL (e.g. https://slirus.web.app)
  *   RESEND_API_KEY            – Your Resend API key
  *   RESEND_FROM               – Sender address (must match your verified sending domain)
+ *   RESEND_FROM_PROJECTS      – Sender for project emails, e.g. Slirus Operations Team <info@slirus.com>
+ *                               (overrides the built-in default — set or remove it on your host)
  *   RENDER_EXTERNAL_URL       – Set automatically by Render; used for keep-alive pings
  *   CEO_EMAIL                 – Email allowed to call the user-management endpoints
  *   FIREBASE_SERVICE_ACCOUNT_KEY
@@ -52,8 +54,8 @@ if (missingEnv.length > 0) {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PORT              = process.env.PORT              || 3001;
 const FROM_ADDRESS      = process.env.RESEND_FROM      || 'Slirus HR Team <hr@slirus.com>';
-// Project requests are sent on behalf of the general Slirus inbox, not HR.
-const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Global Limited <info@slirus.com>';
+// Project requests (received / accepted / declined) are sent by the Operations Team, not HR.
+const PROJECTS_FROM     = process.env.RESEND_FROM_PROJECTS || 'Slirus Operations Team <info@slirus.com>';
 const NODE_ENV          = process.env.NODE_ENV           || 'development';
 
 // UX-gate email on the client (CeoManager.jsx) mirrors this — but this is the
@@ -713,7 +715,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             once again for considering Slirus for your project.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
-            Warm regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+            Warm regards,<br /><strong style="color:#475569;">Slirus Operations Team</strong>
           </p>`,
       };
 
@@ -738,7 +740,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             to a successful partnership.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
-            Warm regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+            Warm regards,<br /><strong style="color:#475569;">Slirus Operations Team</strong>
           </p>`,
       };
 
@@ -767,7 +769,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             Thank you again for your interest and trust in Slirus Global Limited.
           </p>
           <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
-            Kind regards,<br /><strong style="color:#475569;">The Slirus Team</strong>
+            Kind regards,<br /><strong style="color:#475569;">Slirus Operations Team</strong>
           </p>`,
       };
 
@@ -893,7 +895,7 @@ app.post('/api/send-email', async (req, res) => {
   // client-facing project mail comes from the general inbox.
   const isProjectEmail = PROJECT_EMAIL_TYPES.has(type);
   const senderAddress  = isProjectEmail ? PROJECTS_FROM : FROM_ADDRESS;
-  const department_    = isProjectEmail ? 'Client Relations' : 'HR Department';
+  const department_    = isProjectEmail ? 'Operations Team' : 'HR Department';
   const replyToAddress = isProjectEmail ? 'info@slirus.com' : 'hr@slirus.com';
 
   try {
