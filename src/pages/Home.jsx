@@ -682,9 +682,9 @@ const Home = () => {
             <div className="career-card-icon">
               <i className="fas fa-user-graduate"></i>
             </div>
-            <div className="career-card-title">Paid Internship Program</div>
+            <div className="career-card-title">Learning-Based Internship Program</div>
             <div className="career-card-desc">
-              Gain hands-on experience on real client projects. Open to CS, IT, and Information Systems students and recent graduates.
+              Gain hands-on experience on real job environment. Open to all academic disciplines, students and recent graduates.
             </div>
             <span className="career-card-cta">
               Learn about the program <i className="fas fa-arrow-right"></i>
