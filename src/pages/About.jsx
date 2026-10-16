@@ -8,28 +8,43 @@ const values = [
   { icon: 'fas fa-globe-africa', title: 'Local Impact', desc: 'Everything we build is designed to create lasting, measurable value across Uganda.' },
 ];
 
-const leadership = [
+const pillars = [
   {
-    name: 'Moses Awal Kaaya',
-    role: 'Chief Executive Officer',
-    bio: 'Oversees portfolio investments, strategic corporate alignment, and cross-subsidiary governance frameworks across all Slirus business units.',
-    img: 'https://raw.githubusercontent.com/Kaayamosesawal/images/main/moses.png',
-    initials: 'CEO',
+    icon: 'fas fa-laptop-code',
+    name: 'Technology Hub',
+    tagline: 'Digital solutions & software',
+    mandate: 'Delivers affordable, reliable, cutting-edge technology that helps businesses succeed in an increasingly competitive landscape.',
+    capabilities: ['Custom software development', 'Scalable digital platforms', 'Ongoing support & maintenance'],
+    serves: 'Businesses and institutions across Uganda',
   },
   {
-    name: 'Joyce Nacibuuka',
-    role: 'Accounts Manager',
-    bio: 'Manages the consolidated corporate ledger, driving comprehensive internal financial controls, tax compliance, and strategic resource optimization across all Slirus business divisions.',
-    img: 'https://raw.githubusercontent.com/Kaayamosesawal/images/main/joy.png',
-    initials: 'AM',
+    icon: 'fas fa-coins',
+    name: 'Finance Hub',
+    tagline: 'Transactions & financial inclusion',
+    mandate: 'Builds the transaction and payment frameworks that extend financial access to businesses and communities.',
+    capabilities: ['Multi-channel transaction networks', 'Financial inclusion solutions', 'Transparent, accountable operations'],
+    serves: 'Merchants, agents and communities',
   },
   {
-    name: 'Edith Naziwa',
-    role: 'Operations Manager',
-    bio: 'Steers the creative vision and commercial product strategy, driving global trend alignment, brand positioning, and cross-subsidiary design synergy across all Slirus operations.',
-    img: 'https://raw.githubusercontent.com/Kaayamosesawal/images/main/eddy.png',
-    initials: 'OM',
+    icon: 'fas fa-industry',
+    name: 'Industrial & Apparel Hub',
+    tagline: 'Production, supply & trade',
+    mandate: 'Runs modern apparel supply chains and trade operations that turn product and design into dependable supply.',
+    capabilities: ['Apparel & uniform production', 'Fashion and lifestyle products', 'Agricultural supply & general commerce'],
+    serves: 'Institutions, retailers and consumers',
   },
+];
+
+const matrixRows = [
+  { key: 'mandate', label: 'Mandate', icon: 'fas fa-bullseye' },
+  { key: 'capabilities', label: 'Core Capabilities', icon: 'fas fa-cubes' },
+  { key: 'serves', label: 'Who It Serves', icon: 'fas fa-users' },
+];
+
+const backbone = [
+  { icon: 'fas fa-balance-scale', title: 'Governance & Strategy', desc: 'Portfolio oversight and corporate alignment across every hub.' },
+  { icon: 'fas fa-file-invoice-dollar', title: 'Finance & Compliance', desc: 'A consolidated ledger, internal controls and tax compliance.' },
+  { icon: 'fas fa-project-diagram', title: 'Operations & Design', desc: 'Product strategy, brand positioning and cross-hub synergy.' },
 ];
 
 const whyUs = [
@@ -174,54 +189,85 @@ const About = () => {
         .value-card h3 { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
         .value-card p { font-size: 13px; color: #64748b; line-height: 1.65; }
 
-        /* ── Leadership ── */
-        .leadership-grid {
+        /* ── Operational Pillars ── */
+        .pillars-head { text-align: center; max-width: 640px; margin: 0 auto 48px; }
+        .pillars-head .about-h2 { margin-bottom: 12px; }
+        .pillars-sub { font-size: 16px; color: #475569; line-height: 1.7; }
+
+        .pillar-matrix {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 28px;
-        }
-        .leader-card {
+          grid-template-columns: 150px repeat(3, 1fr);
           background: white;
           border: 1px solid #e2e8f0;
           border-radius: 20px;
           overflow: hidden;
-          transition: transform 0.3s, box-shadow 0.3s;
-          display: flex;
-          flex-direction: column;
         }
-        .leader-card:hover {
-          transform: translateY(-6px);
-          box-shadow: 0 16px 40px rgba(0,0,0,0.08);
+        .pm-corner { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+        .pm-col-head {
+          padding: 28px 24px 22px;
+          background: linear-gradient(135deg, #0f172a, #1e3a8a);
+          color: white;
+          border-left: 1px solid rgba(255,255,255,0.08);
         }
-        .leader-img-wrap {
-          width: 100%;
-          aspect-ratio: 7 / 8;
-          background: #eef2f7;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow: hidden;
-          flex-shrink: 0;
+        .pm-col-icon {
+          width: 44px; height: 44px; border-radius: 12px;
+          background: rgba(255,255,255,0.12);
+          display: flex; align-items: center; justify-content: center;
+          margin-bottom: 14px;
         }
-        .leader-img-wrap img {
-          width: 100%;
-          height: 100%;
-          object-fit: contain;
-          object-position: center center;
-          display: block;
+        .pm-col-icon i { color: #93c5fd; font-size: 18px; }
+        .pm-col-head h3 { font-size: 17px; font-weight: 800; color: white; margin-bottom: 4px; }
+        .pm-col-head span { font-size: 12.5px; color: #93c5fd; font-weight: 600; }
+
+        .pm-row-label {
+          padding: 24px 20px;
+          background: #f8fafc;
+          border-top: 1px solid #e2e8f0;
+          font-size: 11px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.1em;
+          color: #2563eb;
+          display: flex; align-items: flex-start; gap: 8px;
         }
-        .leader-info { padding: 22px 24px 26px; flex: 1; }
-        .leader-name {
-          font-size: 18px; font-weight: 800;
-          color: #0f172a; margin-bottom: 4px;
+        .pm-row-label i { font-size: 12px; margin-top: 1px; }
+        .pm-cell {
+          padding: 24px;
+          border-top: 1px solid #e2e8f0;
+          border-left: 1px solid #e2e8f0;
+          font-size: 14px; color: #475569; line-height: 1.7;
         }
-        .leader-role {
-          font-size: 13px; font-weight: 600;
-          color: #2563eb; margin-bottom: 12px;
+        .pm-cell::before {
+          content: attr(data-label);
+          display: none;
+          font-size: 10.5px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.1em;
+          color: #2563eb; margin-bottom: 8px;
         }
-        .leader-bio {
-          font-size: 13px; color: #64748b; line-height: 1.65;
+        .pm-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+        .pm-list li { display: flex; gap: 10px; align-items: flex-start; color: #334155; font-weight: 500; }
+        .pm-list li i { color: #2563eb; font-size: 11px; margin-top: 6px; flex-shrink: 0; }
+
+        .backbone {
+          margin-top: 28px;
+          background: #0f172a;
+          border-radius: 20px;
+          padding: 32px;
+          color: white;
         }
+        .backbone-title {
+          font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+          text-transform: uppercase; color: #93c5fd; margin-bottom: 6px;
+        }
+        .backbone h3 { font-size: 19px; font-weight: 800; color: white; margin-bottom: 22px; }
+        .backbone-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .backbone-item {
+          display: flex; gap: 14px; align-items: flex-start;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 14px; padding: 18px;
+        }
+        .backbone-item i { color: #60a5fa; font-size: 18px; margin-top: 2px; }
+        .backbone-item h4 { font-size: 14px; font-weight: 700; color: white; margin-bottom: 4px; }
+        .backbone-item p { font-size: 12.5px; color: #94a3b8; line-height: 1.6; }
 
         /* ── CTA ── */
         .about-cta {
@@ -279,10 +325,13 @@ const About = () => {
           .why-us-grid {
             grid-template-columns: 1fr 1fr !important;
           }
-          .leadership-grid { 
-            grid-template-columns: 1fr 1fr !important; 
-            gap: 24px;
-          }
+          .pillar-matrix { grid-template-columns: 1fr !important; }
+          .pm-corner, .pm-row-label { display: none !important; }
+          .pm-col-head { border-left: none; border-top: 1px solid rgba(255,255,255,0.1); }
+          .pm-cell { border-left: none; padding: 20px 24px; }
+          .pm-cell::before { display: block; }
+          .backbone-grid { grid-template-columns: 1fr !important; }
+          .backbone { padding: 24px 20px; }
           .about-cta { 
             padding: 60px 5% !important; 
           }
@@ -310,8 +359,7 @@ const About = () => {
             margin-bottom: 8px !important;
           }
           .values-grid,
-          .why-us-grid,
-          .leadership-grid { 
+          .why-us-grid { 
             grid-template-columns: 1fr !important; 
           }
           .about-cta {
@@ -415,23 +463,62 @@ const About = () => {
         </div>
       </section>
 
-      {/* ── Leadership ── */}
+      {/* ── Operational Pillars ── */}
       <section className="about-section alt">
-        <p className="about-eyebrow-small" style={{ textAlign: 'center' }}>The People Behind Slirus</p>
-        <h2 className="about-h2" style={{ textAlign: 'center', marginBottom: 40 }}>Executive Leadership</h2>
-        <div className="leadership-grid">
-          {leadership.map((l, i) => (
-            <div className="leader-card" key={i}>
-              <div className="leader-img-wrap">
-                <img src={l.img} alt={l.name} />
-              </div>
-              <div className="leader-info">
-                <div className="leader-name">{l.name}</div>
-                <div className="leader-role">{l.role}</div>
-                <p className="leader-bio">{l.bio}</p>
-              </div>
+        <div className="pillars-head">
+          <p className="about-eyebrow-small">How We Operate</p>
+          <h2 className="about-h2">The Pillars of Slirus</h2>
+          <p className="pillars-sub">
+            Moving away from centralized management to dedicated operational hubs powering Uganda's next economy.
+          </p>
+        </div>
+
+        <div className="pillar-matrix" role="table" aria-label="Slirus operational pillars">
+          <div className="pm-corner"></div>
+          {pillars.map((p, i) => (
+            <div className="pm-col-head" key={i}>
+              <div className="pm-col-icon"><i className={p.icon}></i></div>
+              <h3>{p.name}</h3>
+              <span>{p.tagline}</span>
             </div>
           ))}
+
+          {matrixRows.map((row) => (
+            <React.Fragment key={row.key}>
+              <div className="pm-row-label">
+                <i className={row.icon}></i> {row.label}
+              </div>
+              {pillars.map((p, i) => (
+                <div className="pm-cell" data-label={row.label} key={i}>
+                  {row.key === 'capabilities' ? (
+                    <ul className="pm-list">
+                      {p.capabilities.map((c, j) => (
+                        <li key={j}><i className="fas fa-circle"></i>{c}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    p[row.key]
+                  )}
+                </div>
+              ))}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="backbone">
+          <p className="backbone-title">One Ecosystem</p>
+          <h3>Shared corporate backbone connecting every hub</h3>
+          <div className="backbone-grid">
+            {backbone.map((b, i) => (
+              <div className="backbone-item" key={i}>
+                <i className={b.icon}></i>
+                <div>
+                  <h4>{b.title}</h4>
+                  <p>{b.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
