@@ -393,7 +393,7 @@ const About = () => {
           </div>
           <h1>We are <span>Slirus</span> Global</h1>
           <p>
-            A multi-sector global company driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
+            A multi-sector entity driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
           </p>
         </div>
       </div>
