@@ -217,16 +217,16 @@ const Services = () => {
         /* ── Hero ── */
         .hero-banner {
           background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
-          padding: 80px 8%;
+          padding: 56px 8%;
           color: white;
           text-align: center;
         }
         .hero-banner h1 { font-size: 40px; font-weight: 800; margin-bottom: 14px; }
-        .hero-banner p { font-size: 17px; color: #cbd5e1; max-width: 600px; margin: 0 auto; line-height: 1.7; }
+        .hero-banner p { font-size: 19px; color: #cbd5e1; max-width: 600px; margin: 0 auto; line-height: 1.7; }
 
         /* ── Core Service ── */
         .core-section {
-          padding: 90px 8%;
+          padding: 60px 8%;
           background: linear-gradient(160deg, #020617 0%, #1e3a8a 60%, #1e40af 100%);
           color: white;
         }
@@ -253,8 +253,8 @@ const Services = () => {
         }
 
         .core-description {
-          font-size: 16px; color: #cbd5e1;
-          max-width: 780px; line-height: 1.8; margin-bottom: 50px;
+          font-size: 18px; color: #cbd5e1;
+          max-width: 780px; line-height: 1.8; margin-bottom: 32px;
         }
 
         .core-grid {
@@ -267,7 +267,7 @@ const Services = () => {
           background: rgba(255,255,255,0.06);
           border: 1px solid rgba(255,255,255,0.12);
           border-radius: 16px;
-          padding: 28px;
+          padding: 24px;
           transition: background 0.3s, transform 0.3s;
         }
 
@@ -285,11 +285,11 @@ const Services = () => {
         }
         .core-card-icon i { font-size: 20px; color: #60a5fa; }
         .core-card h3 { font-size: 16px; font-weight: 700; color: white; margin-bottom: 8px; }
-        .core-card p { font-size: 14px; color: #94a3b8; line-height: 1.7; }
+        .core-card p { font-size: 16px; color: #94a3b8; line-height: 1.7; }
 
         /* ── Other IT Services ── */
         .other-section {
-          padding: 90px 8%;
+          padding: 60px 8%;
           background: #f8fafc;
         }
 
@@ -308,8 +308,8 @@ const Services = () => {
 
         .section-sub {
           text-align: center;
-          color: #64748b; font-size: 16px;
-          max-width: 600px; margin: 0 auto 60px;
+          color: #64748b; font-size: 18px;
+          max-width: 600px; margin: 0 auto 36px;
           line-height: 1.6;
         }
 
@@ -319,11 +319,11 @@ const Services = () => {
           border-radius: 20px;
           overflow: hidden;
           box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-          margin-bottom: 36px;
+          margin-bottom: 28px;
         }
 
         .service-block-header {
-          padding: 36px 40px 30px;
+          padding: 30px 40px 26px;
           border-bottom: 1px solid #f1f5f9;
           display: flex; gap: 20px; align-items: flex-start;
         }
@@ -349,12 +349,12 @@ const Services = () => {
         }
 
         .service-block-desc {
-          font-size: 14px; color: #475569;
+          font-size: 16px; color: #475569;
           line-height: 1.8; max-width: 800px;
         }
 
         .service-block-body {
-          padding: 32px 40px;
+          padding: 26px 40px;
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 24px;
@@ -377,46 +377,46 @@ const Services = () => {
           color: #0f172a; margin-bottom: 5px;
         }
         .offering-card p {
-          font-size: 13px; color: #64748b; line-height: 1.65;
+          font-size: 15px; color: #64748b; line-height: 1.65;
         }
 
         /* ── Business Divisions ── */
         .division-section {
-          padding: 90px 8%;
+          padding: 60px 8%;
           background: white;
         }
         .division-bullets {
           list-style: none;
           margin: 0;
-          padding: 32px 40px;
+          padding: 26px 40px;
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 14px 24px;
         }
         .division-bullets li {
           display: flex; gap: 12px; align-items: flex-start;
-          font-size: 14px; color: #475569; line-height: 1.65;
+          font-size: 16px; color: #475569; line-height: 1.65;
         }
         .division-bullets li i {
-          font-size: 15px; margin-top: 4px; flex-shrink: 0;
+          font-size: 17px; margin-top: 4px; flex-shrink: 0;
         }
         @media (max-width: 900px) {
           .division-bullets { grid-template-columns: 1fr; }
         }
         @media (max-width: 768px) {
-          .division-section { padding: 60px 5%; }
+          .division-section { padding: 40px 5%; }
           .division-bullets { padding: 24px; }
         }
 
         /* ── CTA ── */
         .services-cta {
           text-align: center;
-          padding: 70px 8%;
+          padding: 52px 8%;
           background: white;
           border-top: 1px solid #e2e8f0;
         }
         .services-cta h2 { font-size: 30px; font-weight: 800; color: #0f172a; margin-bottom: 12px; }
-        .services-cta p { font-size: 16px; color: #64748b; margin-bottom: 28px; max-width: 500px; margin-left: auto; margin-right: auto; }
+        .services-cta p { font-size: 18px; color: #64748b; margin-bottom: 28px; max-width: 500px; margin-left: auto; margin-right: auto; }
         .services-cta a {
           display: inline-flex; align-items: center; gap: 8px;
           background: #2563eb; color: white;
@@ -436,10 +436,10 @@ const Services = () => {
         }
 
         @media (max-width: 768px) {
-          .core-section, .other-section { padding: 60px 5%; }
-          .service-block-header { padding: 28px 24px 22px; }
+          .core-section, .other-section { padding: 40px 5%; }
+          .service-block-header { padding: 24px 24px 22px; }
           .service-block-body { padding: 24px; }
-          .hero-banner { padding: 60px 5%; }
+          .hero-banner { padding: 40px 5%; }
           .hero-banner h1 { font-size: 28px; }
         }
       `}</style>

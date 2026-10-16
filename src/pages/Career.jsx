@@ -266,7 +266,7 @@ const Career = () => {
         }
         .job-card:hover { box-shadow: 0 6px 24px rgba(37,99,235,0.10); }
 
-        .job-card-header { padding: 28px 32px; }
+        .job-card-header { padding: 24px 32px; }
 
         .job-card-title-row {
           display: flex;
@@ -286,7 +286,7 @@ const Career = () => {
         .job-title { font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
 
         .job-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        .job-meta span { font-size: 13px; color: #64748b; display: flex; align-items: center; gap: 5px; }
+        .job-meta span { font-size: 15px; color: #64748b; display: flex; align-items: center; gap: 5px; }
         .job-meta i { color: #2563eb; }
 
         .track-status-badge {
@@ -295,7 +295,7 @@ const Career = () => {
           display: inline-flex; align-items: center; gap: 4px;
         }
 
-        .job-description { color: #475569; line-height: 1.7; font-size: 15px; margin-bottom: 20px; }
+        .job-description { color: #475569; line-height: 1.7; font-size: 17px; margin-bottom: 20px; }
 
         .job-card-footer { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
@@ -337,7 +337,7 @@ const Career = () => {
 
         .job-card-body {
           border-top: 1px solid #f1f5f9;
-          padding: 28px 32px;
+          padding: 24px 32px;
           background: #fafbff;
         }
 
@@ -359,7 +359,7 @@ const Career = () => {
 
         .job-detail-block ul { list-style: none; padding: 0; margin: 0; }
         .job-detail-block ul li {
-          font-size: 14px; color: #475569;
+          font-size: 16px; color: #475569;
           margin-bottom: 8px;
           display: flex; align-items: flex-start; gap: 8px;
           line-height: 1.6;
@@ -375,7 +375,7 @@ const Career = () => {
           margin-top: 16px;
         }
 
-        .intern-card-header { padding: 32px; color: white; }
+        .intern-card-header { padding: 26px; color: white; }
 
         .intern-badge {
           display: inline-flex; align-items: center; gap: 6px;
@@ -390,9 +390,9 @@ const Career = () => {
         .intern-title { font-size: 24px; font-weight: 800; margin-bottom: 8px; color: white; }
 
         .intern-meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-        .intern-meta span { font-size: 13px; color: rgba(255,255,255,0.85); display: flex; align-items: center; gap: 6px; }
+        .intern-meta span { font-size: 15px; color: rgba(255,255,255,0.85); display: flex; align-items: center; gap: 6px; }
 
-        .intern-description { color: rgba(255,255,255,0.85); line-height: 1.7; font-size: 15px; margin-bottom: 24px; }
+        .intern-description { color: rgba(255,255,255,0.85); line-height: 1.7; font-size: 17px; margin-bottom: 24px; }
 
         .intern-footer { display: flex; gap: 12px; flex-wrap: wrap; }
 
@@ -435,7 +435,7 @@ const Career = () => {
 
         .intern-card-body {
           background: white;
-          padding: 28px 32px;
+          padding: 24px 32px;
         }
 
         .intern-detail-grid {
@@ -454,7 +454,7 @@ const Career = () => {
 
         .intern-detail-block ul { list-style: none; padding: 0; margin: 0; }
         .intern-detail-block ul li {
-          font-size: 14px; color: #475569;
+          font-size: 16px; color: #475569;
           margin-bottom: 8px;
           display: flex; align-items: flex-start; gap: 8px;
           line-height: 1.6;
@@ -505,7 +505,7 @@ const Career = () => {
           {/* Internship Tracks */}
           {internshipTracks.length > 0 && (
             <>
-              <p className="section-label" style={{ marginTop: '60px' }}>
+              <p className="section-label" style={{ marginTop: '36px' }}>
                 <i className="fas fa-user-graduate"></i> Internship Program
               </p>
               <h2 className="section-title">Paid Internship</h2>

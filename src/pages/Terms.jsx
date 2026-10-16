@@ -23,7 +23,7 @@ const Terms = () => {
           background: linear-gradient(-45deg, #020617, #0f172a, #1e3a8a, #1d4ed8);
           background-size: 400% 400%;
           animation: pp-gradient-animation 15s ease infinite;
-          padding: 140px 8% 120px;
+          padding: 72px 8% 56px;
           color: white;
           position: relative;
           overflow: hidden;
@@ -49,7 +49,7 @@ const Terms = () => {
           -webkit-backdrop-filter: blur(12px);
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 24px;
-          padding: 40px;
+          padding: 32px;
           box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
         }
         
@@ -74,14 +74,14 @@ const Terms = () => {
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
         }
-        .pp-hero p { font-size: 17px; color: #cbd5e1; line-height: 1.8; max-width: 640px; margin-bottom: 0; }
+        .pp-hero p { font-size: 19px; color: #cbd5e1; line-height: 1.8; max-width: 640px; margin-bottom: 0; }
         
         /* Trust Badges Integration */
         .pp-trust-badges {
           display: flex;
           flex-wrap: wrap;
           gap: 16px;
-          margin-top: 36px;
+          margin-top: 28px;
           align-items: center;
         }
         .pp-badge {
@@ -101,15 +101,15 @@ const Terms = () => {
 
         .pp-meta {
           display: flex; gap: 28px; flex-wrap: wrap;
-          margin-top: 40px;
+          margin-top: 28px;
           border-top: 1px solid rgba(255,255,255,0.1);
           padding-top: 24px;
         }
         .pp-meta-item {
           display: flex; align-items: center; gap: 8px;
-          font-size: 13px; color: #94a3b8;
+          font-size: 15px; color: #94a3b8;
         }
-        .pp-meta-item i { color: #60a5fa; font-size: 14px; }
+        .pp-meta-item i { color: #60a5fa; font-size: 16px; }
 
         /* ── 3. Layout Max-Width Adjustment ── */
         .pp-body {
@@ -118,7 +118,7 @@ const Terms = () => {
           gap: 0;
           max-width: 1400px;
           margin: 0 auto;
-          padding: 60px 8% 100px;
+          padding: 44px 8% 64px;
         }
 
         /* ── 2. Floating Navigation Card ── */
@@ -126,7 +126,7 @@ const Terms = () => {
           background: white;
           border: 1px solid #e2e8f0;
           border-radius: 20px;
-          padding: 28px;
+          padding: 24px;
           box-shadow: 0 10px 30px rgba(15,23,42,0.08);
           position: sticky;
           top: 40px;
@@ -169,7 +169,7 @@ const Terms = () => {
         }
 
         /* ── Sections ── */
-        .pp-section { margin-bottom: 60px; scroll-margin-top: 40px; }
+        .pp-section { margin-bottom: 36px; scroll-margin-top: 40px; }
         .pp-section-eyebrow {
           font-size: 11px; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.12em;
@@ -189,7 +189,7 @@ const Terms = () => {
           margin-bottom: 32px; line-height: 1.6;
         }
         .pp-section p {
-          font-size: 15px; color: #475569;
+          font-size: 17px; color: #475569;
           line-height: 1.85; margin-bottom: 16px;
         }
         .pp-section ul {
@@ -197,7 +197,7 @@ const Terms = () => {
           margin: 12px 0;
         }
         .pp-section li {
-          font-size: 14.5px; color: #475569;
+          font-size: 16px; color: #475569;
           line-height: 1.8;
           margin-bottom: 8px;
         }
@@ -208,7 +208,7 @@ const Terms = () => {
           border: 1px solid rgba(226,232,240,0.8);
           box-shadow: 0 4px 20px rgba(15,23,42,0.04);
           border-radius: 16px;
-          padding: 32px;
+          padding: 26px;
           margin-bottom: 24px;
         }
         .pp-legal-card h3 {
@@ -242,7 +242,7 @@ const Terms = () => {
         .pp-contact-card {
           background: linear-gradient(135deg, #020617, #1e3a8a);
           border-radius: 20px;
-          padding: 40px;
+          padding: 32px;
           color: white;
           margin-top: 8px;
           box-shadow: 0 30px 60px rgba(2,6,23,0.25);
@@ -261,7 +261,7 @@ const Terms = () => {
           pointer-events: none;
         }
         .pp-contact-card h2 { font-size: 24px; font-weight: 800; margin-bottom: 12px; position: relative; z-index: 1; color: white !important; }
-        .pp-contact-card p { font-size: 14px; color: #94a3b8; line-height: 1.7; margin-bottom: 28px; position: relative; z-index: 1; }
+        .pp-contact-card p { font-size: 16px; color: #94a3b8; line-height: 1.7; margin-bottom: 28px; position: relative; z-index: 1; }
         
         .pp-contact-btn {
           display: inline-flex;
@@ -287,14 +287,14 @@ const Terms = () => {
         .pp-divider {
           height: 1px;
           background: linear-gradient(to right, transparent, #e2e8f0, transparent);
-          margin: 60px 0;
+          margin: 36px 0;
         }
 
         /* ── Responsive Rules Adjustment ── */
         @media (max-width: 1024px) {
           .pp-body {
             grid-template-columns: 1fr;
-            padding: 40px 5% 80px;
+            padding: 32px 5% 48px;
           }
           .pp-nav {
             display: none;
@@ -305,7 +305,7 @@ const Terms = () => {
           }
         }
         @media (max-width: 600px) {
-          .pp-hero { padding: 90px 5% 80px; }
+          .pp-hero { padding: 56px 5% 48px; }
           .pp-hero-glass-card { padding: 24px; }
         }
       `}</style>

@@ -86,7 +86,7 @@ const ProductCard = ({ product }) => {
     <section id={product.id} className="product-block">
       <style>{`
         .product-block {
-          padding: 90px 8%;
+          padding: 60px 8%;
           border-bottom: 1px solid #e2e8f0;
         }
         .product-block:nth-child(even) { background: #f8fafc; }
@@ -94,9 +94,9 @@ const ProductCard = ({ product }) => {
         .product-top {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 60px;
+          gap: 40px;
           align-items: start;
-          margin-bottom: 48px;
+          margin-bottom: 32px;
         }
 
         .product-label {
@@ -120,7 +120,7 @@ const ProductCard = ({ product }) => {
         }
 
         .product-desc {
-          font-size: 15px; color: #64748b;
+          font-size: 17px; color: #64748b;
           line-height: 1.8; margin-bottom: 24px;
         }
 
@@ -135,7 +135,7 @@ const ProductCard = ({ product }) => {
 
         .product-visual {
           border-radius: 20px;
-          padding: 40px;
+          padding: 32px;
           display: flex; align-items: center; justify-content: center;
           min-height: 280px;
           position: relative; overflow: hidden;
@@ -209,7 +209,7 @@ const ProductCard = ({ product }) => {
         @media (max-width: 900px) {
           .product-top { grid-template-columns: 1fr; gap: 32px; }
           .tab-grid { grid-template-columns: 1fr 1fr; }
-          .product-block { padding: 60px 5%; }
+          .product-block { padding: 40px 5%; }
         }
 
         @media (max-width: 540px) {
@@ -298,7 +298,7 @@ const Products = () => {
       <style>{`
         .products-hero {
           background: linear-gradient(135deg, #020617 0%, #1e3a8a 60%, #2563eb 100%);
-          padding: 100px 8% 80px;
+          padding: 64px 8% 56px;
           color: white;
           position: relative; overflow: hidden;
         }
@@ -337,7 +337,7 @@ const Products = () => {
         }
 
         .products-hero p {
-          font-size: 17px; color: #cbd5e1;
+          font-size: 19px; color: #cbd5e1;
           line-height: 1.75; max-width: 540px;
         }
 
@@ -363,7 +363,7 @@ const Products = () => {
         /* ── CTA ── */
         .products-cta {
           background: linear-gradient(135deg, #020617, #1e3a8a);
-          padding: 80px 8%; text-align: center; color: white;
+          padding: 56px 8%; text-align: center; color: white;
         }
 
         .products-cta h2 {
@@ -372,7 +372,7 @@ const Products = () => {
         }
 
         .products-cta p {
-          font-size: 16px; color: #94a3b8;
+          font-size: 18px; color: #94a3b8;
           max-width: 460px; margin: 0 auto 32px; line-height: 1.7;
         }
 
@@ -388,7 +388,7 @@ const Products = () => {
         .products-cta a:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
 
         @media (max-width: 768px) {
-          .products-hero { padding: 70px 5% 60px; }
+          .products-hero { padding: 48px 5% 40px; }
           .product-nav { padding: 0 5%; overflow-x: auto; }
         }
       `}</style>

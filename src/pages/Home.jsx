@@ -105,10 +105,10 @@ const Home = () => {
 
         /* ── Hero ── */
         .home-hero {
-          min-height: calc(100vh - 75px);
+          min-height: 70vh;
           background: linear-gradient(135deg, #020617 0%, #1e3a8a 55%, #2563eb 100%);
           display: flex; align-items: center;
-          padding: 80px 8%;
+          padding: 56px 8%;
           position: relative;
           overflow: hidden;
         }
@@ -149,7 +149,7 @@ const Home = () => {
 
         .hero-p {
           font-size: 17px; color: #cbd5e1;
-          line-height: 1.75; margin-bottom: 40px;
+          line-height: 1.75; margin-bottom: 28px;
           max-width: 560px;
         }
 
@@ -191,7 +191,7 @@ const Home = () => {
         }
 
         .stat-item {
-          padding: 28px 0;
+          padding: 24px 0;
           text-align: center;
           border-right: 1px solid var(--border);
         }
@@ -208,7 +208,7 @@ const Home = () => {
         }
 
         /* ── Section Shell ── */
-        .home-section { padding: 90px 8%; }
+        .home-section { padding: 60px 8%; }
         .home-section.alt { background: var(--surface); }
 
         .section-eyebrow {
@@ -224,16 +224,16 @@ const Home = () => {
         }
 
         .section-sub {
-          font-size: 16px; color: var(--muted);
+          font-size: 18px; color: var(--muted);
           max-width: 520px; line-height: 1.7;
-          margin-bottom: 48px;
+          margin-bottom: 32px;
         }
 
         .section-header-row {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
-          margin-bottom: 48px;
+          margin-bottom: 32px;
           flex-wrap: wrap; gap: 20px;
         }
 
@@ -250,13 +250,13 @@ const Home = () => {
         .about-layout {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 60px; align-items: center;
+          gap: 40px; align-items: center;
         }
 
         .about-visual {
           background: linear-gradient(135deg, #1e3a8a, #2563eb);
           border-radius: 20px;
-          padding: 50px 40px;
+          padding: 40px 40px;
           color: white;
           position: relative; overflow: hidden;
         }
@@ -283,12 +283,12 @@ const Home = () => {
         }
 
         .about-visual-sub {
-          font-size: 14px; color: rgba(255,255,255,0.7);
+          font-size: 16px; color: rgba(255,255,255,0.7);
           line-height: 1.6; position: relative; z-index: 1;
         }
 
         .about-text-block p {
-          font-size: 16px; color: var(--slate);
+          font-size: 18px; color: var(--slate);
           line-height: 1.8; margin-bottom: 24px;
         }
 
@@ -317,7 +317,7 @@ const Home = () => {
         .product-card {
           background: white;
           border: 1px solid var(--border);
-          border-radius: 16px; padding: 30px;
+          border-radius: 16px; padding: 26px;
           display: flex; flex-direction: column;
           transition: transform 0.3s, box-shadow 0.3s;
           text-decoration: none;
@@ -349,7 +349,7 @@ const Home = () => {
         }
 
         .product-desc {
-          font-size: 14px; color: var(--muted);
+          font-size: 16px; color: var(--muted);
           line-height: 1.7; flex: 1; margin-bottom: 20px;
         }
 
@@ -411,7 +411,7 @@ const Home = () => {
           padding: 2px 8px; border-radius: 4px;
         }
 
-        .service-row-desc { font-size: 14px; color: var(--muted); line-height: 1.5; }
+        .service-row-desc { font-size: 16px; color: var(--muted); line-height: 1.5; }
 
         .service-row-arrow {
           color: var(--blue); font-size: 16px; flex-shrink: 0;
@@ -428,7 +428,7 @@ const Home = () => {
         }
 
         .career-card {
-          border-radius: 16px; padding: 34px;
+          border-radius: 16px; padding: 28px;
           display: flex; flex-direction: column; gap: 16px;
           text-decoration: none;
           transition: transform 0.3s, box-shadow 0.3s;
@@ -466,7 +466,7 @@ const Home = () => {
         .career-card.intern .career-card-title { color: var(--navy); }
 
         .career-card-desc {
-          font-size: 15px; line-height: 1.7; flex: 1;
+          font-size: 17px; line-height: 1.7; flex: 1;
         }
 
         .career-card.jobs .career-card-desc { color: rgba(255,255,255,0.8); }
@@ -483,7 +483,7 @@ const Home = () => {
         /* ── CTA Banner ── */
         .cta-banner {
           background: linear-gradient(135deg, #020617, #1e3a8a);
-          padding: 80px 8%; text-align: center; color: white;
+          padding: 56px 8%; text-align: center; color: white;
         }
 
         .cta-banner h2 {
@@ -492,8 +492,8 @@ const Home = () => {
         }
 
         .cta-banner p {
-          font-size: 16px; color: #94a3b8;
-          margin-bottom: 36px; max-width: 480px;
+          font-size: 18px; color: #94a3b8;
+          margin-bottom: 28px; max-width: 480px;
           margin-left: auto; margin-right: auto; line-height: 1.7;
         }
 
@@ -518,13 +518,13 @@ const Home = () => {
         }
 
         @media (max-width: 768px) {
-          .home-section { padding: 60px 5%; }
-          .home-hero { padding: 60px 5%; }
+          .home-section { padding: 40px 5%; }
+          .home-hero { padding: 40px 5%; }
           .stats-bar { padding: 0 5%; }
           .career-grid { grid-template-columns: 1fr; }
           .about-pillars { grid-template-columns: 1fr; }
           .section-header-row { flex-direction: column; align-items: flex-start; }
-          .cta-banner { padding: 60px 5%; }
+          .cta-banner { padding: 40px 5%; }
         }
       `}</style>
 
@@ -662,7 +662,7 @@ const Home = () => {
       <section className="home-section alt">
         <p className="section-eyebrow" style={{ textAlign: 'center' }}>Work With Us</p>
         <h2 className="section-h2" style={{ textAlign: 'center', marginBottom: 12 }}>Join the Slirus team</h2>
-        <p className="section-sub" style={{ textAlign: 'center', margin: '0 auto 40px' }}>
+        <p className="section-sub" style={{ textAlign: 'center', margin: '0 auto 28px' }}>
           We're building something big and we need talented, driven people to help us do it.
         </p>
         <div className="career-grid">

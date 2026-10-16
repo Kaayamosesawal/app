@@ -63,7 +63,7 @@ const About = () => {
         /* ── Hero ── */
         .about-hero {
           background: linear-gradient(135deg, #020617 0%, #1e3a8a 60%, #2563eb 100%);
-          padding: 100px 8% 80px;
+          padding: 64px 8% 52px;
           color: white;
           position: relative; overflow: hidden;
         }
@@ -83,12 +83,12 @@ const About = () => {
           font-size: 11px; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.1em;
           padding: 5px 14px; border-radius: 20px;
-          margin-bottom: 24px;
+          margin-bottom: 18px;
         }
         .about-hero h1 {
           font-size: clamp(34px, 5vw, 54px);
           font-weight: 800; line-height: 1.15;
-          color: white; margin-bottom: 18px;
+          color: white; margin-bottom: 14px;
         }
         .about-hero h1 span {
           background: linear-gradient(90deg, #60a5fa, #a78bfa);
@@ -96,13 +96,13 @@ const About = () => {
           -webkit-text-fill-color: transparent;
         }
         .about-hero p {
-          font-size: 17px; color: #cbd5e1;
+          font-size: 19px; color: #cbd5e1;
           line-height: 1.75; max-width: 560px;
         }
 
         /* ── Section Shell ── */
         .about-section { 
-          padding: 90px 8%; 
+          padding: 60px 8%; 
           display: block;
           width: 100%;
         }
@@ -127,17 +127,17 @@ const About = () => {
         .profile-layout {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 60px; align-items: start;
+          gap: 40px; align-items: start;
         }
         .profile-text p {
-          font-size: 16px; color: #475569;
-          line-height: 1.8; margin-bottom: 20px;
+          font-size: 18px; color: #475569;
+          line-height: 1.75; margin-bottom: 16px;
         }
-        .vm-stack { display: flex; flex-direction: column; gap: 20px; }
+        .vm-stack { display: flex; flex-direction: column; gap: 16px; }
         .vm-card {
           background: white;
           border: 1px solid #e2e8f0;
-          border-radius: 16px; padding: 28px;
+          border-radius: 16px; padding: 24px;
           position: relative; overflow: hidden;
         }
         .vm-card::before {
@@ -151,11 +151,11 @@ const About = () => {
           width: 44px; height: 44px;
           background: #eff6ff; border-radius: 10px;
           display: flex; align-items: center; justify-content: center;
-          margin-bottom: 14px;
+          margin-bottom: 12px;
         }
         .vm-card-icon i { color: #2563eb; font-size: 18px; }
         .vm-card h3 { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
-        .vm-card p { font-size: 14px; color: #64748b; line-height: 1.7; }
+        .vm-card p { font-size: 16px; color: #64748b; line-height: 1.7; }
 
         /* ── Values & Why Choose Us Grids ── */
         .values-grid {
@@ -171,7 +171,7 @@ const About = () => {
         .value-card {
           background: white;
           border: 1px solid #e2e8f0;
-          border-radius: 16px; padding: 28px 22px;
+          border-radius: 16px; padding: 24px 20px;
           text-align: center;
           transition: transform 0.3s, box-shadow 0.3s;
         }
@@ -183,16 +183,16 @@ const About = () => {
           width: 56px; height: 56px;
           background: #eff6ff; border-radius: 14px;
           display: flex; align-items: center; justify-content: center;
-          margin: 0 auto 18px;
+          margin: 0 auto 14px;
         }
         .value-icon i { font-size: 22px; color: #2563eb; }
         .value-card h3 { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
-        .value-card p { font-size: 13px; color: #64748b; line-height: 1.65; }
+        .value-card p { font-size: 15.5px; color: #64748b; line-height: 1.65; }
 
         /* ── Operational Pillars ── */
-        .pillars-head { text-align: center; max-width: 640px; margin: 0 auto 48px; }
+        .pillars-head { text-align: center; max-width: 640px; margin: 0 auto 32px; }
         .pillars-head .about-h2 { margin-bottom: 12px; }
-        .pillars-sub { font-size: 16px; color: #475569; line-height: 1.7; }
+        .pillars-sub { font-size: 18px; color: #475569; line-height: 1.7; }
 
         .pillar-matrix {
           display: grid;
@@ -204,7 +204,7 @@ const About = () => {
         }
         .pm-corner { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
         .pm-col-head {
-          padding: 28px 24px 22px;
+          padding: 22px 22px 18px;
           background: linear-gradient(135deg, #0f172a, #1e3a8a);
           color: white;
           border-left: 1px solid rgba(255,255,255,0.08);
@@ -220,7 +220,7 @@ const About = () => {
         .pm-col-head span { font-size: 12.5px; color: #93c5fd; font-weight: 600; }
 
         .pm-row-label {
-          padding: 24px 20px;
+          padding: 20px;
           background: #f8fafc;
           border-top: 1px solid #e2e8f0;
           font-size: 11px; font-weight: 700;
@@ -230,10 +230,10 @@ const About = () => {
         }
         .pm-row-label i { font-size: 12px; margin-top: 1px; }
         .pm-cell {
-          padding: 24px;
+          padding: 20px 22px;
           border-top: 1px solid #e2e8f0;
           border-left: 1px solid #e2e8f0;
-          font-size: 14px; color: #475569; line-height: 1.7;
+          font-size: 16px; color: #475569; line-height: 1.65;
         }
         .pm-cell::before {
           content: attr(data-label);
@@ -242,22 +242,22 @@ const About = () => {
           text-transform: uppercase; letter-spacing: 0.1em;
           color: #2563eb; margin-bottom: 8px;
         }
-        .pm-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+        .pm-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
         .pm-list li { display: flex; gap: 10px; align-items: flex-start; color: #334155; font-weight: 500; }
         .pm-list li i { color: #2563eb; font-size: 11px; margin-top: 6px; flex-shrink: 0; }
 
         .backbone {
-          margin-top: 28px;
+          margin-top: 20px;
           background: #0f172a;
           border-radius: 20px;
-          padding: 32px;
+          padding: 26px 28px;
           color: white;
         }
         .backbone-title {
           font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
           text-transform: uppercase; color: #93c5fd; margin-bottom: 6px;
         }
-        .backbone h3 { font-size: 19px; font-weight: 800; color: white; margin-bottom: 22px; }
+        .backbone h3 { font-size: 19px; font-weight: 800; color: white; margin-bottom: 16px; }
         .backbone-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
         .backbone-item {
           display: flex; gap: 14px; align-items: flex-start;
@@ -266,21 +266,21 @@ const About = () => {
           border-radius: 14px; padding: 18px;
         }
         .backbone-item i { color: #60a5fa; font-size: 18px; margin-top: 2px; }
-        .backbone-item h4 { font-size: 14px; font-weight: 700; color: white; margin-bottom: 4px; }
-        .backbone-item p { font-size: 12.5px; color: #94a3b8; line-height: 1.6; }
+        .backbone-item h4 { font-size: 15.5px; font-weight: 700; color: white; margin-bottom: 4px; }
+        .backbone-item p { font-size: 14.5px; color: #94a3b8; line-height: 1.6; }
 
         /* ── CTA ── */
         .about-cta {
           background: linear-gradient(135deg, #020617, #1e3a8a);
-          padding: 80px 8%; text-align: center; color: white;
+          padding: 56px 8%; text-align: center; color: white;
         }
         .about-cta h2 {
           font-size: clamp(24px, 3vw, 36px);
-          font-weight: 800; margin-bottom: 14px;
+          font-weight: 800; margin-bottom: 10px;
         }
         .about-cta p {
-          font-size: 16px; color: #94a3b8;
-          max-width: 460px; margin: 0 auto 32px; line-height: 1.7;
+          font-size: 18px; color: #94a3b8;
+          max-width: 500px; margin: 0 auto 24px; line-height: 1.7;
         }
         .about-cta-btns { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
         .about-cta-btns a {
@@ -309,10 +309,10 @@ const About = () => {
 
         @media screen and (max-width: 768px) {
           .about-hero { 
-            padding: 70px 5% 60px !important; 
+            padding: 48px 5% 40px !important; 
           }
           .about-section { 
-            padding: 60px 5% !important; 
+            padding: 40px 5% !important; 
           }
           .profile-layout {
             grid-template-columns: 1fr !important; /* Stacks vision/mission cards underneath text */
@@ -333,11 +333,11 @@ const About = () => {
           .backbone-grid { grid-template-columns: 1fr !important; }
           .backbone { padding: 24px 20px; }
           .about-cta { 
-            padding: 60px 5% !important; 
+            padding: 40px 5% !important; 
           }
           
           .get-in-touch {
-            padding: 50px 5% !important;
+            padding: 36px 5% !important;
           }
           .get-in-touch-grid,
           .pp-contact-grid-inner {
@@ -348,10 +348,10 @@ const About = () => {
 
         @media screen and (max-width: 480px) {
           .about-section { 
-            padding: 40px 5% !important; 
+            padding: 32px 5% !important; 
           }
           .about-hero {
-            padding: 50px 5% 40px !important;
+            padding: 40px 5% 32px !important;
           }
           .about-eyebrow-small {
             font-size: 10px !important; 
@@ -363,7 +363,7 @@ const About = () => {
             grid-template-columns: 1fr !important; 
           }
           .about-cta {
-            padding: 40px 5% !important;
+            padding: 32px 5% !important;
           }
 
           .get-in-touch {
@@ -393,7 +393,7 @@ const About = () => {
           </div>
           <h1>We are <span>Slirus</span> Global</h1>
           <p>
-            A multi-sector entity driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
+            A multi-sector global company driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
           </p>
         </div>
       </div>
@@ -433,7 +433,7 @@ const About = () => {
       {/* ── Values ── */}
       <section className="about-section alt">
         <p className="about-eyebrow-small" style={{ textAlign: 'center' }}>What Drives Us</p>
-        <h2 className="about-h2" style={{ textAlign: 'center', marginBottom: 40 }}>Our Core Values</h2>
+        <h2 className="about-h2" style={{ textAlign: 'center', marginBottom: 28 }}>Our Core Values</h2>
         <div className="values-grid">
           {values.map((v, i) => (
             <div className="value-card" key={i}>
@@ -448,8 +448,8 @@ const About = () => {
       {/* ── Why Choose Us ── */}
       <section className="about-section">
         <p className="about-eyebrow-small" style={{ textAlign: 'center' }}>Why Choose Us</p>
-        <h2 className="about-h2" style={{ textAlign: 'center', marginBottom: 12 }}>What makes Slirus different</h2>
-        <p style={{ textAlign: 'center', fontSize: '16px', color: '#475569', lineHeight: '1.7', maxWidth: '560px', margin: '0 auto 48px' }}>
+        <h2 className="about-h2" style={{ textAlign: 'center', marginBottom: 10 }}>What makes Slirus different</h2>
+        <p style={{ textAlign: 'center', fontSize: '18px', color: '#475569', lineHeight: '1.7', maxWidth: '600px', margin: '0 auto 28px' }}>
           We don't just deliver projects we build long-term partnerships rooted in trust, quality, and real results.
         </p>
         <div className="why-us-grid">
