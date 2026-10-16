@@ -19,6 +19,14 @@ const Footer = () => {
           <p className="ft-tagline">
             Tech. Trade. Transform.
           </p>
+          <div className="ft-brand-address">
+            <span className="ft-contact-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/>
+              </svg>
+            </span>
+            <span>P.O Box 332485, Lira City, Uganda</span>
+          </div>
         </div>
 
         {/* Quick links */}
@@ -60,14 +68,6 @@ const Footer = () => {
               </span>
               +256 776 079 495
             </a>
-            <div className="ft-contact-item ft-contact-address">
-              <span className="ft-contact-icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/>
-                </svg>
-              </span>
-              <span>P.O Box 332485, Lira City, Uganda</span>
-            </div>
           </div>
         </div>
       </div>
@@ -105,7 +105,7 @@ const Footer = () => {
           margin: 0 auto;
           padding: 52px 5% 40px;
         }
-        .ft-brand { display: flex; flexDirection: column; gap: 12px; }
+        .ft-brand { display: flex; flex-direction: column; gap: 12px; }
         .ft-logo-mark {
           width: 44px; height: 44px; border-radius: 10px;
           display: flex; align-items: center; justify-content: center;
@@ -119,6 +119,11 @@ const Footer = () => {
         }
         .ft-brand-name { color: #F0F6FF; font-weight: 700; font-size: 15px; margin: 0; letter-spacing: 0.3px; }
         .ft-tagline { font-size: 13px; line-height: 1.65; color: #7A90A4; margin: 0; max-width: 240px; }
+        .ft-brand-address {
+          display: flex; align-items: center; gap: 10px;
+          color: #7A90A4; font-size: 14px; line-height: 1.5;
+          margin-top: 4px;
+        }
         .ft-col { display: flex; flex-direction: column; gap: 0px; }
         .ft-col-head {
           color: #F0F6FF; font-size: 12px; font-weight: 700;
