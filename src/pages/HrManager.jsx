@@ -29,10 +29,10 @@
  *  - Attendance (read-only): pulls clock in/out events written by the
  *    separate fingerprint/phone Attendance module (`attendance` collection)
  *    into each employee's profile — this file does not capture biometrics.
- *  - Family & Personal Record: per-employee confidential record (parents /
- *    guardian, next of kin, marital status + spouse, up to 2 health-insurance
- *    beneficiaries, health & medical declaration, security clearance and
- *    consent) kept in `employeeFamilyRecords/{employeeId}` — HR/Admin only
+ *  - Background Record (button "Background"): per-employee confidential record
+ *    (parents / guardian, next of kin, marital status + spouse, up to 2
+ *    health-insurance beneficiaries, health & medical declaration, academic
+ *    qualifications, security clearance and consent) kept in `employeeFamilyRecords/{employeeId}` — HR/Admin only
  *    by Firestore Rules — with a browser-side PDF export (jsPDF).
  *
  * Branding on generated documents (ID card, Contract, Appointment Letter,
@@ -1002,7 +1002,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
     if (withFamily) {
       for (const t of FAMILY_TABS) {
         const msg = validateFamilyTab(t.key, familyForm);
-        if (msg) { setFamilyTab(t.key); setError(`Family & personal record — ${t.label}: ${msg}`); return; }
+        if (msg) { setFamilyTab(t.key); setError(`Background — ${t.label}: ${msg}`); return; }
       }
     }
     setSaving(true); setError('');
@@ -1148,17 +1148,17 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
 
             {isEdit ? (
               <p style={{ ...fr.hint, marginTop: 18 }}>
-                The family &amp; personal record (parents, next of kin, marital status, insurance, health, security clearance and consent) is managed with the <strong>Family Record</strong> button.
+                The background record (parents, next of kin, marital status, insurance, health, academic qualifications, security clearance and consent) is managed with the <strong>Background</strong> button.
               </p>
             ) : (
               <div style={{ marginTop: 22, border: '1px solid #DDD6FE', borderRadius: 12, padding: 14, background: '#FAF5FF' }}>
-                <h4 style={{ fontSize: 15, fontWeight: 800, color: '#5B21B6', margin: 0, padding: 0, border: 'none' }}>👪 Family &amp; Personal Record</h4>
+                <h4 style={{ fontSize: 15, fontWeight: 800, color: '#5B21B6', margin: 0, padding: 0, border: 'none' }}>📋 Background Record</h4>
                 <p style={{ fontSize: 12, color: '#6B5B95', margin: '4px 0 12px' }}>
-                  Confidential — visible to HR and admin only. Parents / guardian, next of kin, marital status, insurance beneficiaries, health, security clearance and consent.
+                  Confidential — visible to HR and admin only. Parents / guardian, next of kin, marital status, insurance beneficiaries, health, academic qualifications, security clearance and consent.
                 </p>
                 <FrCheck checked={captureFamily} onChange={setCaptureFamily} disabled={saving}>
-                  Capture the family &amp; personal record now
-                  <span style={{ color: '#7A8A9A' }}> — or untick to skip and complete it later with the “Family Record” button</span>
+                  Capture the background record now
+                  <span style={{ color: '#7A8A9A' }}> — or untick to skip and complete it later with the “Background” button</span>
                 </FrCheck>
 
                 {captureFamily && (
@@ -1919,7 +1919,7 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
           <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => onEdit(employee)}>✎ Edit Profile</button>
           <button style={{ ...ms.actionBtn, background: '#F3E8FF', color: '#7C3AED' }} onClick={() => onIdCard(employee)}>🪪 ID Card</button>
           {onFamilyRecord && (
-            <button style={{ ...ms.actionBtn, width: 'auto', background: '#FDF2F8', color: '#BE185D' }} onClick={() => onFamilyRecord(employee)}>👪 Family &amp; Personal Record</button>
+            <button style={{ ...ms.actionBtn, width: 'auto', background: '#FDF2F8', color: '#BE185D' }} onClick={() => onFamilyRecord(employee)}>📋 Background</button>
           )}
           {isContractor ? (
             <button style={{ ...ms.actionBtn, background: '#EEF2FF', color: '#4338CA' }} onClick={() => onDownloadServiceAgreement(employee)}>📄 Download Service Agreement</button>
@@ -2029,15 +2029,22 @@ const CONDITION_SEVERITIES = ['Mild', 'Moderate', 'Severe'];
 const CLEARANCE_LEVELS = ['Standard', 'Confidential', 'Restricted'];
 const VETTING_STATUSES = ['Not started', 'In progress', 'Cleared', 'Conditionally cleared', 'Not cleared', 'Expired'];
 
-// Tabs shown by the "Family Record" button (required fields only). The New
-// Employee form shows all of them.
-const FAMILY_REQUIRED_TAB_KEYS = ['parents', 'kin', 'marital', 'consent'];
+const MAX_ACADEMICS = 8; // keep equal to the cap in firestore.rules (academicsOk)
+// Set to true to make at least one academic qualification mandatory.
+const ACADEMIC_REQUIRED = false;
+const QUALIFICATION_SUGGESTIONS = [
+  'Primary Leaving Certificate (PLE)', 'Uganda Certificate of Education (UCE)', 'Uganda Advanced Certificate of Education (UACE)',
+  'Certificate', 'Diploma', 'Higher Diploma', "Bachelor's Degree", 'Postgraduate Diploma', "Master's Degree", 'PhD', 'Professional Certification',
+];
+
+// Every tab is always shown — on the New Employee form and in the Background modal.
 const FAMILY_TABS = [
   { key: 'parents',   label: 'Parents & Guardian', icon: '👪' },
   { key: 'kin',       label: 'Next of Kin',        icon: '📞' },
   { key: 'marital',   label: 'Marital Status',     icon: '💍' },
   { key: 'insurance', label: 'Insurance',          icon: '🛡️' },
   { key: 'health',    label: 'Health & Medical',   icon: '🩺' },
+  { key: 'academic',  label: 'Academic',           icon: '🎓' },
   { key: 'personal',  label: 'Personal Record',    icon: '🔐' },
   { key: 'consent',   label: 'Consent',            icon: '✍️' },
 ];
@@ -2049,7 +2056,7 @@ const CONSENT_STATEMENT =
   'in line with the Data Protection and Privacy Act, 2019 (Uganda). I understand that this record is confidential, ' +
   'is accessible only to authorised HR and management staff, and that I may ask HR to correct or update it at any time.';
 
-const familyTabsFor = (mode) => (mode === 'full' ? FAMILY_TABS : FAMILY_TABS.filter(t => FAMILY_REQUIRED_TAB_KEYS.includes(t.key)));
+const EMPTY_ACADEMIC = { schoolName: '', poBox: '', district: '', yearFrom: '', yearTo: '', qualification: '', certificateSerial: '' };
 
 const EMPTY_FAMILY_RECORD = {
   mother: { notApplicable: false, fullName: '', phone: '', email: '' },
@@ -2060,6 +2067,7 @@ const EMPTY_FAMILY_RECORD = {
   beneficiaries: [{ fullName: '', relationship: '' }, { fullName: '', relationship: '' }],
   isMarried: false,
   spouse: { fullName: '', phone: '', email: '', address: '' },
+  academics: [{ ...EMPTY_ACADEMIC }],
   medical: {
     hasConditions: false, conditions: [], bloodGroup: 'Unknown', allergies: '', currentMedication: '',
     pastHistory: '', accommodations: '', emergencyInstructions: '', lastCheckup: '', doctorName: '', doctorPhone: '',
@@ -2091,6 +2099,8 @@ const mergeFamilyRecord = (saved) => {
   out.beneficiaries = Array.from({ length: MAX_BENEFICIARIES }, (_, i) => ({
     fullName: savedBens[i]?.fullName || '', relationship: savedBens[i]?.relationship || '',
   }));
+  const savedAcad = Array.isArray(saved.academics) ? saved.academics.slice(0, MAX_ACADEMICS) : [];
+  out.academics = savedAcad.length ? savedAcad.map(a => ({ ...EMPTY_ACADEMIC, ...a })) : [{ ...EMPTY_ACADEMIC }];
   out.medical.conditions = Array.isArray(saved.medical?.conditions)
     ? saved.medical.conditions.slice(0, MAX_CONDITIONS).map(c => ({ ...EMPTY_CONDITION, ...c }))
     : [];
@@ -2099,6 +2109,7 @@ const mergeFamilyRecord = (saved) => {
 
 // ── Validation ──────────────────────────────────────────────────────────────
 const tr = (v) => (typeof v === 'string' ? v.trim() : '');
+const isAcademicFilled = (a) => !!a && Object.values(a).some(v => tr(v));
 const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 const isValidPhone = (v) => { const n = (v || '').replace(/\D/g, '').length; return n >= 7 && n <= 15; };
 
@@ -2154,6 +2165,27 @@ const validateFamilyTab = (tab, f) => {
       if (tr(m.doctorPhone) && !isValidPhone(m.doctorPhone)) return "The doctor's phone number is not valid.";
       return '';
     }
+    case 'academic': {
+      const rows = (f.academics || []).filter(isAcademicFilled);
+      if (ACADEMIC_REQUIRED && rows.length === 0) return 'Add at least one academic qualification.';
+      const maxYear = new Date().getFullYear() + 1;
+      const seen = new Set();
+      for (let i = 0; i < rows.length; i++) {
+        const a = rows[i], n = `Qualification ${i + 1}`;
+        if (!tr(a.schoolName)) return `${n}: school / institution name is required (or clear the row).`;
+        if (!tr(a.poBox)) return `${n}: the school's P.O. Box number is required.`;
+        if (!tr(a.district)) return `${n}: the school's district is required.`;
+        if (!/^\d{4}$/.test(tr(a.yearFrom)) || !/^\d{4}$/.test(tr(a.yearTo))) return `${n}: enter the years as 4 digits (for example 2015 to 2018).`;
+        if (+tr(a.yearFrom) < 1940 || +tr(a.yearTo) > maxYear) return `${n}: the years must be between 1940 and ${maxYear}.`;
+        if (+tr(a.yearTo) < +tr(a.yearFrom)) return `${n}: the "to" year cannot be before the "from" year.`;
+        if (!tr(a.qualification)) return `${n}: the qualification earned is required.`;
+        if (tr(a.certificateSerial).length < 3) return `${n}: the certificate / slip serial number is required (used to verify authenticity).`;
+        const key = tr(a.certificateSerial).replace(/\s+/g, '').toUpperCase();
+        if (seen.has(key)) return `${n}: this certificate / slip serial number is already used by another qualification above.`;
+        seen.add(key);
+      }
+      return '';
+    }
     case 'personal': {
       const p = f.personal;
       if ((p.vettingStatus === 'Cleared' || p.vettingStatus === 'Conditionally cleared') && !p.clearanceGrantedOn) {
@@ -2194,6 +2226,7 @@ const buildFamilyPayload = (f) => ({
   beneficiaries: f.beneficiaries.filter(b => tr(b.fullName) && tr(b.relationship)).slice(0, MAX_BENEFICIARIES).map(cleanStrings),
   isMarried: !!f.isMarried,
   spouse: f.isMarried ? cleanStrings(f.spouse) : { ...BLANK_PERSON },
+  academics: (f.academics || []).filter(isAcademicFilled).slice(0, MAX_ACADEMICS).map(cleanStrings),
   medical: {
     ...cleanStrings(f.medical),
     conditions: f.medical.hasConditions
@@ -2249,7 +2282,7 @@ const exportFamilyRecordPdf = async ({ employee, form, preparedBy }) => {
   y += 8;
 
   pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(...NAVY);
-  pdf.text('Employee Family & Personal Record', M, y);
+  pdf.text('Employee Background Record', M, y);
   y += 6;
   pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(...RED);
   pdf.text('CONFIDENTIAL - HR USE ONLY', M, y);
@@ -2391,9 +2424,24 @@ const exportFamilyRecordPdf = async ({ employee, form, preparedBy }) => {
     ["Doctor's name", md.doctorName], ["Doctor's phone", md.doctorPhone],
   ]);
 
-  // 6. Personal record & security clearance
+  // 6. Academic qualifications
+  section(6, 'Academic Qualifications');
+  const acads = (form.academics || []).filter(isAcademicFilled);
+  if (acads.length === 0) note('No academic qualifications recorded.');
+  acads.forEach((a, i) => {
+    sub(`Qualification ${i + 1}`);
+    fields([
+      ['School / institution', a.schoolName, true],
+      ['P.O. Box', a.poBox], ['District', a.district],
+      ['Year from', a.yearFrom], ['Year to', a.yearTo],
+      ['Qualification earned', a.qualification, true],
+      ['Certificate / slip serial no.', a.certificateSerial, true],
+    ]);
+  });
+
+  // 7. Personal record & security clearance
   const pr = form.personal;
-  section(6, 'Personal Record & Security Clearance');
+  section(7, 'Personal Record & Security Clearance');
   fields([
     ['National ID number (NIN)', pr.nationalId],
     ['Police clearance / good-conduct ref.', pr.policeClearanceRef],
@@ -2405,9 +2453,9 @@ const exportFamilyRecordPdf = async ({ employee, form, preparedBy }) => {
     ['Security notes (HR only)', pr.securityNotes, true],
   ]);
 
-  // 7. Consent & declaration
+  // 8. Consent & declaration
   const c = form.consent;
-  section(7, 'Consent & Declaration');
+  section(8, 'Consent & Declaration');
   para(CONSENT_STATEMENT);
   check('I consent to my personal information being collected, stored and processed as described above.', c.dataProcessing);
   check('I authorise HR to contact the family members / next of kin listed in this record in an emergency.', c.familyContact);
@@ -2440,7 +2488,7 @@ const exportFamilyRecordPdf = async ({ employee, form, preparedBy }) => {
   }
 
   const safeName = (employee.employeeCode || empName || employee.id).toString().replace(/[^A-Za-z0-9_-]+/g, '-');
-  pdf.save(`${safeName}-family-personal-record.pdf`);
+  pdf.save(`${safeName}-background-record.pdf`);
 };
 
 // ── Small form building blocks ──────────────────────────────────────────────
@@ -2507,7 +2555,7 @@ const FrPerson = ({ value, onChange, disabled, showEmail = true, showAddress = f
 );
 
 // Edit helpers for a family-record form state — shared by the New Employee
-// form and the Family Record modal so both edit the data identically.
+// form and the Background modal so both edit the data identically.
 const makeFamilyEditors = (setForm, onEdit) => {
   const touch = () => { if (onEdit) onEdit(); };
   return {
@@ -2518,6 +2566,9 @@ const makeFamilyEditors = (setForm, onEdit) => {
     setCondition: (i, field, value) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c) } })); },
     addCondition: () => { touch(); setForm(prev => prev.medical.conditions.length >= MAX_CONDITIONS ? prev : ({ ...prev, medical: { ...prev.medical, conditions: [...prev.medical.conditions, { ...EMPTY_CONDITION }] } })); },
     removeCondition: (i) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.filter((_, idx) => idx !== i) } })); },
+    setAcademic: (i, field, value) => { touch(); setForm(prev => ({ ...prev, academics: prev.academics.map((a, idx) => idx === i ? { ...a, [field]: value } : a) })); },
+    addAcademic: () => { touch(); setForm(prev => prev.academics.length >= MAX_ACADEMICS ? prev : ({ ...prev, academics: [...prev.academics, { ...EMPTY_ACADEMIC }] })); },
+    removeAcademic: (i) => { touch(); setForm(prev => { const next = prev.academics.filter((_, idx) => idx !== i); return { ...prev, academics: next.length ? next : [{ ...EMPTY_ACADEMIC }] }; }); },
     toggleHasConditions: (checked) => {
       touch();
       setForm(prev => ({
@@ -2533,7 +2584,7 @@ const makeFamilyEditors = (setForm, onEdit) => {
 
 // The content of one tab. mode="full" shows every field; mode="required" hides
 // optional fields (emails and the optional sections) and shows only what must
-// be filled in. Used by both the New Employee form and the Family Record modal.
+// be filled in. Used by both the New Employee form and the Background modal.
 const FamilySections = ({ form, setForm, tab, mode = 'full', disabled = false, canEdit = true, onEdit, employeeName = '', recordedBy = '' }) => {
   const ed = makeFamilyEditors(setForm, onEdit);
   const full = mode === 'full';
@@ -2650,6 +2701,29 @@ const FamilySections = ({ form, setForm, tab, mode = 'full', disabled = false, c
       </>
     )}
 
+    {tab === 'academic' && (
+      <FrCard title="Academic qualifications" subtitle={`Every school attended and the qualification earned (up to ${MAX_ACADEMICS}). The certificate / slip serial number is used to verify authenticity. Leave a row blank if not needed.`}>
+        <datalist id="qualification-options">{QUALIFICATION_SUGGESTIONS.map(q => <option key={q} value={q} />)}</datalist>
+        {form.academics.map((a, i) => (
+          <div key={i} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, marginBottom: 10, background: '#F7F9FC' }}>
+            <div style={fr.grid2}>
+              <div style={fr.full}><label style={cu.label}>Qualification {i + 1} — school / institution name</label><input style={s.loginInput} value={a.schoolName} onChange={e => ed.setAcademic(i, 'schoolName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+              <div><label style={cu.label}>School P.O. Box number</label><input style={s.loginInput} placeholder="e.g. P.O. Box 123" value={a.poBox} onChange={e => ed.setAcademic(i, 'poBox', e.target.value)} disabled={disabled} maxLength={60} /></div>
+              <div><label style={cu.label}>School district</label><input style={s.loginInput} placeholder="e.g. Kampala" value={a.district} onChange={e => ed.setAcademic(i, 'district', e.target.value)} disabled={disabled} maxLength={100} /></div>
+              <div><label style={cu.label}>Year from</label><input style={s.loginInput} inputMode="numeric" placeholder="e.g. 2015" value={a.yearFrom} onChange={e => ed.setAcademic(i, 'yearFrom', e.target.value.replace(/\D/g, '').slice(0, 4))} disabled={disabled} maxLength={4} /></div>
+              <div><label style={cu.label}>Year to</label><input style={s.loginInput} inputMode="numeric" placeholder="e.g. 2018" value={a.yearTo} onChange={e => ed.setAcademic(i, 'yearTo', e.target.value.replace(/\D/g, '').slice(0, 4))} disabled={disabled} maxLength={4} /></div>
+              <div style={fr.full}><label style={cu.label}>Qualification earned</label><input style={s.loginInput} list="qualification-options" placeholder="e.g. Bachelor of Science in Computer Science" value={a.qualification} onChange={e => ed.setAcademic(i, 'qualification', e.target.value)} disabled={disabled} maxLength={200} /></div>
+              <div style={fr.full}><label style={cu.label}>Certificate / slip serial number (unique, for authenticity)</label><input style={s.loginInput} value={a.certificateSerial} onChange={e => ed.setAcademic(i, 'certificateSerial', e.target.value)} disabled={disabled} maxLength={80} /></div>
+            </div>
+            {canEdit && <div style={{ marginTop: 8 }}><button type="button" style={fr.rm} onClick={() => ed.removeAcademic(i)} disabled={disabled}>Remove qualification</button></div>}
+          </div>
+        ))}
+        {canEdit && form.academics.length < MAX_ACADEMICS && (
+          <button type="button" style={fr.add} onClick={ed.addAcademic} disabled={disabled}>＋ Add another qualification</button>
+        )}
+      </FrCard>
+    )}
+
     {tab === 'personal' && (
       <FrCard title="Personal record — security clearance" subtitle="Identity checks and vetting outcome. Visible only to authorised HR and admin users.">
         <div style={fr.grid2}>
@@ -2718,13 +2792,10 @@ const FamilySections = ({ form, setForm, tab, mode = 'full', disabled = false, c
 };
 
 // ─── Family & Personal Record Modal ─────────────────────────────────────────
-// Opened by the "Family Record" button. It collects the REQUIRED fields only
-// (parents / guardian, next of kin, marital status + spouse, consent). Optional
-// sections are captured on the New Employee form; they stay on file untouched
-// when this modal saves, and can be shown here with "Show optional sections".
+// Opened by the "Background" button. Shows every section (parents / guardian,
+// next of kin, marital status, insurance, health, academic, personal, consent).
 const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) => {
   const [tab, setTab] = useState('parents');
-  const [showAll, setShowAll] = useState(false);
   const [form, setForm] = useState(cloneEmptyFamilyRecord);
   const [existing, setExisting] = useState(null);   // the saved Firestore doc, or null for a new record
   const [loading, setLoading] = useState(true);
@@ -2772,23 +2843,15 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
     return () => { alive = false; };
   }, [employee.id, reloadKey]);
 
-  const mode = showAll ? 'full' : 'required';
-  const tabs = familyTabsFor(mode);
+  const tabs = FAMILY_TABS;
   const disabled = saving || !canEdit || loading;
   const onEdit = () => { setJustSaved(false); setError(''); };
-
-  const toggleShowAll = () => {
-    const next = !showAll;
-    setShowAll(next);
-    if (!next && !FAMILY_REQUIRED_TAB_KEYS.includes(tab)) setTab('parents');
-  };
 
   const handleSave = async () => {
     setShowErrors(true); setError(''); setJustSaved(false);
     for (const t of FAMILY_TABS) {
       const msg = validateFamilyTab(t.key, form);
       if (msg) {
-        if (!tabs.some(x => x.key === t.key)) setShowAll(true);   // problem is in a hidden optional section
         setTab(t.key); setError(msg); return;
       }
     }
@@ -2820,7 +2883,7 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
       <div style={{ ...ms.modal, maxWidth: 780, maxHeight: '94vh' }} onClick={e => e.stopPropagation()}>
         <div style={{ ...ms.header, borderTop: '4px solid #7C3AED', padding: '12px 20px' }}>
           <div style={{ minWidth: 0 }}>
-            <h3 style={{ margin: 0, padding: 0, border: 'none', color: '#1A3C5E', fontSize: 17 }}>Family &amp; Personal Record{showAll ? '' : ' — required details'}</h3>
+            <h3 style={{ margin: 0, padding: 0, border: 'none', color: '#1A3C5E', fontSize: 17 }}>Background Record</h3>
             <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13, lineHeight: 1.4 }}>
               {employeeFullName(employee)} · {employee.employeeCode} · Confidential — HR use only
             </p>
@@ -2848,19 +2911,16 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
             </div>
           )}
           {!canEdit && <p style={fr.warn}>You have read-only access — changes can't be saved.</p>}
-          {!loading && !loadError && !existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in the required details, then record the employee's consent on the last tab to save.</p>}
+          {!loading && !loadError && !existing && canEdit && <p style={fr.warn}>No background record exists for this employee yet. Fill in the details, then record the employee's consent on the last tab to save.</p>}
 
           <FamilySections
-            form={form} setForm={setForm} tab={tab} mode={mode}
+            form={form} setForm={setForm} tab={tab} mode="full"
             disabled={disabled} canEdit={canEdit} onEdit={onEdit}
             employeeName={employeeFullName(employee)} recordedBy={existing?.consent?.recordedBy || ''}
           />
 
           <p style={{ ...fr.hint, marginTop: 6 }}>
-            {showAll
-              ? 'Showing every section, including the optional ones.'
-              : 'Only the required fields are shown. Optional details (emails, insurance, health, personal record) are captured on the New Employee form and are kept as they are.'}{' '}
-            <button type="button" style={{ ...fr.link }} onClick={toggleShowAll}>{showAll ? 'Show required only' : 'Show optional sections'}</button>
+            Parents, next of kin and marital status are required; insurance, health, academic and personal-record details are optional. Consent is required to save.
           </p>
 
           {error && <p style={s.loginErr}>{error}</p>}
@@ -3334,7 +3394,7 @@ const HrManager = () => {
         }
         if (photoDataUrl) savePhotoLocal(ref.id, photoDataUrl);
         await logAudit('Created employee profile', name, employeeCode);
-        if (familyPayload) await logAudit('Created family & personal record', name);
+        if (familyPayload) await logAudit('Created background record', name);
       }
       return { success: true };
     } catch (err) {
@@ -3364,9 +3424,15 @@ const HrManager = () => {
   // ── Family & Personal Record (employeeFamilyRecords/{employeeId}) ───────
   // The audit log only records WHO touched WHICH employee's record — never
   // its contents.
-  const handleSaveFamilyRecord = useCallback(async (employee, payload, isNew) => {
+  const handleSaveFamilyRecord = useCallback(async (employee, payload) => {
+    const ref = doc(db, FAMILY_COLLECTION, employee.id);
     try {
-      const email = auth.currentUser?.email || 'unknown';
+      const email = auth.currentUser?.email;
+      if (!email) return { success: false, error: 'You are not signed in. Please sign in again.' };
+      // Decide create vs update from the server, not from modal state, so the
+      // write always matches what the Firestore rules expect.
+      const snap = await getDoc(ref);
+      const isNew = !snap.exists();
       const data = {
         ...payload,
         consent: { ...payload.consent, recordedBy: email },
@@ -3375,18 +3441,17 @@ const HrManager = () => {
         employeeCode: employee.employeeCode || '',
         updatedAt: serverTimestamp(), updatedBy: email,
       };
-      const ref = doc(db, FAMILY_COLLECTION, employee.id);
       if (isNew) await setDoc(ref, { ...data, createdAt: serverTimestamp(), createdBy: email });
       else await updateDoc(ref, data);
-      await logAudit(isNew ? 'Created family & personal record' : 'Updated family & personal record', employeeFullName(employee));
+      await logAudit(isNew ? 'Created background record' : 'Updated background record', employeeFullName(employee));
       return { success: true };
     } catch (err) {
-      console.error('Save family record error:', err);
+      console.error('Save background record error:', err.code, err);
       return {
         success: false,
         error: err.code === 'permission-denied'
-          ? 'Permission denied — check that all required fields and consents are complete, and that you have HR edit access.'
-          : err.message,
+          ? 'Firestore refused this write (permission-denied). Publish the updated firestore.rules, and make sure your account has HR access (department HR, or hr write/edit permission) and is not suspended.'
+          : `Could not save (${err.code || 'error'}): ${err.message}`,
       };
     }
   }, [logAudit]);
@@ -3747,7 +3812,7 @@ const HrManager = () => {
                             {canEdit && <button style={s.btnView} onClick={() => { setEditingEmployee(e); setShowEmployeeForm(true); }}>Edit</button>}
                             <button style={s.btnShortlist} onClick={() => setIdCardTarget(e)}>ID Card</button>
                             <button style={s.btnShortlist} onClick={() => setBusinessCardTarget(e)}>Business Card</button>
-                            <button style={s.btnShortlist} onClick={() => setFamilyTarget(e)}>Family Record</button>
+                            <button style={s.btnShortlist} onClick={() => setFamilyTarget(e)}>Background</button>
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
                             ) : isInternContract(e.contractType) ? (
@@ -4085,7 +4150,7 @@ const HrManager = () => {
           canEdit={canEdit}
           onClose={() => setFamilyTarget(null)}
           onSave={handleSaveFamilyRecord}
-          onExported={(e) => logAudit('Exported family & personal record (PDF)', employeeFullName(e))}
+          onExported={(e) => logAudit('Exported background record (PDF)', employeeFullName(e))}
         />
       )}
       {contractAction && (
