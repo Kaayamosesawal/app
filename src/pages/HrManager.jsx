@@ -29,6 +29,11 @@
  *  - Attendance (read-only): pulls clock in/out events written by the
  *    separate fingerprint/phone Attendance module (`attendance` collection)
  *    into each employee's profile — this file does not capture biometrics.
+ *  - Family & Personal Record: per-employee confidential record (parents /
+ *    guardian, next of kin, marital status + spouse, up to 2 health-insurance
+ *    beneficiaries, health & medical declaration, security clearance and
+ *    consent) kept in `employeeFamilyRecords/{employeeId}` — HR/Admin only
+ *    by Firestore Rules — with a browser-side PDF export (jsPDF).
  *
  * Branding on generated documents (ID card, Contract, Appointment Letter,
  * Pay Slip, Certificate of Completion) uses the company logo at
@@ -43,7 +48,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase/firebase';
 import {
-  collection, doc, setDoc, updateDoc, deleteDoc, addDoc,
+  collection, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   onSnapshot, query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -1834,7 +1839,7 @@ const ContractActionModal = ({ employee, action, onClose, onConfirm }) => {
 };
 
 // ─── Employee Profile Modal (details, history, attendance) ──────────────────
-const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate, onDownloadPlacementLetter }) => {
+const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate, onDownloadPlacementLetter, onFamilyRecord }) => {
   const grade = gradeByCode(employee.jobGradeCode);
   const status = deriveContractStatus(employee);
   const isContractor = employee.engagementType === 'Independent Contractor';
@@ -1858,6 +1863,9 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
         <div style={{ ...ms.actionBar, borderTop: 'none', flexWrap: 'wrap' }}>
           <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => onEdit(employee)}>✎ Edit Profile</button>
           <button style={{ ...ms.actionBtn, background: '#F3E8FF', color: '#7C3AED' }} onClick={() => onIdCard(employee)}>🪪 ID Card</button>
+          {onFamilyRecord && (
+            <button style={{ ...ms.actionBtn, background: '#FDF2F8', color: '#BE185D' }} onClick={() => onFamilyRecord(employee)}>👪 Family &amp; Personal Record</button>
+          )}
           {isContractor ? (
             <button style={{ ...ms.actionBtn, background: '#EEF2FF', color: '#4338CA' }} onClick={() => onDownloadServiceAgreement(employee)}>📄 Download Service Agreement</button>
           ) : isIntern ? (
@@ -1937,6 +1945,815 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
                 ))}
               </tbody>
             </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Family & Personal Record ────────────────────────────────────────────────
+// One document per employee in `employeeFamilyRecords/{employeeId}` (doc id ==
+// the employee's doc id). It is deliberately NOT stored on the `employees`
+// doc: Finance staff can read `employees` (contractor register), whereas this
+// record holds family contacts, medical declarations, security-vetting notes
+// and consent — so Firestore Rules restrict it to HR / Admin only.
+//
+// Sections: Parents & Guardian · Next of Kin · Marital Status (+ spouse) ·
+// Health-insurance beneficiaries (max 2) · Health & Medical declaration ·
+// Personal Record (security clearance) · Consent. Exportable as a PDF,
+// generated entirely in the browser with jsPDF (nothing is uploaded).
+const FAMILY_COLLECTION = 'employeeFamilyRecords';
+const MAX_BENEFICIARIES = 2;
+const MAX_CONDITIONS = 10;
+
+const BLOOD_GROUPS = ['Unknown', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+const KIN_RELATIONSHIPS = ['Spouse', 'Parent', 'Sibling', 'Child', 'Relative', 'Guardian', 'Friend', 'Other'];
+const BENEFICIARY_RELATIONSHIPS = ['Spouse', 'Child', 'Mother', 'Father', 'Sibling', 'Other'];
+const CONDITION_SEVERITIES = ['Mild', 'Moderate', 'Severe'];
+const CLEARANCE_LEVELS = ['Standard', 'Confidential', 'Restricted'];
+const VETTING_STATUSES = ['Not started', 'In progress', 'Cleared', 'Conditionally cleared', 'Not cleared', 'Expired'];
+
+const FAMILY_TABS = [
+  { key: 'parents',   label: 'Parents & Guardian', icon: '👪' },
+  { key: 'kin',       label: 'Next of Kin',        icon: '📞' },
+  { key: 'marital',   label: 'Marital Status',     icon: '💍' },
+  { key: 'insurance', label: 'Insurance',          icon: '🛡️' },
+  { key: 'health',    label: 'Health & Medical',   icon: '🩺' },
+  { key: 'personal',  label: 'Personal Record',    icon: '🔐' },
+  { key: 'consent',   label: 'Consent',            icon: '✍️' },
+];
+
+const CONSENT_STATEMENT =
+  'I consent to Slirus Global Limited collecting, storing and processing the personal information in this record ' +
+  '(including the details of my family members, next of kin and spouse, and any health information I have declared) ' +
+  'for human-resources administration, emergency contact, health-insurance, welfare and security-vetting purposes, ' +
+  'in line with the Data Protection and Privacy Act, 2019 (Uganda). I understand that this record is confidential, ' +
+  'is accessible only to authorised HR and management staff, and that I may ask HR to correct or update it at any time.';
+
+const EMPTY_FAMILY_RECORD = {
+  mother: { notApplicable: false, fullName: '', phone: '', email: '' },
+  father: { notApplicable: false, fullName: '', phone: '', email: '' },
+  hasGuardian: false,
+  guardian: { fullName: '', phone: '', email: '', address: '' },
+  nextOfKin: { fullName: '', phone: '', email: '', address: '', relationship: '' },
+  beneficiaries: [],
+  isMarried: false,
+  spouse: { fullName: '', phone: '', email: '', address: '' },
+  medical: {
+    hasConditions: false, conditions: [], bloodGroup: 'Unknown', allergies: '', currentMedication: '',
+    pastHistory: '', accommodations: '', emergencyInstructions: '', lastCheckup: '', doctorName: '', doctorPhone: '',
+  },
+  personal: {
+    nationalId: '', policeClearanceRef: '', policeClearanceDate: '', clearanceLevel: 'Standard',
+    vettingStatus: 'Not started', clearanceGrantedOn: '', clearanceExpiresOn: '', referencesVerified: false, securityNotes: '',
+  },
+  consent: {
+    dataProcessing: false, familyContact: false, medicalDisclosure: false, backgroundVetting: false,
+    declarationTruthful: false, signedName: '', consentDate: '',
+  },
+};
+const EMPTY_CONDITION = { condition: '', since: '', severity: 'Mild', treatment: '', notes: '' };
+
+const cloneEmptyFamilyRecord = () => JSON.parse(JSON.stringify(EMPTY_FAMILY_RECORD));
+
+// Fills any field missing from an older/partial saved doc with its default.
+const mergeFamilyRecord = (saved) => {
+  const out = cloneEmptyFamilyRecord();
+  if (!saved) return out;
+  ['mother', 'father', 'guardian', 'nextOfKin', 'spouse', 'medical', 'personal', 'consent'].forEach((k) => {
+    if (saved[k] && typeof saved[k] === 'object') out[k] = { ...out[k], ...saved[k] };
+  });
+  out.hasGuardian = !!saved.hasGuardian;
+  out.isMarried = !!saved.isMarried;
+  out.beneficiaries = Array.isArray(saved.beneficiaries)
+    ? saved.beneficiaries.slice(0, MAX_BENEFICIARIES).map(b => ({ fullName: b?.fullName || '', relationship: b?.relationship || '' }))
+    : [];
+  out.medical.conditions = Array.isArray(saved.medical?.conditions)
+    ? saved.medical.conditions.slice(0, MAX_CONDITIONS).map(c => ({ ...EMPTY_CONDITION, ...c }))
+    : [];
+  return out;
+};
+
+// ── Validation ──────────────────────────────────────────────────────────────
+const tr = (v) => (typeof v === 'string' ? v.trim() : '');
+const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+const isValidPhone = (v) => { const n = (v || '').replace(/\D/g, '').length; return n >= 7 && n <= 15; };
+
+const checkPerson = (p, label, { needAddress = false, needRelationship = false } = {}) => {
+  if (!tr(p.fullName)) return `${label}: full name is required`;
+  if (!isValidPhone(p.phone)) return `${label}: a valid phone number is required`;
+  if (tr(p.email) && !isValidEmail(tr(p.email))) return `${label}: the email address is not valid (it is optional — leave it blank if none)`;
+  if (needAddress && !tr(p.address)) return `${label}: permanent address is required`;
+  if (needRelationship && !tr(p.relationship)) return `${label}: relationship is required`;
+  return '';
+};
+
+// Returns an error message for one tab, or '' when the tab is valid.
+const validateFamilyTab = (tab, f) => {
+  switch (tab) {
+    case 'parents': {
+      for (const [key, label] of [['mother', "Mother's details"], ['father', "Father's details"]]) {
+        if (f[key].notApplicable) continue;
+        const msg = checkPerson(f[key], label);
+        if (msg) return `${msg} — or tick "Not applicable".`;
+      }
+      if (f.hasGuardian) {
+        const msg = checkPerson(f.guardian, "Guardian's details", { needAddress: true });
+        if (msg) return `${msg}.`;
+      }
+      return '';
+    }
+    case 'kin': {
+      const msg = checkPerson(f.nextOfKin, 'Next of kin', { needAddress: true, needRelationship: true });
+      return msg ? `${msg}.` : '';
+    }
+    case 'insurance': {
+      for (let i = 0; i < f.beneficiaries.length; i++) {
+        const b = f.beneficiaries[i];
+        if (!tr(b.fullName) || !tr(b.relationship)) return `Beneficiary ${i + 1}: enter both full name and relationship (or remove the row).`;
+      }
+      return '';
+    }
+    case 'marital': {
+      if (!f.isMarried) return '';
+      const msg = checkPerson(f.spouse, "Spouse's details", { needAddress: true });
+      return msg ? `${msg}.` : '';
+    }
+    case 'health': {
+      const m = f.medical;
+      if (m.hasConditions) {
+        if (m.conditions.length === 0) return 'Add at least one health condition, or untick the "health conditions" box.';
+        for (let i = 0; i < m.conditions.length; i++) {
+          if (!tr(m.conditions[i].condition)) return `Condition ${i + 1}: please describe the condition (or remove the row).`;
+        }
+      }
+      if (tr(m.doctorPhone) && !isValidPhone(m.doctorPhone)) return "The doctor's phone number is not valid.";
+      return '';
+    }
+    case 'personal': {
+      const p = f.personal;
+      if ((p.vettingStatus === 'Cleared' || p.vettingStatus === 'Conditionally cleared') && !p.clearanceGrantedOn) {
+        return 'Enter the date clearance was granted for a Cleared / Conditionally cleared status.';
+      }
+      if (p.clearanceGrantedOn && p.clearanceExpiresOn && p.clearanceExpiresOn < p.clearanceGrantedOn) {
+        return 'The clearance expiry date cannot be before the date it was granted.';
+      }
+      return '';
+    }
+    case 'consent': {
+      const c = f.consent;
+      if (!c.dataProcessing) return 'Consent to data processing is required to save this record.';
+      if (!c.familyContact) return 'Consent to contact the listed family members / next of kin in an emergency is required.';
+      if (f.medical.hasConditions && !c.medicalDisclosure) return 'Consent to hold the declared health information is required because health conditions were declared.';
+      if (f.personal.vettingStatus !== 'Not started' && !c.backgroundVetting) return 'Consent to background / security vetting is required because a vetting status is set.';
+      if (!c.declarationTruthful) return 'The employee must confirm the information is true and complete.';
+      if (tr(c.signedName).length < 2) return 'Type the employee\'s full name as their signature.';
+      if (!c.consentDate) return 'Enter the date consent was given.';
+      return '';
+    }
+    default:
+      return '';
+  }
+};
+
+const cleanStrings = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
+const BLANK_PERSON = { fullName: '', phone: '', email: '', address: '' };
+
+// Trimmed, minimal payload: details of people who aren't applicable (no
+// guardian, not married, parent deceased) are blanked rather than kept stale.
+const buildFamilyPayload = (f) => ({
+  mother: f.mother.notApplicable ? { notApplicable: true, fullName: '', phone: '', email: '' } : { ...cleanStrings(f.mother), notApplicable: false },
+  father: f.father.notApplicable ? { notApplicable: true, fullName: '', phone: '', email: '' } : { ...cleanStrings(f.father), notApplicable: false },
+  hasGuardian: !!f.hasGuardian,
+  guardian: f.hasGuardian ? cleanStrings(f.guardian) : { ...BLANK_PERSON },
+  nextOfKin: cleanStrings(f.nextOfKin),
+  beneficiaries: f.beneficiaries.filter(b => tr(b.fullName) && tr(b.relationship)).slice(0, MAX_BENEFICIARIES).map(cleanStrings),
+  isMarried: !!f.isMarried,
+  spouse: f.isMarried ? cleanStrings(f.spouse) : { ...BLANK_PERSON },
+  medical: {
+    ...cleanStrings(f.medical),
+    conditions: f.medical.hasConditions
+      ? f.medical.conditions.filter(c => tr(c.condition)).slice(0, MAX_CONDITIONS).map(cleanStrings)
+      : [],
+  },
+  personal: cleanStrings(f.personal),
+  consent: cleanStrings(f.consent),
+});
+
+// ── PDF export (browser-side, jsPDF) ────────────────────────────────────────
+// jsPDF's built-in fonts only cover Latin-1, so typographic characters are
+// mapped to ASCII and anything outside Latin-1 becomes "?".
+const pdfSafe = (v) => String(v ?? '')
+  .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+  .replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...')
+  .replace(/[^\x09\x0A\x0D\x20-\x7E\u00A0-\u00FF]/g, '?');
+
+const exportFamilyRecordPdf = async ({ employee, form, preparedBy }) => {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const PW = 210, PH = 297, M = 16, CW = PW - M * 2;
+  const PURPLE = [124, 58, 237], NAVY = [26, 60, 94], GREY = [122, 138, 154], RED = [185, 28, 28];
+  let y = M;
+
+  // Company logo (optional — skipped silently if /Slirus.png is missing).
+  let logo = null;
+  try {
+    const img = await loadImageSafe(COMPANY_INFO.logo);
+    if (img && img.naturalWidth) {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      logo = { url: c.toDataURL('image/png'), ratio: img.naturalWidth / img.naturalHeight };
+    }
+  } catch { logo = null; }
+
+  const ensure = (h) => { if (y + h > PH - 18) { pdf.addPage(); y = M; } };
+
+  // Letterhead
+  let textX = M;
+  if (logo) {
+    const lh = 14, lw = Math.min(30, lh * logo.ratio);
+    pdf.addImage(logo.url, 'PNG', M, y, lw, lh);
+    textX = M + lw + 4;
+  }
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(...NAVY);
+  pdf.text(pdfSafe(COMPANY_INFO.name), textX, y + 6);
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5); pdf.setTextColor(...GREY);
+  pdf.text(pdfSafe(`${COMPANY_INFO.address}  |  ${COMPANY_INFO.phone}  |  ${COMPANY_INFO.email}`), textX, y + 11);
+  y += 18;
+  pdf.setDrawColor(...PURPLE); pdf.setLineWidth(0.8); pdf.line(M, y, M + CW, y);
+  y += 8;
+
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.setTextColor(...NAVY);
+  pdf.text('Employee Family & Personal Record', M, y);
+  y += 6;
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(...RED);
+  pdf.text('CONFIDENTIAL - HR USE ONLY', M, y);
+  y += 8;
+
+  // Layout helpers
+  const section = (num, title) => {
+    ensure(16);
+    pdf.setFillColor(...PURPLE); pdf.rect(M, y, CW, 7, 'F');
+    pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10.5);
+    pdf.text(pdfSafe(`${num}. ${title}`), M + 3, y + 4.9);
+    y += 11;
+  };
+  const sub = (text) => {
+    y += 3;
+    ensure(22);   // keep a sub-heading together with its first row
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9.5); pdf.setTextColor(...NAVY);
+    pdf.text(pdfSafe(text), M, y);
+    pdf.setDrawColor(226, 232, 240); pdf.setLineWidth(0.3); pdf.line(M, y + 1.6, M + CW, y + 1.6);
+    y += 6.5;
+  };
+  const drawRow = (cells, w) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
+    const prepared = cells.map(([l, v]) => ({ l, lines: pdf.splitTextToSize(pdfSafe(v || '-'), w) }));
+    const h = 4 + Math.max(...prepared.map(p => p.lines.length)) * 4.6 + 2.5;
+    ensure(h);
+    prepared.forEach((p, idx) => {
+      const x = M + idx * (w + 6);
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.5); pdf.setTextColor(...GREY);
+      pdf.text(pdfSafe(p.l).toUpperCase(), x, y + 2.6);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...NAVY);
+      pdf.text(p.lines, x, y + 7);
+    });
+    y += h;
+  };
+  // pairs: [label, value, wide?] — two short fields per row, wide ones span the page.
+  const fields = (pairs) => {
+    const colW = (CW - 6) / 2;
+    let i = 0;
+    while (i < pairs.length) {
+      const cur = pairs[i], nxt = pairs[i + 1];
+      if (cur[2]) { drawRow([[cur[0], cur[1]]], CW); i += 1; }
+      else if (nxt && !nxt[2]) { drawRow([[cur[0], cur[1]], [nxt[0], nxt[1]]], colW); i += 2; }
+      else { drawRow([[cur[0], cur[1]]], colW); i += 1; }
+    }
+  };
+  const note = (text) => {
+    pdf.setFont('helvetica', 'italic'); pdf.setFontSize(9.5); pdf.setTextColor(...GREY);
+    pdf.splitTextToSize(pdfSafe(text), CW).forEach(line => { ensure(5); pdf.text(line, M, y + 3.5); y += 4.8; });
+    y += 2;
+  };
+  const para = (text, size = 9) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(size); pdf.setTextColor(...NAVY);
+    pdf.splitTextToSize(pdfSafe(text), CW).forEach(line => { ensure(5); pdf.text(line, M, y + 3.5); y += 4.6; });
+    y += 2;
+  };
+  const check = (label, checked) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9.5); pdf.setTextColor(...NAVY);
+    const lines = pdf.splitTextToSize(pdfSafe(label), CW - 9);
+    ensure(lines.length * 4.6 + 2);
+    pdf.setFont('helvetica', 'bold'); pdf.text(checked ? '[X]' : '[  ]', M, y + 3.5);
+    pdf.setFont('helvetica', 'normal'); pdf.text(lines, M + 9, y + 3.5);
+    y += lines.length * 4.6 + 1.5;
+  };
+  const yn = (b) => (b ? 'Yes' : 'No');
+
+  // Employee block
+  const empName = employeeFullName(employee);
+  fields([
+    ['Employee', empName],
+    ['Employee ID', employee.employeeCode || employee.id],
+    ['Department', employee.department],
+    ['Position', employee.position],
+    ['Engagement type', employee.engagementType || ENGAGEMENT_TYPES[0]],
+    ['Hire date', employee.hireDate ? fmtDate(employee.hireDate) : ''],
+  ]);
+  y += 2;
+
+  // 1. Parents & guardian
+  const m = form.mother, f = form.father, g = form.guardian;
+  section(1, 'Parents & Guardian');
+  sub("Mother's details");
+  if (m.notApplicable) note('Not applicable (deceased / unknown / not in contact).');
+  else fields([['Full name', m.fullName], ['Phone number', m.phone], ['Email (optional)', m.email]]);
+  sub("Father's details");
+  if (f.notApplicable) note('Not applicable (deceased / unknown / not in contact).');
+  else fields([['Full name', f.fullName], ['Phone number', f.phone], ['Email (optional)', f.email]]);
+  sub("Guardian's details");
+  if (!form.hasGuardian) note('No legal guardian recorded.');
+  else fields([['Full name', g.fullName], ['Phone number', g.phone], ['Email (optional)', g.email], ['Permanent address', g.address, true]]);
+
+  // 2. Next of kin
+  const k = form.nextOfKin;
+  section(2, 'Next of Kin');
+  fields([
+    ['Full name', k.fullName], ['Relationship', k.relationship],
+    ['Phone number', k.phone], ['Email (optional)', k.email],
+    ['Permanent address', k.address, true],
+  ]);
+
+  // 3. Marital status
+  section(3, 'Marital Status');
+  fields([['Married', yn(form.isMarried)]]);
+  if (form.isMarried) {
+    const sp = form.spouse;
+    sub("Spouse's details");
+    fields([['Full name', sp.fullName], ['Phone number', sp.phone], ['Email (optional)', sp.email], ['Permanent address', sp.address, true]]);
+  }
+
+  // 4. Health insurance beneficiaries
+  section(4, 'Health Insurance Beneficiaries');
+  const bens = form.beneficiaries.filter(b => tr(b.fullName));
+  if (bens.length === 0) note('No beneficiaries nominated.');
+  bens.forEach((b, i) => fields([[`Beneficiary ${i + 1} - full name`, b.fullName], ['Relationship', b.relationship]]));
+
+  // 5. Health & medical
+  const md = form.medical;
+  section(5, 'Health & Medical Declaration');
+  fields([
+    ['Health conditions the employer should know about', yn(md.hasConditions), true],
+    ['Blood group', md.bloodGroup], ['Last medical check-up', md.lastCheckup ? fmtDate(md.lastCheckup) : ''],
+    ['Known allergies', md.allergies, true],
+    ['Current medication', md.currentMedication, true],
+  ]);
+  if (md.hasConditions) {
+    md.conditions.filter(c => tr(c.condition)).forEach((c, i) => {
+      sub(`Condition ${i + 1}`);
+      fields([
+        ['Condition', c.condition], ['Since (month / year)', c.since],
+        ['Severity', c.severity], ['Treatment', c.treatment],
+        ['Notes for the employer', c.notes, true],
+      ]);
+    });
+  }
+  fields([
+    ['Past medical history (surgeries, hospital stays)', md.pastHistory, true],
+    ['Disability / workplace accommodation needed', md.accommodations, true],
+    ['Emergency medical instructions', md.emergencyInstructions, true],
+    ["Doctor's name", md.doctorName], ["Doctor's phone", md.doctorPhone],
+  ]);
+
+  // 6. Personal record & security clearance
+  const pr = form.personal;
+  section(6, 'Personal Record & Security Clearance');
+  fields([
+    ['National ID number (NIN)', pr.nationalId],
+    ['Police clearance / good-conduct ref.', pr.policeClearanceRef],
+    ['Police clearance date', pr.policeClearanceDate ? fmtDate(pr.policeClearanceDate) : ''],
+    ['Referees verified', yn(pr.referencesVerified)],
+    ['Clearance level', pr.clearanceLevel], ['Vetting status', pr.vettingStatus],
+    ['Clearance granted on', pr.clearanceGrantedOn ? fmtDate(pr.clearanceGrantedOn) : ''],
+    ['Clearance expires on', pr.clearanceExpiresOn ? fmtDate(pr.clearanceExpiresOn) : ''],
+    ['Security notes (HR only)', pr.securityNotes, true],
+  ]);
+
+  // 7. Consent & declaration
+  const c = form.consent;
+  section(7, 'Consent & Declaration');
+  para(CONSENT_STATEMENT);
+  check('I consent to my personal information being collected, stored and processed as described above.', c.dataProcessing);
+  check('I authorise HR to contact the family members / next of kin listed in this record in an emergency.', c.familyContact);
+  check('I consent to the health information I have declared being held by HR for welfare and safety purposes.', c.medicalDisclosure);
+  check('I consent to background and security vetting where my role requires it.', c.backgroundVetting);
+  check('I confirm that the information given in this record is true and complete.', c.declarationTruthful);
+  y += 2;
+  fields([['Signed (typed name)', c.signedName], ['Date of consent', c.consentDate ? fmtDate(c.consentDate) : '']]);
+
+  // Signature lines
+  ensure(30);
+  y += 12;
+  pdf.setDrawColor(...NAVY); pdf.setLineWidth(0.3);
+  const half = (CW - 12) / 2;
+  pdf.line(M, y, M + half, y);
+  pdf.line(M + half + 12, y, M + CW, y);
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5); pdf.setTextColor(...GREY);
+  pdf.text('Employee signature & date', M, y + 4.5);
+  pdf.text('HR officer signature & date', M + half + 12, y + 4.5);
+
+  // Footer on every page
+  const total = pdf.getNumberOfPages();
+  const stamp = `Generated ${new Date().toLocaleString('en-UG')}${preparedBy ? ' by ' + preparedBy : ''}`;
+  for (let p = 1; p <= total; p++) {
+    pdf.setPage(p);
+    pdf.setDrawColor(226, 232, 240); pdf.setLineWidth(0.3); pdf.line(M, PH - 14, M + CW, PH - 14);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(...GREY);
+    pdf.text(pdfSafe(`CONFIDENTIAL - ${COMPANY_INFO.name} HR  |  ${stamp}`), M, PH - 9.5);
+    pdf.text(`Page ${p} of ${total}`, M + CW, PH - 9.5, { align: 'right' });
+  }
+
+  const safeName = (employee.employeeCode || empName || employee.id).toString().replace(/[^A-Za-z0-9_-]+/g, '-');
+  pdf.save(`${safeName}-family-personal-record.pdf`);
+};
+
+// ── Small form building blocks ──────────────────────────────────────────────
+const fr = {
+  card:   { border: '1px solid #E2E8F0', borderRadius: 10, padding: 16, marginBottom: 14, background: '#fff' },
+  cardH:  { fontSize: 13, fontWeight: 700, color: '#1A3C5E', margin: '0 0 2px' },
+  cardP:  { fontSize: 12, color: '#7A8A9A', margin: '0 0 12px' },
+  grid2:  { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
+  full:   { gridColumn: '1 / -1' },
+  check:  { display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13.5, color: '#1A3C5E', cursor: 'pointer', lineHeight: 1.45 },
+  area:   { minHeight: 70, resize: 'vertical', whiteSpace: 'pre-wrap' },
+  badge:  { background: '#DC2626', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 11, fontWeight: 800, marginLeft: 2 },
+  hint:   { fontSize: 11, color: '#9AAAB8', margin: '4px 0 0' },
+  warn:   { fontSize: 12, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 10px', margin: '0 0 14px' },
+  ok:     { fontSize: 12.5, color: '#065F46', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '8px 10px', margin: '12px 0 0' },
+  rm:     { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  add:    { background: '#F3E8FF', color: '#7C3AED', border: 'none', borderRadius: 7, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+};
+
+const FrCard = ({ title, subtitle, children }) => (
+  <div style={fr.card}>
+    <h4 style={fr.cardH}>{title}</h4>
+    {subtitle && <p style={fr.cardP}>{subtitle}</p>}
+    {!subtitle && <div style={{ height: 10 }} />}
+    {children}
+  </div>
+);
+
+const FrCheck = ({ checked, onChange, disabled, children }) => (
+  <label style={{ ...fr.check, cursor: disabled ? 'default' : 'pointer' }}>
+    <input type="checkbox" checked={!!checked} onChange={e => onChange(e.target.checked)} disabled={disabled} style={{ marginTop: 3 }} />
+    <span>{children}</span>
+  </label>
+);
+
+// Name / phone / optional email block; address and relationship are opt-in.
+const FrPerson = ({ value, onChange, disabled, showAddress = false, showRelationship = false, relationshipOptions = KIN_RELATIONSHIPS }) => (
+  <div style={fr.grid2}>
+    <div><label style={cu.label}>Full name</label><input style={s.loginInput} value={value.fullName} onChange={e => onChange('fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+    <div><label style={cu.label}>Phone number</label><input type="tel" style={s.loginInput} placeholder="+256 …" value={value.phone} onChange={e => onChange('phone', e.target.value)} disabled={disabled} maxLength={40} /></div>
+    <div><label style={cu.label}>Email (optional)</label><input type="email" style={s.loginInput} value={value.email} onChange={e => onChange('email', e.target.value)} disabled={disabled} maxLength={320} /></div>
+    {showRelationship && (
+      <div>
+        <label style={cu.label}>Relationship</label>
+        <select style={cu.select} value={value.relationship} onChange={e => onChange('relationship', e.target.value)} disabled={disabled}>
+          <option value="">Select…</option>
+          {relationshipOptions.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+    )}
+    {showAddress && (
+      <div style={fr.full}>
+        <label style={cu.label}>Permanent address</label>
+        <textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} placeholder="Village / parish / sub-county / district" value={value.address} onChange={e => onChange('address', e.target.value)} disabled={disabled} maxLength={500} />
+      </div>
+    )}
+  </div>
+);
+
+// ─── Family & Personal Record Modal ─────────────────────────────────────────
+const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) => {
+  const [tab, setTab] = useState('parents');
+  const [form, setForm] = useState(cloneEmptyFamilyRecord);
+  const [existing, setExisting] = useState(null);   // the saved Firestore doc, or null for a new record
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState('');
+  const [showErrors, setShowErrors] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, FAMILY_COLLECTION, employee.id));
+        if (!alive) return;
+        if (snap.exists()) {
+          const d = snap.data();
+          setExisting(d);
+          setForm(mergeFamilyRecord(d));
+        } else {
+          setForm(prev => ({ ...prev, consent: { ...prev.consent, consentDate: new Date().toISOString().slice(0, 10) } }));
+        }
+      } catch (err) {
+        console.error('Family record load error:', err);
+        if (alive) setLoadError(err.code === 'permission-denied'
+          ? 'You do not have permission to view family & personal records.'
+          : 'Could not load this record: ' + err.message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [employee.id]);
+
+  const disabled = saving || !canEdit;
+  const touch = () => { setJustSaved(false); setError(''); };
+  const setSection = (section, field, value) => { touch(); setForm(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } })); };
+  const setTop = (field, value) => { touch(); setForm(prev => ({ ...prev, [field]: value })); };
+
+  const setBeneficiary = (i, field, value) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { ...b, [field]: value } : b) })); };
+  const addBeneficiary = () => { touch(); setForm(prev => prev.beneficiaries.length >= MAX_BENEFICIARIES ? prev : ({ ...prev, beneficiaries: [...prev.beneficiaries, { fullName: '', relationship: '' }] })); };
+  const removeBeneficiary = (i) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.filter((_, idx) => idx !== i) })); };
+
+  const setCondition = (i, field, value) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c) } })); };
+  const addCondition = () => { touch(); setForm(prev => prev.medical.conditions.length >= MAX_CONDITIONS ? prev : ({ ...prev, medical: { ...prev.medical, conditions: [...prev.medical.conditions, { ...EMPTY_CONDITION }] } })); };
+  const removeCondition = (i) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.filter((_, idx) => idx !== i) } })); };
+  const toggleHasConditions = (checked) => {
+    touch();
+    setForm(prev => ({
+      ...prev,
+      medical: {
+        ...prev.medical, hasConditions: checked,
+        conditions: checked && prev.medical.conditions.length === 0 ? [{ ...EMPTY_CONDITION }] : prev.medical.conditions,
+      },
+    }));
+  };
+
+  const handleSave = async () => {
+    setShowErrors(true); setError(''); setJustSaved(false);
+    for (const t of FAMILY_TABS) {
+      const msg = validateFamilyTab(t.key, form);
+      if (msg) { setTab(t.key); setError(msg); return; }
+    }
+    setSaving(true);
+    const outcome = await onSave(employee, buildFamilyPayload(form), !existing);
+    setSaving(false);
+    if (!outcome.success) { setError(outcome.error || 'Could not save this record.'); return; }
+    setExisting(prev => prev || { saved: true });
+    setJustSaved(true);
+  };
+
+  const handleExport = async () => {
+    setExporting(true); setError('');
+    try {
+      await exportFamilyRecordPdf({ employee, form, preparedBy: auth.currentUser?.email || '' });
+      if (onExported) onExported(employee);
+    } catch (err) {
+      console.error('[FamilyRecord] PDF failed:', err);
+      setError('Could not create the PDF. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const tabInvalid = (key) => showErrors && !!validateFamilyTab(key, form);
+  const m = form.medical, p = form.personal, c = form.consent;
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 780 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #7C3AED' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Family &amp; Personal Record</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+              {employeeFullName(employee)} · {employee.employeeCode} · Confidential — HR use only
+            </p>
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+
+        <div style={{ padding: '10px 24px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+          <div style={s.tabs}>
+            {FAMILY_TABS.map(t => (
+              <button key={t.key} type="button" style={{ ...s.tab, ...(tab === t.key ? s.tabActive : {}) }} onClick={() => setTab(t.key)}>
+                <span>{t.icon}</span> {t.label}{tabInvalid(t.key) && <span style={fr.badge}>!</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={ms.body}>
+          {loading ? (
+            <p style={{ fontSize: 13, color: '#9AAAB8' }}>Loading record…</p>
+          ) : loadError ? (
+            <p style={s.loginErr}>{loadError}</p>
+          ) : (
+            <>
+              {!canEdit && <p style={fr.warn}>You have read-only access — changes can't be saved.</p>}
+              {!existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in each tab, then record the employee's consent on the last tab to save.</p>}
+
+              {tab === 'parents' && (
+                <>
+                  {[['mother', "Mother's details"], ['father', "Father's details"]].map(([key, title]) => (
+                    <FrCard key={key} title={title} subtitle="Full name and phone number are required; email is optional.">
+                      <div style={{ marginBottom: 12 }}>
+                        <FrCheck checked={form[key].notApplicable} onChange={v => setSection(key, 'notApplicable', v)} disabled={disabled}>
+                          Not applicable (deceased, unknown or not in contact)
+                        </FrCheck>
+                      </div>
+                      {!form[key].notApplicable && <FrPerson value={form[key]} onChange={(f, v) => setSection(key, f, v)} disabled={disabled} />}
+                    </FrCard>
+                  ))}
+                  <FrCard title="Guardian's details" subtitle="Only if the employee has a legal guardian (for example, in place of a parent).">
+                    <div style={{ marginBottom: 12 }}>
+                      <FrCheck checked={form.hasGuardian} onChange={v => setTop('hasGuardian', v)} disabled={disabled}>This employee has a guardian</FrCheck>
+                    </div>
+                    {form.hasGuardian && <FrPerson value={form.guardian} onChange={(f, v) => setSection('guardian', f, v)} disabled={disabled} showAddress />}
+                  </FrCard>
+                </>
+              )}
+
+              {tab === 'kin' && (
+                <FrCard title="Next of kin" subtitle="Who HR should contact first in an emergency. Everything except email is required.">
+                  <FrPerson value={form.nextOfKin} onChange={(f, v) => setSection('nextOfKin', f, v)} disabled={disabled} showAddress showRelationship />
+                </FrCard>
+              )}
+
+              {tab === 'marital' && (
+                <FrCard title="Marital status" subtitle="Tick if the employee is married to record spouse details.">
+                  <FrCheck checked={form.isMarried} onChange={v => setTop('isMarried', v)} disabled={disabled}>Married</FrCheck>
+                  {form.isMarried && (
+                    <div style={{ marginTop: 14 }}>
+                      <h4 style={{ ...fr.cardH, marginBottom: 10 }}>Spouse's details</h4>
+                      <FrPerson value={form.spouse} onChange={(f, v) => setSection('spouse', f, v)} disabled={disabled} showAddress />
+                    </div>
+                  )}
+                </FrCard>
+              )}
+
+              {tab === 'insurance' && (
+                <FrCard title="Health insurance beneficiaries (optional)" subtitle={`Up to ${MAX_BENEFICIARIES} people covered under the employee's health insurance.`}>
+                  {form.beneficiaries.length === 0 && <p style={{ fontSize: 13, color: '#9AAAB8', margin: '0 0 12px' }}>No beneficiaries added.</p>}
+                  {form.beneficiaries.map((b, i) => (
+                    <div key={i} style={{ ...fr.grid2, gridTemplateColumns: '1fr 1fr auto', alignItems: 'end', marginBottom: 12 }}>
+                      <div><label style={cu.label}>Beneficiary {i + 1} — full name</label><input style={s.loginInput} value={b.fullName} onChange={e => setBeneficiary(i, 'fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+                      <div>
+                        <label style={cu.label}>Relationship</label>
+                        <select style={cu.select} value={b.relationship} onChange={e => setBeneficiary(i, 'relationship', e.target.value)} disabled={disabled}>
+                          <option value="">Select…</option>
+                          {BENEFICIARY_RELATIONSHIPS.map(r => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </div>
+                      {canEdit && <button type="button" style={fr.rm} onClick={() => removeBeneficiary(i)} disabled={saving}>Remove</button>}
+                    </div>
+                  ))}
+                  {canEdit && form.beneficiaries.length < MAX_BENEFICIARIES && (
+                    <button type="button" style={fr.add} onClick={addBeneficiary} disabled={saving}>＋ Add beneficiary</button>
+                  )}
+                </FrCard>
+              )}
+
+              {tab === 'health' && (
+                <>
+                  <FrCard title="Health declaration" subtitle="Anything the employer should be aware of to keep the employee safe and supported at work.">
+                    <FrCheck checked={m.hasConditions} onChange={toggleHasConditions} disabled={disabled}>
+                      The employee has health condition(s) the employer should be aware of
+                    </FrCheck>
+                    {m.hasConditions && (
+                      <div style={{ marginTop: 14 }}>
+                        {m.conditions.map((cond, i) => (
+                          <div key={i} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, marginBottom: 10, background: '#F7F9FC' }}>
+                            <div style={fr.grid2}>
+                              <div><label style={cu.label}>Condition {i + 1}</label><input style={s.loginInput} placeholder="e.g. Asthma, Diabetes" value={cond.condition} onChange={e => setCondition(i, 'condition', e.target.value)} disabled={disabled} maxLength={200} /></div>
+                              <div><label style={cu.label}>Since (month / year)</label><input style={s.loginInput} placeholder="e.g. March 2019" value={cond.since} onChange={e => setCondition(i, 'since', e.target.value)} disabled={disabled} maxLength={60} /></div>
+                              <div>
+                                <label style={cu.label}>Severity</label>
+                                <select style={cu.select} value={cond.severity} onChange={e => setCondition(i, 'severity', e.target.value)} disabled={disabled}>
+                                  {CONDITION_SEVERITIES.map(v => <option key={v} value={v}>{v}</option>)}
+                                </select>
+                              </div>
+                              <div><label style={cu.label}>Treatment / management</label><input style={s.loginInput} value={cond.treatment} onChange={e => setCondition(i, 'treatment', e.target.value)} disabled={disabled} maxLength={300} /></div>
+                              <div style={fr.full}><label style={cu.label}>What the employer should know</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={cond.notes} onChange={e => setCondition(i, 'notes', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+                            </div>
+                            {canEdit && <div style={{ marginTop: 8 }}><button type="button" style={fr.rm} onClick={() => removeCondition(i)} disabled={saving}>Remove condition</button></div>}
+                          </div>
+                        ))}
+                        {canEdit && m.conditions.length < MAX_CONDITIONS && (
+                          <button type="button" style={fr.add} onClick={addCondition} disabled={saving}>＋ Add another condition</button>
+                        )}
+                      </div>
+                    )}
+                  </FrCard>
+
+                  <FrCard title="Medical form & history" subtitle="All optional — complete what the employee is willing to share.">
+                    <div style={fr.grid2}>
+                      <div>
+                        <label style={cu.label}>Blood group</label>
+                        <select style={cu.select} value={m.bloodGroup} onChange={e => setSection('medical', 'bloodGroup', e.target.value)} disabled={disabled}>
+                          {BLOOD_GROUPS.map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </div>
+                      <div><label style={cu.label}>Last medical check-up</label><input type="date" style={s.loginInput} value={m.lastCheckup} onChange={e => setSection('medical', 'lastCheckup', e.target.value)} disabled={disabled} /></div>
+                      <div style={fr.full}><label style={cu.label}>Known allergies</label><input style={s.loginInput} placeholder="Food, drug or other allergies" value={m.allergies} onChange={e => setSection('medical', 'allergies', e.target.value)} disabled={disabled} maxLength={500} /></div>
+                      <div style={fr.full}><label style={cu.label}>Current medication</label><input style={s.loginInput} value={m.currentMedication} onChange={e => setSection('medical', 'currentMedication', e.target.value)} disabled={disabled} maxLength={500} /></div>
+                      <div style={fr.full}><label style={cu.label}>Past medical history</label><textarea style={{ ...s.loginInput, ...fr.area }} placeholder="Past surgeries, hospital admissions, chronic illness history" value={m.pastHistory} onChange={e => setSection('medical', 'pastHistory', e.target.value)} disabled={disabled} maxLength={2000} /></div>
+                      <div style={fr.full}><label style={cu.label}>Disability / workplace accommodation needed</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={m.accommodations} onChange={e => setSection('medical', 'accommodations', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+                      <div style={fr.full}><label style={cu.label}>Emergency medical instructions</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} placeholder="What colleagues should do in a medical emergency" value={m.emergencyInstructions} onChange={e => setSection('medical', 'emergencyInstructions', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+                      <div><label style={cu.label}>Doctor's name</label><input style={s.loginInput} value={m.doctorName} onChange={e => setSection('medical', 'doctorName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+                      <div><label style={cu.label}>Doctor's phone</label><input type="tel" style={s.loginInput} value={m.doctorPhone} onChange={e => setSection('medical', 'doctorPhone', e.target.value)} disabled={disabled} maxLength={40} /></div>
+                    </div>
+                  </FrCard>
+                </>
+              )}
+
+              {tab === 'personal' && (
+                <FrCard title="Personal record — security clearance" subtitle="Identity checks and vetting outcome. Visible only to authorised HR and admin users.">
+                  <div style={fr.grid2}>
+                    <div><label style={cu.label}>National ID number (NIN)</label><input style={s.loginInput} value={p.nationalId} onChange={e => setSection('personal', 'nationalId', e.target.value)} disabled={disabled} maxLength={40} /></div>
+                    <div><label style={cu.label}>Police clearance / good-conduct ref.</label><input style={s.loginInput} value={p.policeClearanceRef} onChange={e => setSection('personal', 'policeClearanceRef', e.target.value)} disabled={disabled} maxLength={80} /></div>
+                    <div><label style={cu.label}>Police clearance date</label><input type="date" style={s.loginInput} value={p.policeClearanceDate} onChange={e => setSection('personal', 'policeClearanceDate', e.target.value)} disabled={disabled} /></div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
+                      <FrCheck checked={p.referencesVerified} onChange={v => setSection('personal', 'referencesVerified', v)} disabled={disabled}>Referees verified</FrCheck>
+                    </div>
+                    <div>
+                      <label style={cu.label}>Clearance level</label>
+                      <select style={cu.select} value={p.clearanceLevel} onChange={e => setSection('personal', 'clearanceLevel', e.target.value)} disabled={disabled}>
+                        {CLEARANCE_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={cu.label}>Vetting status</label>
+                      <select style={cu.select} value={p.vettingStatus} onChange={e => setSection('personal', 'vettingStatus', e.target.value)} disabled={disabled}>
+                        {VETTING_STATUSES.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div><label style={cu.label}>Clearance granted on</label><input type="date" style={s.loginInput} value={p.clearanceGrantedOn} onChange={e => setSection('personal', 'clearanceGrantedOn', e.target.value)} disabled={disabled} /></div>
+                    <div><label style={cu.label}>Clearance expires on</label><input type="date" style={s.loginInput} value={p.clearanceExpiresOn} onChange={e => setSection('personal', 'clearanceExpiresOn', e.target.value)} disabled={disabled} /></div>
+                    <div style={fr.full}><label style={cu.label}>Security notes (HR only)</label><textarea style={{ ...s.loginInput, ...fr.area }} value={p.securityNotes} onChange={e => setSection('personal', 'securityNotes', e.target.value)} disabled={disabled} maxLength={2000} /></div>
+                  </div>
+                </FrCard>
+              )}
+
+              {tab === 'consent' && (
+                <FrCard title="Consent & declaration" subtitle="Read this statement to the employee and record their agreement.">
+                  <p style={{ fontSize: 13, color: '#334155', lineHeight: 1.6, background: '#F7F9FC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, margin: '0 0 14px' }}>{CONSENT_STATEMENT}</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <FrCheck checked={c.dataProcessing} onChange={v => setSection('consent', 'dataProcessing', v)} disabled={disabled}>
+                      <strong>Required:</strong> I consent to my personal information being collected, stored and processed as described above.
+                    </FrCheck>
+                    <FrCheck checked={c.familyContact} onChange={v => setSection('consent', 'familyContact', v)} disabled={disabled}>
+                      <strong>Required:</strong> I authorise HR to contact the family members / next of kin listed in this record in an emergency.
+                    </FrCheck>
+                    <FrCheck checked={c.medicalDisclosure} onChange={v => setSection('consent', 'medicalDisclosure', v)} disabled={disabled}>
+                      I consent to the health information I have declared being held by HR for welfare and safety purposes{m.hasConditions ? ' (required — health conditions were declared)' : ''}.
+                    </FrCheck>
+                    <FrCheck checked={c.backgroundVetting} onChange={v => setSection('consent', 'backgroundVetting', v)} disabled={disabled}>
+                      I consent to background and security vetting where my role requires it{p.vettingStatus !== 'Not started' ? ' (required — a vetting status is set)' : ''}.
+                    </FrCheck>
+                    <FrCheck checked={c.declarationTruthful} onChange={v => setSection('consent', 'declarationTruthful', v)} disabled={disabled}>
+                      <strong>Required:</strong> I confirm that the information given in this record is true and complete.
+                    </FrCheck>
+                  </div>
+                  <div style={{ ...fr.grid2, marginTop: 16 }}>
+                    <div>
+                      <label style={cu.label}>Employee signature (type full name)</label>
+                      <input style={s.loginInput} placeholder={employeeFullName(employee)} value={c.signedName} onChange={e => setSection('consent', 'signedName', e.target.value)} disabled={disabled} maxLength={200} />
+                    </div>
+                    <div>
+                      <label style={cu.label}>Date of consent</label>
+                      <input type="date" style={s.loginInput} value={c.consentDate} onChange={e => setSection('consent', 'consentDate', e.target.value)} disabled={disabled} />
+                    </div>
+                  </div>
+                  <p style={fr.hint}>
+                    Recorded by {(existing?.consent?.recordedBy) || auth.currentUser?.email || 'you'} when saved. The exported PDF also has signature lines for a wet-ink copy.
+                  </p>
+                </FrCard>
+              )}
+
+              {error && <p style={s.loginErr}>{error}</p>}
+              {justSaved && <p style={fr.ok}>✓ Record saved.</p>}
+            </>
+          )}
+        </div>
+
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
+          <button type="button" style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={handleExport} disabled={loading || !!loadError || exporting}>
+            {exporting ? 'Preparing PDF…' : '⬇ Export PDF'}
+          </button>
+          {canEdit && (
+            <button type="button" style={{ ...ms.actionBtn, background: '#7C3AED', color: '#fff' }} onClick={handleSave} disabled={loading || !!loadError || saving}>
+              {saving ? 'Saving…' : '💾 Save Record'}
+            </button>
           )}
         </div>
       </div>
@@ -2148,6 +2965,7 @@ const HrManager = () => {
   const [profileTarget, setProfileTarget] = useState(null);
   const [idCardTarget, setIdCardTarget] = useState(null);
   const [businessCardTarget, setBusinessCardTarget] = useState(null);
+  const [familyTarget, setFamilyTarget] = useState(null);
   const [busyEmployeeId, setBusyEmployeeId] = useState(null);
 
   // Attendance (read-only, for the profile modal)
@@ -2391,11 +3209,44 @@ const HrManager = () => {
     try {
       await deleteDoc(doc(db, 'employees', employee.id));
       removePhotoLocal(employee.id);
+      // Don't leave an orphaned confidential family/medical record behind.
+      try { await deleteDoc(doc(db, FAMILY_COLLECTION, employee.id)); }
+      catch (err) { console.warn('Could not remove family record for deleted employee:', err); }
       await logAudit('Deleted employee profile', employeeFullName(employee));
     } catch (err) {
       alert('Delete failed: ' + err.message);
     } finally {
       setBusyEmployeeId(null);
+    }
+  }, [logAudit]);
+
+  // ── Family & Personal Record (employeeFamilyRecords/{employeeId}) ───────
+  // The audit log only records WHO touched WHICH employee's record — never
+  // its contents.
+  const handleSaveFamilyRecord = useCallback(async (employee, payload, isNew) => {
+    try {
+      const email = auth.currentUser?.email || 'unknown';
+      const data = {
+        ...payload,
+        consent: { ...payload.consent, recordedBy: email },
+        employeeId: employee.id,
+        employeeName: employeeFullName(employee),
+        employeeCode: employee.employeeCode || '',
+        updatedAt: serverTimestamp(), updatedBy: email,
+      };
+      const ref = doc(db, FAMILY_COLLECTION, employee.id);
+      if (isNew) await setDoc(ref, { ...data, createdAt: serverTimestamp(), createdBy: email });
+      else await updateDoc(ref, data);
+      await logAudit(isNew ? 'Created family & personal record' : 'Updated family & personal record', employeeFullName(employee));
+      return { success: true };
+    } catch (err) {
+      console.error('Save family record error:', err);
+      return {
+        success: false,
+        error: err.code === 'permission-denied'
+          ? 'Permission denied — check that all required fields and consents are complete, and that you have HR edit access.'
+          : err.message,
+      };
     }
   }, [logAudit]);
 
@@ -2755,6 +3606,7 @@ const HrManager = () => {
                             {canEdit && <button style={s.btnView} onClick={() => { setEditingEmployee(e); setShowEmployeeForm(true); }}>Edit</button>}
                             <button style={s.btnShortlist} onClick={() => setIdCardTarget(e)}>ID Card</button>
                             <button style={s.btnShortlist} onClick={() => setBusinessCardTarget(e)}>Business Card</button>
+                            <button style={s.btnShortlist} onClick={() => setFamilyTarget(e)}>Family Record</button>
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
                             ) : isInternContract(e.contractType) ? (
@@ -3076,6 +3928,7 @@ const HrManager = () => {
           onClose={() => setProfileTarget(null)}
           onEdit={(e) => { setProfileTarget(null); setEditingEmployee(e); setShowEmployeeForm(true); }}
           onIdCard={(e) => { setIdCardTarget(e); }}
+          onFamilyRecord={(e) => setFamilyTarget(e)}
           onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
           onDownloadAppointmentLetter={(e) => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}
           onDownloadPlacementLetter={(e) => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}
@@ -3085,6 +3938,15 @@ const HrManager = () => {
       )}
       {idCardTarget && <IdCardModal employee={idCardTarget} onClose={() => setIdCardTarget(null)} />}
       {businessCardTarget && <BusinessCardModal employee={businessCardTarget} onClose={() => setBusinessCardTarget(null)} />}
+      {familyTarget && (
+        <FamilyRecordModal
+          employee={familyTarget}
+          canEdit={canEdit}
+          onClose={() => setFamilyTarget(null)}
+          onSave={handleSaveFamilyRecord}
+          onExported={(e) => logAudit('Exported family & personal record (PDF)', employeeFullName(e))}
+        />
+      )}
       {contractAction && (
         <ContractActionModal
           employee={contractAction.employee}
