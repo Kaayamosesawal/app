@@ -49,7 +49,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { db, auth } from '../firebase/firebase';
 import {
   collection, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
-  onSnapshot, query, where, orderBy, limit, serverTimestamp, Timestamp,
+  onSnapshot, query, where, orderBy, limit, serverTimestamp, Timestamp, writeBatch,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
@@ -954,6 +954,19 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
+  // Family & personal record captured together with a NEW profile.
+  const [captureFamily, setCaptureFamily] = useState(true);
+  const [familyForm, setFamilyForm] = useState(() => {
+    const f = cloneEmptyFamilyRecord();
+    f.consent.consentDate = new Date().toISOString().slice(0, 10);
+    return f;
+  });
+  const [familyTab, setFamilyTab] = useState('parents');
+  const [attempted, setAttempted] = useState(false);
+  const errorRef = useRef(null);
+  useEffect(() => {
+    if (error && errorRef.current && errorRef.current.scrollIntoView) errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [error]);
 
   const update = (field, val) => setForm(prev => {
     const next = { ...prev, [field]: val };
@@ -984,9 +997,17 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
     if (isInternContract(form.contractType) && (!(form.internInstitution || '').trim() || !(form.internProgramme || '').trim() || !form.internFocusArea)) {
       setError('For a learning-based intern, please fill in the institution, programme of study, and focus area.'); return;
     }
+    setAttempted(true);
+    const withFamily = !isEdit && captureFamily;
+    if (withFamily) {
+      for (const t of FAMILY_TABS) {
+        const msg = validateFamilyTab(t.key, familyForm);
+        if (msg) { setFamilyTab(t.key); setError(`Family & personal record — ${t.label}: ${msg}`); return; }
+      }
+    }
     setSaving(true); setError('');
     const cleanedForm = { ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '' };
-    const outcome = await onSave(cleanedForm, photoDataUrl, isEdit);
+    const outcome = await onSave(cleanedForm, photoDataUrl, isEdit, withFamily ? buildFamilyPayload(familyForm) : null);
     setSaving(false);
     if (!outcome.success) setError(outcome.error || 'Could not save the employee record.');
     else onClose();
@@ -994,13 +1015,13 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
 
   return (
     <div style={ms.overlay} onClick={onClose}>
-      <div style={{ ...ms.modal, maxWidth: 620 }} onClick={e => e.stopPropagation()}>
+      <div style={{ ...ms.modal, maxWidth: 700 }} onClick={e => e.stopPropagation()}>
         <div style={{ ...ms.header, borderTop: '4px solid #7C3AED' }}>
           <div>
-            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{isEdit ? 'Edit Employee' : 'New Employee Profile'}</h3>
-            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>Master directory · job grade · contract dates · ID photo</p>
+            <h3 style={{ margin: 0, padding: 0, border: 'none', color: '#1A3C5E', fontSize: 17 }}>{isEdit ? 'Edit Employee' : 'New Employee Profile'}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>Master directory · job grade · contract dates · ID photo{isEdit ? '' : ' · family & personal record'}</p>
           </div>
-          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+          <button type="button" style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
         </div>
         <form onSubmit={handleSubmit} style={ms.modalForm}>
           <div style={ms.body}>
@@ -1125,7 +1146,41 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               />
             </div>
 
-            {error && <p style={s.loginErr}>{error}</p>}
+            {isEdit ? (
+              <p style={{ ...fr.hint, marginTop: 18 }}>
+                The family &amp; personal record (parents, next of kin, marital status, insurance, health, security clearance and consent) is managed with the <strong>Family Record</strong> button.
+              </p>
+            ) : (
+              <div style={{ marginTop: 22, border: '1px solid #DDD6FE', borderRadius: 12, padding: 14, background: '#FAF5FF' }}>
+                <h4 style={{ fontSize: 15, fontWeight: 800, color: '#5B21B6', margin: 0, padding: 0, border: 'none' }}>👪 Family &amp; Personal Record</h4>
+                <p style={{ fontSize: 12, color: '#6B5B95', margin: '4px 0 12px' }}>
+                  Confidential — visible to HR and admin only. Parents / guardian, next of kin, marital status, insurance beneficiaries, health, security clearance and consent.
+                </p>
+                <FrCheck checked={captureFamily} onChange={setCaptureFamily} disabled={saving}>
+                  Capture the family &amp; personal record now
+                  <span style={{ color: '#7A8A9A' }}> — or untick to skip and complete it later with the “Family Record” button</span>
+                </FrCheck>
+
+                {captureFamily && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ ...fr.tabs, marginBottom: 12 }}>
+                      {FAMILY_TABS.map(t => (
+                        <button key={t.key} type="button" style={{ ...fr.tab, ...(familyTab === t.key ? fr.tabOn : {}) }} onClick={() => setFamilyTab(t.key)}>
+                          <span>{t.icon}</span> {t.label}{attempted && !!validateFamilyTab(t.key, familyForm) && <span style={fr.badge}>!</span>}
+                        </button>
+                      ))}
+                    </div>
+                    <FamilySections
+                      form={familyForm} setForm={setFamilyForm} tab={familyTab} mode="full"
+                      disabled={saving} canEdit onEdit={() => setError('')}
+                      employeeName={`${form.firstName} ${form.lastName}`.trim()}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {error && <p ref={errorRef} style={s.loginErr}>{error}</p>}
           </div>
           <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
             <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Cancel</button>
@@ -1864,7 +1919,7 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
           <button style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={() => onEdit(employee)}>✎ Edit Profile</button>
           <button style={{ ...ms.actionBtn, background: '#F3E8FF', color: '#7C3AED' }} onClick={() => onIdCard(employee)}>🪪 ID Card</button>
           {onFamilyRecord && (
-            <button style={{ ...ms.actionBtn, background: '#FDF2F8', color: '#BE185D' }} onClick={() => onFamilyRecord(employee)}>👪 Family &amp; Personal Record</button>
+            <button style={{ ...ms.actionBtn, width: 'auto', background: '#FDF2F8', color: '#BE185D' }} onClick={() => onFamilyRecord(employee)}>👪 Family &amp; Personal Record</button>
           )}
           {isContractor ? (
             <button style={{ ...ms.actionBtn, background: '#EEF2FF', color: '#4338CA' }} onClick={() => onDownloadServiceAgreement(employee)}>📄 Download Service Agreement</button>
@@ -1974,6 +2029,9 @@ const CONDITION_SEVERITIES = ['Mild', 'Moderate', 'Severe'];
 const CLEARANCE_LEVELS = ['Standard', 'Confidential', 'Restricted'];
 const VETTING_STATUSES = ['Not started', 'In progress', 'Cleared', 'Conditionally cleared', 'Not cleared', 'Expired'];
 
+// Tabs shown by the "Family Record" button (required fields only). The New
+// Employee form shows all of them.
+const FAMILY_REQUIRED_TAB_KEYS = ['parents', 'kin', 'marital', 'consent'];
 const FAMILY_TABS = [
   { key: 'parents',   label: 'Parents & Guardian', icon: '👪' },
   { key: 'kin',       label: 'Next of Kin',        icon: '📞' },
@@ -1990,6 +2048,8 @@ const CONSENT_STATEMENT =
   'for human-resources administration, emergency contact, health-insurance, welfare and security-vetting purposes, ' +
   'in line with the Data Protection and Privacy Act, 2019 (Uganda). I understand that this record is confidential, ' +
   'is accessible only to authorised HR and management staff, and that I may ask HR to correct or update it at any time.';
+
+const familyTabsFor = (mode) => (mode === 'full' ? FAMILY_TABS : FAMILY_TABS.filter(t => FAMILY_REQUIRED_TAB_KEYS.includes(t.key)));
 
 const EMPTY_FAMILY_RECORD = {
   mother: { notApplicable: false, fullName: '', phone: '', email: '' },
@@ -2396,8 +2456,14 @@ const fr = {
   hint:   { fontSize: 11, color: '#9AAAB8', margin: '4px 0 0' },
   warn:   { fontSize: 12, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 10px', margin: '0 0 14px' },
   ok:     { fontSize: 12.5, color: '#065F46', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '8px 10px', margin: '12px 0 0' },
-  rm:     { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
-  add:    { background: '#F3E8FF', color: '#7C3AED', border: 'none', borderRadius: 7, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  // NOTE: the site stylesheet has a global `button { width: 100%; padding: 15px; … }`
+  // rule, so every button in this modal sets width:'auto' explicitly.
+  rm:     { width: 'auto', background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  add:    { width: 'auto', background: '#F3E8FF', color: '#7C3AED', border: 'none', borderRadius: 7, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  tabs:   { display: 'flex', flexWrap: 'nowrap', gap: 6, overflowX: 'auto', paddingBottom: 2 },
+  tab:    { width: 'auto', flexShrink: 0, whiteSpace: 'nowrap', background: '#fff', border: '1.5px solid #E2E8F0', borderRadius: 7, padding: '7px 12px', fontSize: 13, color: '#5A7A9A', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 },
+  tabOn:  { background: '#7C3AED', color: '#fff', border: '1.5px solid #7C3AED' },
+  link:   { width: 'auto', background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' },
 };
 
 const FrCard = ({ title, subtitle, children }) => (
@@ -2417,11 +2483,11 @@ const FrCheck = ({ checked, onChange, disabled, children }) => (
 );
 
 // Name / phone / optional email block; address and relationship are opt-in.
-const FrPerson = ({ value, onChange, disabled, showAddress = false, showRelationship = false, relationshipOptions = KIN_RELATIONSHIPS }) => (
+const FrPerson = ({ value, onChange, disabled, showEmail = true, showAddress = false, showRelationship = false, relationshipOptions = KIN_RELATIONSHIPS }) => (
   <div style={fr.grid2}>
     <div><label style={cu.label}>Full name</label><input style={s.loginInput} value={value.fullName} onChange={e => onChange('fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
     <div><label style={cu.label}>Phone number</label><input type="tel" style={s.loginInput} placeholder="+256 …" value={value.phone} onChange={e => onChange('phone', e.target.value)} disabled={disabled} maxLength={40} /></div>
-    <div><label style={cu.label}>Email (optional)</label><input type="email" style={s.loginInput} value={value.email} onChange={e => onChange('email', e.target.value)} disabled={disabled} maxLength={320} /></div>
+    {showEmail && <div><label style={cu.label}>Email (optional)</label><input type="email" style={s.loginInput} value={value.email} onChange={e => onChange('email', e.target.value)} disabled={disabled} maxLength={320} /></div>}
     {showRelationship && (
       <div>
         <label style={cu.label}>Relationship</label>
@@ -2440,9 +2506,225 @@ const FrPerson = ({ value, onChange, disabled, showAddress = false, showRelation
   </div>
 );
 
+// Edit helpers for a family-record form state — shared by the New Employee
+// form and the Family Record modal so both edit the data identically.
+const makeFamilyEditors = (setForm, onEdit) => {
+  const touch = () => { if (onEdit) onEdit(); };
+  return {
+    setSection: (section, field, value) => { touch(); setForm(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } })); },
+    setTop: (field, value) => { touch(); setForm(prev => ({ ...prev, [field]: value })); },
+    setBeneficiary: (i, field, value) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { ...b, [field]: value } : b) })); },
+    clearBeneficiary: (i) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { fullName: '', relationship: '' } : b) })); },
+    setCondition: (i, field, value) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c) } })); },
+    addCondition: () => { touch(); setForm(prev => prev.medical.conditions.length >= MAX_CONDITIONS ? prev : ({ ...prev, medical: { ...prev.medical, conditions: [...prev.medical.conditions, { ...EMPTY_CONDITION }] } })); },
+    removeCondition: (i) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.filter((_, idx) => idx !== i) } })); },
+    toggleHasConditions: (checked) => {
+      touch();
+      setForm(prev => ({
+        ...prev,
+        medical: {
+          ...prev.medical, hasConditions: checked,
+          conditions: checked && prev.medical.conditions.length === 0 ? [{ ...EMPTY_CONDITION }] : prev.medical.conditions,
+        },
+      }));
+    },
+  };
+};
+
+// The content of one tab. mode="full" shows every field; mode="required" hides
+// optional fields (emails and the optional sections) and shows only what must
+// be filled in. Used by both the New Employee form and the Family Record modal.
+const FamilySections = ({ form, setForm, tab, mode = 'full', disabled = false, canEdit = true, onEdit, employeeName = '', recordedBy = '' }) => {
+  const ed = makeFamilyEditors(setForm, onEdit);
+  const full = mode === 'full';
+  const m = form.medical, p = form.personal, c = form.consent;
+  return (
+    <>
+    {tab === 'parents' && (
+      <>
+        {[['mother', "Mother's details"], ['father', "Father's details"]].map(([key, title]) => (
+          <FrCard key={key} title={title} subtitle={full ? "Full name and phone number are required; email is optional." : "Full name and phone number are required."}>
+            <div style={{ marginBottom: 12 }}>
+              <FrCheck checked={form[key].notApplicable} onChange={v => ed.setSection(key, 'notApplicable', v)} disabled={disabled}>
+                Not applicable (deceased, unknown or not in contact)
+              </FrCheck>
+            </div>
+            {!form[key].notApplicable && <FrPerson showEmail={full} value={form[key]} onChange={(f, v) => ed.setSection(key, f, v)} disabled={disabled} />}
+          </FrCard>
+        ))}
+        <FrCard title="Guardian's details" subtitle="Only if the employee has a legal guardian (for example, in place of a parent).">
+          <div style={{ marginBottom: 12 }}>
+            <FrCheck checked={form.hasGuardian} onChange={v => ed.setTop('hasGuardian', v)} disabled={disabled}>This employee has a guardian</FrCheck>
+          </div>
+          {form.hasGuardian && <FrPerson showEmail={full} value={form.guardian} onChange={(f, v) => ed.setSection('guardian', f, v)} disabled={disabled} showAddress />}
+        </FrCard>
+      </>
+    )}
+
+    {tab === 'kin' && (
+      <FrCard title="Next of kin" subtitle="Who HR should contact first in an emergency. Everything except email is required.">
+        <FrPerson showEmail={full} value={form.nextOfKin} onChange={(f, v) => ed.setSection('nextOfKin', f, v)} disabled={disabled} showAddress showRelationship />
+      </FrCard>
+    )}
+
+    {tab === 'marital' && (
+      <FrCard title="Marital status" subtitle="Tick if the employee is married to record spouse details.">
+        <FrCheck checked={form.isMarried} onChange={v => ed.setTop('isMarried', v)} disabled={disabled}>Married</FrCheck>
+        {form.isMarried && (
+          <div style={{ marginTop: 14 }}>
+            <h4 style={{ ...fr.cardH, marginBottom: 10 }}>Spouse's details</h4>
+            <FrPerson showEmail={full} value={form.spouse} onChange={(f, v) => ed.setSection('spouse', f, v)} disabled={disabled} showAddress />
+          </div>
+        )}
+      </FrCard>
+    )}
+
+    {tab === 'insurance' && (
+      <FrCard title="Health insurance beneficiaries (optional)" subtitle={`Up to ${MAX_BENEFICIARIES} people covered under the employee's health insurance. Leave a row blank if not needed.`}>
+        {form.beneficiaries.map((b, i) => (
+          <div key={i} style={{ ...fr.grid2, gridTemplateColumns: canEdit ? '1fr 1fr auto' : '1fr 1fr', alignItems: 'end', marginBottom: 12 }}>
+            <div><label style={cu.label}>Beneficiary {i + 1} — full name</label><input style={s.loginInput} value={b.fullName} onChange={e => ed.setBeneficiary(i, 'fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+            <div>
+              <label style={cu.label}>Relationship</label>
+              <select style={cu.select} value={b.relationship} onChange={e => ed.setBeneficiary(i, 'relationship', e.target.value)} disabled={disabled}>
+                <option value="">Select…</option>
+                {BENEFICIARY_RELATIONSHIPS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            {canEdit && <button type="button" style={fr.rm} onClick={() => ed.clearBeneficiary(i)} disabled={disabled || (!b.fullName && !b.relationship)}>Clear</button>}
+          </div>
+        ))}
+      </FrCard>
+    )}
+
+    {tab === 'health' && (
+      <>
+        <FrCard title="Health declaration" subtitle="Anything the employer should be aware of to keep the employee safe and supported at work.">
+          <FrCheck checked={m.hasConditions} onChange={ed.toggleHasConditions} disabled={disabled}>
+            The employee has health condition(s) the employer should be aware of
+          </FrCheck>
+          {m.hasConditions && (
+            <div style={{ marginTop: 14 }}>
+              {m.conditions.map((cond, i) => (
+                <div key={i} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, marginBottom: 10, background: '#F7F9FC' }}>
+                  <div style={fr.grid2}>
+                    <div><label style={cu.label}>Condition {i + 1}</label><input style={s.loginInput} placeholder="e.g. Asthma, Diabetes" value={cond.condition} onChange={e => ed.setCondition(i, 'condition', e.target.value)} disabled={disabled} maxLength={200} /></div>
+                    <div><label style={cu.label}>Since (month / year)</label><input style={s.loginInput} placeholder="e.g. March 2019" value={cond.since} onChange={e => ed.setCondition(i, 'since', e.target.value)} disabled={disabled} maxLength={60} /></div>
+                    <div>
+                      <label style={cu.label}>Severity</label>
+                      <select style={cu.select} value={cond.severity} onChange={e => ed.setCondition(i, 'severity', e.target.value)} disabled={disabled}>
+                        {CONDITION_SEVERITIES.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div><label style={cu.label}>Treatment / management</label><input style={s.loginInput} value={cond.treatment} onChange={e => ed.setCondition(i, 'treatment', e.target.value)} disabled={disabled} maxLength={300} /></div>
+                    <div style={fr.full}><label style={cu.label}>What the employer should know</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={cond.notes} onChange={e => ed.setCondition(i, 'notes', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+                  </div>
+                  {canEdit && <div style={{ marginTop: 8 }}><button type="button" style={fr.rm} onClick={() => ed.removeCondition(i)} disabled={disabled}>Remove condition</button></div>}
+                </div>
+              ))}
+              {canEdit && m.conditions.length < MAX_CONDITIONS && (
+                <button type="button" style={fr.add} onClick={ed.addCondition} disabled={disabled}>＋ Add another condition</button>
+              )}
+            </div>
+          )}
+        </FrCard>
+
+        <FrCard title="Medical form & history" subtitle="All optional — complete what the employee is willing to share.">
+          <div style={fr.grid2}>
+            <div>
+              <label style={cu.label}>Blood group</label>
+              <select style={cu.select} value={m.bloodGroup} onChange={e => ed.setSection('medical', 'bloodGroup', e.target.value)} disabled={disabled}>
+                {BLOOD_GROUPS.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            <div><label style={cu.label}>Last medical check-up</label><input type="date" style={s.loginInput} value={m.lastCheckup} onChange={e => ed.setSection('medical', 'lastCheckup', e.target.value)} disabled={disabled} /></div>
+            <div style={fr.full}><label style={cu.label}>Known allergies</label><input style={s.loginInput} placeholder="Food, drug or other allergies" value={m.allergies} onChange={e => ed.setSection('medical', 'allergies', e.target.value)} disabled={disabled} maxLength={500} /></div>
+            <div style={fr.full}><label style={cu.label}>Current medication</label><input style={s.loginInput} value={m.currentMedication} onChange={e => ed.setSection('medical', 'currentMedication', e.target.value)} disabled={disabled} maxLength={500} /></div>
+            <div style={fr.full}><label style={cu.label}>Past medical history</label><textarea style={{ ...s.loginInput, ...fr.area }} placeholder="Past surgeries, hospital admissions, chronic illness history" value={m.pastHistory} onChange={e => ed.setSection('medical', 'pastHistory', e.target.value)} disabled={disabled} maxLength={2000} /></div>
+            <div style={fr.full}><label style={cu.label}>Disability / workplace accommodation needed</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={m.accommodations} onChange={e => ed.setSection('medical', 'accommodations', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+            <div style={fr.full}><label style={cu.label}>Emergency medical instructions</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} placeholder="What colleagues should do in a medical emergency" value={m.emergencyInstructions} onChange={e => ed.setSection('medical', 'emergencyInstructions', e.target.value)} disabled={disabled} maxLength={1000} /></div>
+            <div><label style={cu.label}>Doctor's name</label><input style={s.loginInput} value={m.doctorName} onChange={e => ed.setSection('medical', 'doctorName', e.target.value)} disabled={disabled} maxLength={200} /></div>
+            <div><label style={cu.label}>Doctor's phone</label><input type="tel" style={s.loginInput} value={m.doctorPhone} onChange={e => ed.setSection('medical', 'doctorPhone', e.target.value)} disabled={disabled} maxLength={40} /></div>
+          </div>
+        </FrCard>
+      </>
+    )}
+
+    {tab === 'personal' && (
+      <FrCard title="Personal record — security clearance" subtitle="Identity checks and vetting outcome. Visible only to authorised HR and admin users.">
+        <div style={fr.grid2}>
+          <div><label style={cu.label}>National ID number (NIN)</label><input style={s.loginInput} value={p.nationalId} onChange={e => ed.setSection('personal', 'nationalId', e.target.value)} disabled={disabled} maxLength={40} /></div>
+          <div><label style={cu.label}>Police clearance / good-conduct ref.</label><input style={s.loginInput} value={p.policeClearanceRef} onChange={e => ed.setSection('personal', 'policeClearanceRef', e.target.value)} disabled={disabled} maxLength={80} /></div>
+          <div><label style={cu.label}>Police clearance date</label><input type="date" style={s.loginInput} value={p.policeClearanceDate} onChange={e => ed.setSection('personal', 'policeClearanceDate', e.target.value)} disabled={disabled} /></div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
+            <FrCheck checked={p.referencesVerified} onChange={v => ed.setSection('personal', 'referencesVerified', v)} disabled={disabled}>Referees verified</FrCheck>
+          </div>
+          <div>
+            <label style={cu.label}>Clearance level</label>
+            <select style={cu.select} value={p.clearanceLevel} onChange={e => ed.setSection('personal', 'clearanceLevel', e.target.value)} disabled={disabled}>
+              {CLEARANCE_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={cu.label}>Vetting status</label>
+            <select style={cu.select} value={p.vettingStatus} onChange={e => ed.setSection('personal', 'vettingStatus', e.target.value)} disabled={disabled}>
+              {VETTING_STATUSES.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div><label style={cu.label}>Clearance granted on</label><input type="date" style={s.loginInput} value={p.clearanceGrantedOn} onChange={e => ed.setSection('personal', 'clearanceGrantedOn', e.target.value)} disabled={disabled} /></div>
+          <div><label style={cu.label}>Clearance expires on</label><input type="date" style={s.loginInput} value={p.clearanceExpiresOn} onChange={e => ed.setSection('personal', 'clearanceExpiresOn', e.target.value)} disabled={disabled} /></div>
+          <div style={fr.full}><label style={cu.label}>Security notes (HR only)</label><textarea style={{ ...s.loginInput, ...fr.area }} value={p.securityNotes} onChange={e => ed.setSection('personal', 'securityNotes', e.target.value)} disabled={disabled} maxLength={2000} /></div>
+        </div>
+      </FrCard>
+    )}
+
+    {tab === 'consent' && (
+      <FrCard title="Consent & declaration" subtitle="Read this statement to the employee and record their agreement.">
+        <p style={{ fontSize: 13, color: '#334155', lineHeight: 1.6, background: '#F7F9FC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, margin: '0 0 14px' }}>{CONSENT_STATEMENT}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <FrCheck checked={c.dataProcessing} onChange={v => ed.setSection('consent', 'dataProcessing', v)} disabled={disabled}>
+            <strong>Required:</strong> I consent to my personal information being collected, stored and processed as described above.
+          </FrCheck>
+          <FrCheck checked={c.familyContact} onChange={v => ed.setSection('consent', 'familyContact', v)} disabled={disabled}>
+            <strong>Required:</strong> I authorise HR to contact the family members / next of kin listed in this record in an emergency.
+          </FrCheck>
+          {(full || m.hasConditions) && <FrCheck checked={c.medicalDisclosure} onChange={v => ed.setSection('consent', 'medicalDisclosure', v)} disabled={disabled}>
+            I consent to the health information I have declared being held by HR for welfare and safety purposes{m.hasConditions ? ' (required — health conditions were declared)' : ''}.
+          </FrCheck>}
+          {(full || p.vettingStatus !== 'Not started') && <FrCheck checked={c.backgroundVetting} onChange={v => ed.setSection('consent', 'backgroundVetting', v)} disabled={disabled}>
+            I consent to background and security vetting where my role requires it{p.vettingStatus !== 'Not started' ? ' (required — a vetting status is set)' : ''}.
+          </FrCheck>}
+          <FrCheck checked={c.declarationTruthful} onChange={v => ed.setSection('consent', 'declarationTruthful', v)} disabled={disabled}>
+            <strong>Required:</strong> I confirm that the information given in this record is true and complete.
+          </FrCheck>
+        </div>
+        <div style={{ ...fr.grid2, marginTop: 16 }}>
+          <div>
+            <label style={cu.label}>Employee signature (type full name)</label>
+            <input style={s.loginInput} placeholder={employeeName} value={c.signedName} onChange={e => ed.setSection('consent', 'signedName', e.target.value)} disabled={disabled} maxLength={200} />
+          </div>
+          <div>
+            <label style={cu.label}>Date of consent</label>
+            <input type="date" style={s.loginInput} value={c.consentDate} onChange={e => ed.setSection('consent', 'consentDate', e.target.value)} disabled={disabled} />
+          </div>
+        </div>
+        <p style={fr.hint}>
+          Recorded by {recordedBy || auth.currentUser?.email || 'you'} when saved. The exported PDF also has signature lines for a wet-ink copy.
+        </p>
+      </FrCard>
+    )}
+    </>
+  );
+};
+
 // ─── Family & Personal Record Modal ─────────────────────────────────────────
+// Opened by the "Family Record" button. It collects the REQUIRED fields only
+// (parents / guardian, next of kin, marital status + spouse, consent). Optional
+// sections are captured on the New Employee form; they stay on file untouched
+// when this modal saves, and can be shown here with "Show optional sections".
 const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) => {
   const [tab, setTab] = useState('parents');
+  const [showAll, setShowAll] = useState(false);
   const [form, setForm] = useState(cloneEmptyFamilyRecord);
   const [existing, setExisting] = useState(null);   // the saved Firestore doc, or null for a new record
   const [loading, setLoading] = useState(true);
@@ -2490,33 +2772,25 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
     return () => { alive = false; };
   }, [employee.id, reloadKey]);
 
+  const mode = showAll ? 'full' : 'required';
+  const tabs = familyTabsFor(mode);
   const disabled = saving || !canEdit || loading;
-  const touch = () => { setJustSaved(false); setError(''); };
-  const setSection = (section, field, value) => { touch(); setForm(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } })); };
-  const setTop = (field, value) => { touch(); setForm(prev => ({ ...prev, [field]: value })); };
+  const onEdit = () => { setJustSaved(false); setError(''); };
 
-  const setBeneficiary = (i, field, value) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { ...b, [field]: value } : b) })); };
-  const clearBeneficiary = (i) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { fullName: '', relationship: '' } : b) })); };
-
-  const setCondition = (i, field, value) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c) } })); };
-  const addCondition = () => { touch(); setForm(prev => prev.medical.conditions.length >= MAX_CONDITIONS ? prev : ({ ...prev, medical: { ...prev.medical, conditions: [...prev.medical.conditions, { ...EMPTY_CONDITION }] } })); };
-  const removeCondition = (i) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.filter((_, idx) => idx !== i) } })); };
-  const toggleHasConditions = (checked) => {
-    touch();
-    setForm(prev => ({
-      ...prev,
-      medical: {
-        ...prev.medical, hasConditions: checked,
-        conditions: checked && prev.medical.conditions.length === 0 ? [{ ...EMPTY_CONDITION }] : prev.medical.conditions,
-      },
-    }));
+  const toggleShowAll = () => {
+    const next = !showAll;
+    setShowAll(next);
+    if (!next && !FAMILY_REQUIRED_TAB_KEYS.includes(tab)) setTab('parents');
   };
 
   const handleSave = async () => {
     setShowErrors(true); setError(''); setJustSaved(false);
     for (const t of FAMILY_TABS) {
       const msg = validateFamilyTab(t.key, form);
-      if (msg) { setTab(t.key); setError(msg); return; }
+      if (msg) {
+        if (!tabs.some(x => x.key === t.key)) setShowAll(true);   // problem is in a hidden optional section
+        setTab(t.key); setError(msg); return;
+      }
     }
     setSaving(true);
     const outcome = await onSave(employee, buildFamilyPayload(form), !existing);
@@ -2540,232 +2814,66 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
   };
 
   const tabInvalid = (key) => showErrors && !!validateFamilyTab(key, form);
-  const m = form.medical, p = form.personal, c = form.consent;
 
   return (
     <div style={ms.overlay} onClick={onClose}>
-      <div style={{ ...ms.modal, maxWidth: 780 }} onClick={e => e.stopPropagation()}>
-        <div style={{ ...ms.header, borderTop: '4px solid #7C3AED' }}>
-          <div>
-            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Family &amp; Personal Record</h3>
-            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+      <div style={{ ...ms.modal, maxWidth: 780, maxHeight: '94vh' }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #7C3AED', padding: '12px 20px' }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ margin: 0, padding: 0, border: 'none', color: '#1A3C5E', fontSize: 17 }}>Family &amp; Personal Record{showAll ? '' : ' — required details'}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13, lineHeight: 1.4 }}>
               {employeeFullName(employee)} · {employee.employeeCode} · Confidential — HR use only
             </p>
           </div>
-          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+          <button type="button" style={{ ...ms.closeBtn, width: 'auto', flexShrink: 0 }} onClick={onClose} title="Close">✕</button>
         </div>
 
-        <div style={{ padding: '10px 24px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
-          <div style={s.tabs}>
-            {FAMILY_TABS.map(t => (
-              <button key={t.key} type="button" style={{ ...s.tab, ...(tab === t.key ? s.tabActive : {}) }} onClick={() => setTab(t.key)}>
+        <div style={{ padding: '8px 20px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+          <div style={fr.tabs}>
+            {tabs.map(t => (
+              <button key={t.key} type="button" style={{ ...fr.tab, ...(tab === t.key ? fr.tabOn : {}) }} onClick={() => setTab(t.key)}>
                 <span>{t.icon}</span> {t.label}{tabInvalid(t.key) && <span style={fr.badge}>!</span>}
               </button>
             ))}
           </div>
         </div>
 
-        <div style={ms.body}>
-          {(
-            <>
-              {loading && <p style={{ ...fr.warn, background: '#EFF6FF', borderColor: '#BFDBFE', color: '#1D4ED8' }}>Checking for an existing record… the fields unlock in a moment.</p>}
-              {!loading && loadError && (
-                <div style={{ ...fr.warn, background: '#FEF2F2', borderColor: '#FECACA', color: '#991B1B' }}>
-                  <div>{loadError}</div>
-                  <div style={{ marginTop: 6 }}>You can still fill in the form and export a PDF, but it can't be saved until this is resolved.</div>
-                  <button type="button" style={{ ...fr.add, marginTop: 8 }} onClick={() => setReloadKey(k => k + 1)}>↻ Try again</button>
-                </div>
-              )}
-              {!canEdit && <p style={fr.warn}>You have read-only access — changes can't be saved.</p>}
-              {!loading && !loadError && !existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in each tab, then record the employee's consent on the last tab to save.</p>}
-
-              {tab === 'parents' && (
-                <>
-                  {[['mother', "Mother's details"], ['father', "Father's details"]].map(([key, title]) => (
-                    <FrCard key={key} title={title} subtitle="Full name and phone number are required; email is optional.">
-                      <div style={{ marginBottom: 12 }}>
-                        <FrCheck checked={form[key].notApplicable} onChange={v => setSection(key, 'notApplicable', v)} disabled={disabled}>
-                          Not applicable (deceased, unknown or not in contact)
-                        </FrCheck>
-                      </div>
-                      {!form[key].notApplicable && <FrPerson value={form[key]} onChange={(f, v) => setSection(key, f, v)} disabled={disabled} />}
-                    </FrCard>
-                  ))}
-                  <FrCard title="Guardian's details" subtitle="Only if the employee has a legal guardian (for example, in place of a parent).">
-                    <div style={{ marginBottom: 12 }}>
-                      <FrCheck checked={form.hasGuardian} onChange={v => setTop('hasGuardian', v)} disabled={disabled}>This employee has a guardian</FrCheck>
-                    </div>
-                    {form.hasGuardian && <FrPerson value={form.guardian} onChange={(f, v) => setSection('guardian', f, v)} disabled={disabled} showAddress />}
-                  </FrCard>
-                </>
-              )}
-
-              {tab === 'kin' && (
-                <FrCard title="Next of kin" subtitle="Who HR should contact first in an emergency. Everything except email is required.">
-                  <FrPerson value={form.nextOfKin} onChange={(f, v) => setSection('nextOfKin', f, v)} disabled={disabled} showAddress showRelationship />
-                </FrCard>
-              )}
-
-              {tab === 'marital' && (
-                <FrCard title="Marital status" subtitle="Tick if the employee is married to record spouse details.">
-                  <FrCheck checked={form.isMarried} onChange={v => setTop('isMarried', v)} disabled={disabled}>Married</FrCheck>
-                  {form.isMarried && (
-                    <div style={{ marginTop: 14 }}>
-                      <h4 style={{ ...fr.cardH, marginBottom: 10 }}>Spouse's details</h4>
-                      <FrPerson value={form.spouse} onChange={(f, v) => setSection('spouse', f, v)} disabled={disabled} showAddress />
-                    </div>
-                  )}
-                </FrCard>
-              )}
-
-              {tab === 'insurance' && (
-                <FrCard title="Health insurance beneficiaries (optional)" subtitle={`Up to ${MAX_BENEFICIARIES} people covered under the employee's health insurance. Leave a row blank if not needed.`}>
-                  {form.beneficiaries.map((b, i) => (
-                    <div key={i} style={{ ...fr.grid2, gridTemplateColumns: canEdit ? '1fr 1fr auto' : '1fr 1fr', alignItems: 'end', marginBottom: 12 }}>
-                      <div><label style={cu.label}>Beneficiary {i + 1} — full name</label><input style={s.loginInput} value={b.fullName} onChange={e => setBeneficiary(i, 'fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
-                      <div>
-                        <label style={cu.label}>Relationship</label>
-                        <select style={cu.select} value={b.relationship} onChange={e => setBeneficiary(i, 'relationship', e.target.value)} disabled={disabled}>
-                          <option value="">Select…</option>
-                          {BENEFICIARY_RELATIONSHIPS.map(r => <option key={r} value={r}>{r}</option>)}
-                        </select>
-                      </div>
-                      {canEdit && <button type="button" style={fr.rm} onClick={() => clearBeneficiary(i)} disabled={disabled || (!b.fullName && !b.relationship)}>Clear</button>}
-                    </div>
-                  ))}
-                </FrCard>
-              )}
-
-              {tab === 'health' && (
-                <>
-                  <FrCard title="Health declaration" subtitle="Anything the employer should be aware of to keep the employee safe and supported at work.">
-                    <FrCheck checked={m.hasConditions} onChange={toggleHasConditions} disabled={disabled}>
-                      The employee has health condition(s) the employer should be aware of
-                    </FrCheck>
-                    {m.hasConditions && (
-                      <div style={{ marginTop: 14 }}>
-                        {m.conditions.map((cond, i) => (
-                          <div key={i} style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, marginBottom: 10, background: '#F7F9FC' }}>
-                            <div style={fr.grid2}>
-                              <div><label style={cu.label}>Condition {i + 1}</label><input style={s.loginInput} placeholder="e.g. Asthma, Diabetes" value={cond.condition} onChange={e => setCondition(i, 'condition', e.target.value)} disabled={disabled} maxLength={200} /></div>
-                              <div><label style={cu.label}>Since (month / year)</label><input style={s.loginInput} placeholder="e.g. March 2019" value={cond.since} onChange={e => setCondition(i, 'since', e.target.value)} disabled={disabled} maxLength={60} /></div>
-                              <div>
-                                <label style={cu.label}>Severity</label>
-                                <select style={cu.select} value={cond.severity} onChange={e => setCondition(i, 'severity', e.target.value)} disabled={disabled}>
-                                  {CONDITION_SEVERITIES.map(v => <option key={v} value={v}>{v}</option>)}
-                                </select>
-                              </div>
-                              <div><label style={cu.label}>Treatment / management</label><input style={s.loginInput} value={cond.treatment} onChange={e => setCondition(i, 'treatment', e.target.value)} disabled={disabled} maxLength={300} /></div>
-                              <div style={fr.full}><label style={cu.label}>What the employer should know</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={cond.notes} onChange={e => setCondition(i, 'notes', e.target.value)} disabled={disabled} maxLength={1000} /></div>
-                            </div>
-                            {canEdit && <div style={{ marginTop: 8 }}><button type="button" style={fr.rm} onClick={() => removeCondition(i)} disabled={saving}>Remove condition</button></div>}
-                          </div>
-                        ))}
-                        {canEdit && m.conditions.length < MAX_CONDITIONS && (
-                          <button type="button" style={fr.add} onClick={addCondition} disabled={saving}>＋ Add another condition</button>
-                        )}
-                      </div>
-                    )}
-                  </FrCard>
-
-                  <FrCard title="Medical form & history" subtitle="All optional — complete what the employee is willing to share.">
-                    <div style={fr.grid2}>
-                      <div>
-                        <label style={cu.label}>Blood group</label>
-                        <select style={cu.select} value={m.bloodGroup} onChange={e => setSection('medical', 'bloodGroup', e.target.value)} disabled={disabled}>
-                          {BLOOD_GROUPS.map(b => <option key={b} value={b}>{b}</option>)}
-                        </select>
-                      </div>
-                      <div><label style={cu.label}>Last medical check-up</label><input type="date" style={s.loginInput} value={m.lastCheckup} onChange={e => setSection('medical', 'lastCheckup', e.target.value)} disabled={disabled} /></div>
-                      <div style={fr.full}><label style={cu.label}>Known allergies</label><input style={s.loginInput} placeholder="Food, drug or other allergies" value={m.allergies} onChange={e => setSection('medical', 'allergies', e.target.value)} disabled={disabled} maxLength={500} /></div>
-                      <div style={fr.full}><label style={cu.label}>Current medication</label><input style={s.loginInput} value={m.currentMedication} onChange={e => setSection('medical', 'currentMedication', e.target.value)} disabled={disabled} maxLength={500} /></div>
-                      <div style={fr.full}><label style={cu.label}>Past medical history</label><textarea style={{ ...s.loginInput, ...fr.area }} placeholder="Past surgeries, hospital admissions, chronic illness history" value={m.pastHistory} onChange={e => setSection('medical', 'pastHistory', e.target.value)} disabled={disabled} maxLength={2000} /></div>
-                      <div style={fr.full}><label style={cu.label}>Disability / workplace accommodation needed</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} value={m.accommodations} onChange={e => setSection('medical', 'accommodations', e.target.value)} disabled={disabled} maxLength={1000} /></div>
-                      <div style={fr.full}><label style={cu.label}>Emergency medical instructions</label><textarea style={{ ...s.loginInput, ...fr.area, minHeight: 56 }} placeholder="What colleagues should do in a medical emergency" value={m.emergencyInstructions} onChange={e => setSection('medical', 'emergencyInstructions', e.target.value)} disabled={disabled} maxLength={1000} /></div>
-                      <div><label style={cu.label}>Doctor's name</label><input style={s.loginInput} value={m.doctorName} onChange={e => setSection('medical', 'doctorName', e.target.value)} disabled={disabled} maxLength={200} /></div>
-                      <div><label style={cu.label}>Doctor's phone</label><input type="tel" style={s.loginInput} value={m.doctorPhone} onChange={e => setSection('medical', 'doctorPhone', e.target.value)} disabled={disabled} maxLength={40} /></div>
-                    </div>
-                  </FrCard>
-                </>
-              )}
-
-              {tab === 'personal' && (
-                <FrCard title="Personal record — security clearance" subtitle="Identity checks and vetting outcome. Visible only to authorised HR and admin users.">
-                  <div style={fr.grid2}>
-                    <div><label style={cu.label}>National ID number (NIN)</label><input style={s.loginInput} value={p.nationalId} onChange={e => setSection('personal', 'nationalId', e.target.value)} disabled={disabled} maxLength={40} /></div>
-                    <div><label style={cu.label}>Police clearance / good-conduct ref.</label><input style={s.loginInput} value={p.policeClearanceRef} onChange={e => setSection('personal', 'policeClearanceRef', e.target.value)} disabled={disabled} maxLength={80} /></div>
-                    <div><label style={cu.label}>Police clearance date</label><input type="date" style={s.loginInput} value={p.policeClearanceDate} onChange={e => setSection('personal', 'policeClearanceDate', e.target.value)} disabled={disabled} /></div>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
-                      <FrCheck checked={p.referencesVerified} onChange={v => setSection('personal', 'referencesVerified', v)} disabled={disabled}>Referees verified</FrCheck>
-                    </div>
-                    <div>
-                      <label style={cu.label}>Clearance level</label>
-                      <select style={cu.select} value={p.clearanceLevel} onChange={e => setSection('personal', 'clearanceLevel', e.target.value)} disabled={disabled}>
-                        {CLEARANCE_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={cu.label}>Vetting status</label>
-                      <select style={cu.select} value={p.vettingStatus} onChange={e => setSection('personal', 'vettingStatus', e.target.value)} disabled={disabled}>
-                        {VETTING_STATUSES.map(v => <option key={v} value={v}>{v}</option>)}
-                      </select>
-                    </div>
-                    <div><label style={cu.label}>Clearance granted on</label><input type="date" style={s.loginInput} value={p.clearanceGrantedOn} onChange={e => setSection('personal', 'clearanceGrantedOn', e.target.value)} disabled={disabled} /></div>
-                    <div><label style={cu.label}>Clearance expires on</label><input type="date" style={s.loginInput} value={p.clearanceExpiresOn} onChange={e => setSection('personal', 'clearanceExpiresOn', e.target.value)} disabled={disabled} /></div>
-                    <div style={fr.full}><label style={cu.label}>Security notes (HR only)</label><textarea style={{ ...s.loginInput, ...fr.area }} value={p.securityNotes} onChange={e => setSection('personal', 'securityNotes', e.target.value)} disabled={disabled} maxLength={2000} /></div>
-                  </div>
-                </FrCard>
-              )}
-
-              {tab === 'consent' && (
-                <FrCard title="Consent & declaration" subtitle="Read this statement to the employee and record their agreement.">
-                  <p style={{ fontSize: 13, color: '#334155', lineHeight: 1.6, background: '#F7F9FC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 12, margin: '0 0 14px' }}>{CONSENT_STATEMENT}</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <FrCheck checked={c.dataProcessing} onChange={v => setSection('consent', 'dataProcessing', v)} disabled={disabled}>
-                      <strong>Required:</strong> I consent to my personal information being collected, stored and processed as described above.
-                    </FrCheck>
-                    <FrCheck checked={c.familyContact} onChange={v => setSection('consent', 'familyContact', v)} disabled={disabled}>
-                      <strong>Required:</strong> I authorise HR to contact the family members / next of kin listed in this record in an emergency.
-                    </FrCheck>
-                    <FrCheck checked={c.medicalDisclosure} onChange={v => setSection('consent', 'medicalDisclosure', v)} disabled={disabled}>
-                      I consent to the health information I have declared being held by HR for welfare and safety purposes{m.hasConditions ? ' (required — health conditions were declared)' : ''}.
-                    </FrCheck>
-                    <FrCheck checked={c.backgroundVetting} onChange={v => setSection('consent', 'backgroundVetting', v)} disabled={disabled}>
-                      I consent to background and security vetting where my role requires it{p.vettingStatus !== 'Not started' ? ' (required — a vetting status is set)' : ''}.
-                    </FrCheck>
-                    <FrCheck checked={c.declarationTruthful} onChange={v => setSection('consent', 'declarationTruthful', v)} disabled={disabled}>
-                      <strong>Required:</strong> I confirm that the information given in this record is true and complete.
-                    </FrCheck>
-                  </div>
-                  <div style={{ ...fr.grid2, marginTop: 16 }}>
-                    <div>
-                      <label style={cu.label}>Employee signature (type full name)</label>
-                      <input style={s.loginInput} placeholder={employeeFullName(employee)} value={c.signedName} onChange={e => setSection('consent', 'signedName', e.target.value)} disabled={disabled} maxLength={200} />
-                    </div>
-                    <div>
-                      <label style={cu.label}>Date of consent</label>
-                      <input type="date" style={s.loginInput} value={c.consentDate} onChange={e => setSection('consent', 'consentDate', e.target.value)} disabled={disabled} />
-                    </div>
-                  </div>
-                  <p style={fr.hint}>
-                    Recorded by {(existing?.consent?.recordedBy) || auth.currentUser?.email || 'you'} when saved. The exported PDF also has signature lines for a wet-ink copy.
-                  </p>
-                </FrCard>
-              )}
-
-              {error && <p style={s.loginErr}>{error}</p>}
-              {justSaved && <p style={fr.ok}>✓ Record saved.</p>}
-            </>
+        <div style={{ ...ms.body, padding: '16px 20px' }}>
+          {loading && <p style={{ ...fr.warn, background: '#EFF6FF', borderColor: '#BFDBFE', color: '#1D4ED8' }}>Checking for an existing record… the fields unlock in a moment.</p>}
+          {!loading && loadError && (
+            <div style={{ ...fr.warn, background: '#FEF2F2', borderColor: '#FECACA', color: '#991B1B' }}>
+              <div>{loadError}</div>
+              <div style={{ marginTop: 6 }}>You can still fill in the form and export a PDF, but it can't be saved until this is resolved.</div>
+              <button type="button" style={{ ...fr.add, marginTop: 8 }} onClick={() => setReloadKey(k => k + 1)}>↻ Try again</button>
+            </div>
           )}
+          {!canEdit && <p style={fr.warn}>You have read-only access — changes can't be saved.</p>}
+          {!loading && !loadError && !existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in the required details, then record the employee's consent on the last tab to save.</p>}
+
+          <FamilySections
+            form={form} setForm={setForm} tab={tab} mode={mode}
+            disabled={disabled} canEdit={canEdit} onEdit={onEdit}
+            employeeName={employeeFullName(employee)} recordedBy={existing?.consent?.recordedBy || ''}
+          />
+
+          <p style={{ ...fr.hint, marginTop: 6 }}>
+            {showAll
+              ? 'Showing every section, including the optional ones.'
+              : 'Only the required fields are shown. Optional details (emails, insurance, health, personal record) are captured on the New Employee form and are kept as they are.'}{' '}
+            <button type="button" style={{ ...fr.link }} onClick={toggleShowAll}>{showAll ? 'Show required only' : 'Show optional sections'}</button>
+          </p>
+
+          {error && <p style={s.loginErr}>{error}</p>}
+          {justSaved && <p style={fr.ok}>✓ Record saved.</p>}
         </div>
 
-        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
-          <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
-          <button type="button" style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={handleExport} disabled={exporting}>
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end', padding: '10px 20px' }}>
+          <button type="button" style={{ ...ms.actionBtn, width: 'auto', background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
+          <button type="button" style={{ ...ms.actionBtn, width: 'auto', background: '#EFF6FF', color: '#1D4ED8', opacity: exporting ? 0.6 : 1 }} onClick={handleExport} disabled={exporting}>
             {exporting ? 'Preparing PDF…' : '⬇ Export PDF'}
           </button>
           {canEdit && (
-            <button type="button" style={{ ...ms.actionBtn, background: '#7C3AED', color: '#fff' }} onClick={handleSave} disabled={loading || !!loadError || saving}>
+            <button type="button" style={{ ...ms.actionBtn, width: 'auto', background: '#7C3AED', color: '#fff', opacity: (loading || !!loadError || saving) ? 0.55 : 1 }} onClick={handleSave} disabled={loading || !!loadError || saving}>
               {saving ? 'Saving…' : '💾 Save Record'}
             </button>
           )}
@@ -3165,7 +3273,7 @@ const HrManager = () => {
   }, []);
 
   // ── Employee CRUD ──────────────────────────────────────────────────────
-  const handleSaveEmployee = useCallback(async (form, photoDataUrl, isEdit) => {
+  const handleSaveEmployee = useCallback(async (form, photoDataUrl, isEdit, familyPayload = null) => {
     try {
       const name = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
       if (isEdit) {
@@ -3191,7 +3299,7 @@ const HrManager = () => {
       } else {
         const employeeCode = generateEmployeeCode();
         const ref = doc(collection(db, 'employees'));
-        await setDoc(ref, {
+        const employeeData = {
           employeeCode, firstName: form.firstName.trim(), lastName: form.lastName.trim(), email: form.email.trim(),
           phone: form.phone, gender: form.gender, dob: form.dob, department: form.department, position: form.position,
           jobGradeCode: form.jobGradeCode, engagementType: form.engagementType || ENGAGEMENT_TYPES[0],
@@ -3205,9 +3313,28 @@ const HrManager = () => {
           leaveBalance: { ...DEFAULT_LEAVE_BALANCES }, leaveUsed: { Annual: 0, Sick: 0, Compassionate: 0 },
           employmentHistory: [{ date: form.hireDate, event: isInternContract(form.contractType) ? 'Internship started' : 'Hired', note: `${form.position || form.department} · ${isInternContract(form.contractType) ? 'Learning-Based Internship' : form.jobGradeCode}` }],
           createdAt: serverTimestamp(), createdBy: auth.currentUser?.email || 'unknown',
-        });
+        };
+        if (familyPayload) {
+          // Profile + family record are written as ONE atomic batch, so a new
+          // employee can never exist half-captured. (The Firestore rule for the
+          // family record uses existsAfter() to accept this batch.)
+          const email = auth.currentUser?.email || 'unknown';
+          const batch = writeBatch(db);
+          batch.set(ref, employeeData);
+          batch.set(doc(db, FAMILY_COLLECTION, ref.id), {
+            ...familyPayload,
+            consent: { ...familyPayload.consent, recordedBy: email },
+            employeeId: ref.id, employeeName: name, employeeCode,
+            updatedAt: serverTimestamp(), updatedBy: email,
+            createdAt: serverTimestamp(), createdBy: email,
+          });
+          await batch.commit();
+        } else {
+          await setDoc(ref, employeeData);
+        }
         if (photoDataUrl) savePhotoLocal(ref.id, photoDataUrl);
         await logAudit('Created employee profile', name, employeeCode);
+        if (familyPayload) await logAudit('Created family & personal record', name);
       }
       return { success: true };
     } catch (err) {
@@ -3996,7 +4123,7 @@ const s = {
   topBar:      { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, flexWrap: 'wrap', gap: 12 },
   pageTitle:   { fontSize: 26, fontWeight: 700, color: '#1A3C5E', margin: 0 },
   pageSub:     { color: '#5A7A9A', margin: '4px 0 0', fontSize: 14 },
-  logoutBtn:   { padding: '8px 16px', background: '#fff', border: '1.5px solid #C5CDD6', color: '#4A6B8A', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  logoutBtn:   { width: 'auto', padding: '8px 16px', background: '#fff', border: '1.5px solid #C5CDD6', color: '#4A6B8A', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
   dashSwitcher: { display: 'flex', gap: 8, marginBottom: 28, borderBottom: '2px solid #E2E8F0', paddingBottom: 0, flexWrap: 'wrap' },
   dashTab:      { display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', borderBottom: '3px solid transparent', padding: '10px 4px 12px', fontSize: 14, fontWeight: 700, color: '#7A8A9A', cursor: 'pointer', marginBottom: -2 },
@@ -4007,7 +4134,7 @@ const s = {
 
   toolbar:     { display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14, alignItems: 'center' },
   tabs:        { display: 'flex', gap: 4, flexWrap: 'wrap' },
-  tab:         { background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 7, padding: '7px 12px', fontSize: 13, color: '#5A7A9A', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 },
+  tab:         { width: 'auto', background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 7, padding: '7px 12px', fontSize: 13, color: '#5A7A9A', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 },
   tabActive:   { background: '#7C3AED', color: '#fff', borderColor: '#7C3AED' },
   tabCount:    { background: 'rgba(0,0,0,0.12)', borderRadius: 10, padding: '1px 7px', fontSize: 11 },
   searchInput: { flex: 1, minWidth: 200, padding: '9px 14px', border: '1.5px solid #D0DCE8', borderRadius: 8, fontSize: 14, outline: 'none', fontFamily: 'inherit' },
@@ -4019,7 +4146,7 @@ const s = {
   th:          { padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#7A8A9A', textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' },
   tr:          { borderBottom: '1px solid #F0F4F8' },
   td:          { padding: '11px 14px', verticalAlign: 'middle', color: '#1A3C5E' },
-  btnShortlist:{ background: '#D1FAE5', color: '#065F46', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnShortlist:{ width: 'auto', background: '#D1FAE5', color: '#065F46', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnReject:   { background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnView:     { background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnDelete:   { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
@@ -4031,9 +4158,9 @@ const ms = {
   modalForm: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
   header:    { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 24px', borderBottom: '1px solid #E2E8F0', background: '#F7F9FC', borderRadius: '12px 12px 0 0', flexShrink: 0 },
   actionBar: { display: 'flex', gap: 8, padding: '12px 24px', borderBottom: '1px solid #E2E8F0', flexWrap: 'wrap', flexShrink: 0 },
-  actionBtn: { border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  actionBtn: { width: 'auto', border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   body:      { overflowY: 'auto', padding: '20px 24px', flex: 1, minHeight: 0 },
-  closeBtn:  { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#7A8A9A', lineHeight: 1, padding: 4 },
+  closeBtn:  { width: 'auto', background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#7A8A9A', lineHeight: 1, padding: 4 },
 };
 
 const gd = {
