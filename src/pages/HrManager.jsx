@@ -1997,7 +1997,7 @@ const EMPTY_FAMILY_RECORD = {
   hasGuardian: false,
   guardian: { fullName: '', phone: '', email: '', address: '' },
   nextOfKin: { fullName: '', phone: '', email: '', address: '', relationship: '' },
-  beneficiaries: [],
+  beneficiaries: [{ fullName: '', relationship: '' }, { fullName: '', relationship: '' }],
   isMarried: false,
   spouse: { fullName: '', phone: '', email: '', address: '' },
   medical: {
@@ -2026,9 +2026,11 @@ const mergeFamilyRecord = (saved) => {
   });
   out.hasGuardian = !!saved.hasGuardian;
   out.isMarried = !!saved.isMarried;
-  out.beneficiaries = Array.isArray(saved.beneficiaries)
-    ? saved.beneficiaries.slice(0, MAX_BENEFICIARIES).map(b => ({ fullName: b?.fullName || '', relationship: b?.relationship || '' }))
-    : [];
+  // Always two rows on screen; unused rows stay blank and are dropped on save.
+  const savedBens = Array.isArray(saved.beneficiaries) ? saved.beneficiaries.slice(0, MAX_BENEFICIARIES) : [];
+  out.beneficiaries = Array.from({ length: MAX_BENEFICIARIES }, (_, i) => ({
+    fullName: savedBens[i]?.fullName || '', relationship: savedBens[i]?.relationship || '',
+  }));
   out.medical.conditions = Array.isArray(saved.medical?.conditions)
     ? saved.medical.conditions.slice(0, MAX_CONDITIONS).map(c => ({ ...EMPTY_CONDITION, ...c }))
     : [];
@@ -2071,7 +2073,8 @@ const validateFamilyTab = (tab, f) => {
     case 'insurance': {
       for (let i = 0; i < f.beneficiaries.length; i++) {
         const b = f.beneficiaries[i];
-        if (!tr(b.fullName) || !tr(b.relationship)) return `Beneficiary ${i + 1}: enter both full name and relationship (or remove the row).`;
+        const filled = tr(b.fullName) || tr(b.relationship);
+        if (filled && (!tr(b.fullName) || !tr(b.relationship))) return `Beneficiary ${i + 1}: enter both full name and relationship (or clear the row).`;
       }
       return '';
     }
@@ -2449,40 +2452,51 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
   const [error, setError] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
+  // Loads any saved record in the background. The form itself is always shown
+  // (fields are only locked while this check is running), so a slow or failed
+  // read can never leave the modal empty.
   useEffect(() => {
     let alive = true;
+    setLoading(true); setLoadError('');
     (async () => {
       try {
-        const snap = await getDoc(doc(db, FAMILY_COLLECTION, employee.id));
+        const snap = await Promise.race([
+          getDoc(doc(db, FAMILY_COLLECTION, employee.id)),
+          new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('The request timed out.'), { code: 'timeout' })), 10000)),
+        ]);
         if (!alive) return;
         if (snap.exists()) {
           const d = snap.data();
           setExisting(d);
           setForm(mergeFamilyRecord(d));
         } else {
-          setForm(prev => ({ ...prev, consent: { ...prev.consent, consentDate: new Date().toISOString().slice(0, 10) } }));
+          setForm(prev => prev.consent.consentDate ? prev : ({ ...prev, consent: { ...prev.consent, consentDate: new Date().toISOString().slice(0, 10) } }));
         }
       } catch (err) {
         console.error('Family record load error:', err);
-        if (alive) setLoadError(err.code === 'permission-denied'
-          ? 'You do not have permission to view family & personal records.'
-          : 'Could not load this record: ' + err.message);
+        if (alive) setLoadError(
+          err.code === 'permission-denied'
+            ? 'Access to saved family records was denied. Make sure the updated Firestore rules (employeeFamilyRecords) are published and that your account has HR access.'
+            : err.code === 'timeout'
+              ? 'Checking for a saved record timed out — check your connection.'
+              : 'Could not check for a saved record: ' + err.message
+        );
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
-  }, [employee.id]);
+  }, [employee.id, reloadKey]);
 
-  const disabled = saving || !canEdit;
+  const disabled = saving || !canEdit || loading;
   const touch = () => { setJustSaved(false); setError(''); };
   const setSection = (section, field, value) => { touch(); setForm(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } })); };
   const setTop = (field, value) => { touch(); setForm(prev => ({ ...prev, [field]: value })); };
 
   const setBeneficiary = (i, field, value) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { ...b, [field]: value } : b) })); };
-  const addBeneficiary = () => { touch(); setForm(prev => prev.beneficiaries.length >= MAX_BENEFICIARIES ? prev : ({ ...prev, beneficiaries: [...prev.beneficiaries, { fullName: '', relationship: '' }] })); };
-  const removeBeneficiary = (i) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.filter((_, idx) => idx !== i) })); };
+  const clearBeneficiary = (i) => { touch(); setForm(prev => ({ ...prev, beneficiaries: prev.beneficiaries.map((b, idx) => idx === i ? { fullName: '', relationship: '' } : b) })); };
 
   const setCondition = (i, field, value) => { touch(); setForm(prev => ({ ...prev, medical: { ...prev.medical, conditions: prev.medical.conditions.map((c, idx) => idx === i ? { ...c, [field]: value } : c) } })); };
   const addCondition = () => { touch(); setForm(prev => prev.medical.conditions.length >= MAX_CONDITIONS ? prev : ({ ...prev, medical: { ...prev.medical, conditions: [...prev.medical.conditions, { ...EMPTY_CONDITION }] } })); };
@@ -2552,14 +2566,18 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
         </div>
 
         <div style={ms.body}>
-          {loading ? (
-            <p style={{ fontSize: 13, color: '#9AAAB8' }}>Loading record…</p>
-          ) : loadError ? (
-            <p style={s.loginErr}>{loadError}</p>
-          ) : (
+          {(
             <>
+              {loading && <p style={{ ...fr.warn, background: '#EFF6FF', borderColor: '#BFDBFE', color: '#1D4ED8' }}>Checking for an existing record… the fields unlock in a moment.</p>}
+              {!loading && loadError && (
+                <div style={{ ...fr.warn, background: '#FEF2F2', borderColor: '#FECACA', color: '#991B1B' }}>
+                  <div>{loadError}</div>
+                  <div style={{ marginTop: 6 }}>You can still fill in the form and export a PDF, but it can't be saved until this is resolved.</div>
+                  <button type="button" style={{ ...fr.add, marginTop: 8 }} onClick={() => setReloadKey(k => k + 1)}>↻ Try again</button>
+                </div>
+              )}
               {!canEdit && <p style={fr.warn}>You have read-only access — changes can't be saved.</p>}
-              {!existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in each tab, then record the employee's consent on the last tab to save.</p>}
+              {!loading && !loadError && !existing && canEdit && <p style={fr.warn}>No record exists for this employee yet. Fill in each tab, then record the employee's consent on the last tab to save.</p>}
 
               {tab === 'parents' && (
                 <>
@@ -2601,10 +2619,9 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
               )}
 
               {tab === 'insurance' && (
-                <FrCard title="Health insurance beneficiaries (optional)" subtitle={`Up to ${MAX_BENEFICIARIES} people covered under the employee's health insurance.`}>
-                  {form.beneficiaries.length === 0 && <p style={{ fontSize: 13, color: '#9AAAB8', margin: '0 0 12px' }}>No beneficiaries added.</p>}
+                <FrCard title="Health insurance beneficiaries (optional)" subtitle={`Up to ${MAX_BENEFICIARIES} people covered under the employee's health insurance. Leave a row blank if not needed.`}>
                   {form.beneficiaries.map((b, i) => (
-                    <div key={i} style={{ ...fr.grid2, gridTemplateColumns: '1fr 1fr auto', alignItems: 'end', marginBottom: 12 }}>
+                    <div key={i} style={{ ...fr.grid2, gridTemplateColumns: canEdit ? '1fr 1fr auto' : '1fr 1fr', alignItems: 'end', marginBottom: 12 }}>
                       <div><label style={cu.label}>Beneficiary {i + 1} — full name</label><input style={s.loginInput} value={b.fullName} onChange={e => setBeneficiary(i, 'fullName', e.target.value)} disabled={disabled} maxLength={200} /></div>
                       <div>
                         <label style={cu.label}>Relationship</label>
@@ -2613,12 +2630,9 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
                           {BENEFICIARY_RELATIONSHIPS.map(r => <option key={r} value={r}>{r}</option>)}
                         </select>
                       </div>
-                      {canEdit && <button type="button" style={fr.rm} onClick={() => removeBeneficiary(i)} disabled={saving}>Remove</button>}
+                      {canEdit && <button type="button" style={fr.rm} onClick={() => clearBeneficiary(i)} disabled={disabled || (!b.fullName && !b.relationship)}>Clear</button>}
                     </div>
                   ))}
-                  {canEdit && form.beneficiaries.length < MAX_BENEFICIARIES && (
-                    <button type="button" style={fr.add} onClick={addBeneficiary} disabled={saving}>＋ Add beneficiary</button>
-                  )}
                 </FrCard>
               )}
 
@@ -2747,7 +2761,7 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
 
         <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
           <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
-          <button type="button" style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={handleExport} disabled={loading || !!loadError || exporting}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#EFF6FF', color: '#1D4ED8' }} onClick={handleExport} disabled={exporting}>
             {exporting ? 'Preparing PDF…' : '⬇ Export PDF'}
           </button>
           {canEdit && (
