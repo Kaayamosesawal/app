@@ -955,12 +955,39 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
   const [error, setError] = useState('');
   const fileRef = useRef(null);
   // Family & personal record captured together with a NEW profile.
-  const [captureFamily, setCaptureFamily] = useState(true);
+  // For an existing employee the saved record is loaded below so it can be edited here.
+  const [captureFamily, setCaptureFamily] = useState(!initial);
+  const [familyExisting, setFamilyExisting] = useState(false);
+  const [familyLoading, setFamilyLoading] = useState(!!initial);
+  const [familyLoadError, setFamilyLoadError] = useState('');
   const [familyForm, setFamilyForm] = useState(() => {
     const f = cloneEmptyFamilyRecord();
     f.consent.consentDate = new Date().toISOString().slice(0, 10);
     return f;
   });
+  useEffect(() => {
+    if (!initial) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, FAMILY_COLLECTION, initial.id));
+        if (!alive) return;
+        if (snap.exists()) {
+          setFamilyForm(mergeFamilyRecord(snap.data()));
+          setFamilyExisting(true);
+          setCaptureFamily(true);
+        }
+      } catch (err) {
+        console.error('Background record load error:', err);
+        if (alive) setFamilyLoadError(err.code === 'permission-denied'
+          ? 'Access to background records was denied — publish the updated firestore.rules and check your HR access.'
+          : 'Could not load the saved background record: ' + err.message);
+      } finally {
+        if (alive) setFamilyLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [initial]);
   const [familyTab, setFamilyTab] = useState('parents');
   const [attempted, setAttempted] = useState(false);
   const errorRef = useRef(null);
@@ -998,7 +1025,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
       setError('For a learning-based intern, please fill in the institution, programme of study, and focus area.'); return;
     }
     setAttempted(true);
-    const withFamily = !isEdit && captureFamily;
+    const withFamily = captureFamily && !familyLoading && !familyLoadError;
     if (withFamily) {
       for (const t of FAMILY_TABS) {
         const msg = validateFamilyTab(t.key, familyForm);
@@ -1019,7 +1046,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
         <div style={{ ...ms.header, borderTop: '4px solid #7C3AED' }}>
           <div>
             <h3 style={{ margin: 0, padding: 0, border: 'none', color: '#1A3C5E', fontSize: 17 }}>{isEdit ? 'Edit Employee' : 'New Employee Profile'}</h3>
-            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>Master directory · job grade · contract dates · ID photo{isEdit ? '' : ' · family & personal record'}</p>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>Master directory · job grade · contract dates · ID photo · background record</p>
           </div>
           <button type="button" style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
         </div>
@@ -1146,22 +1173,23 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
               />
             </div>
 
-            {isEdit ? (
-              <p style={{ ...fr.hint, marginTop: 18 }}>
-                The background record (parents, next of kin, marital status, insurance, health, academic qualifications, security clearance and consent) is managed with the <strong>Background</strong> button.
-              </p>
-            ) : (
-              <div style={{ marginTop: 22, border: '1px solid #DDD6FE', borderRadius: 12, padding: 14, background: '#FAF5FF' }}>
+            <div style={{ marginTop: 22, border: '1px solid #DDD6FE', borderRadius: 12, padding: 14, background: '#FAF5FF' }}>
                 <h4 style={{ fontSize: 15, fontWeight: 800, color: '#5B21B6', margin: 0, padding: 0, border: 'none' }}>📋 Background Record</h4>
                 <p style={{ fontSize: 12, color: '#6B5B95', margin: '4px 0 12px' }}>
                   Confidential — visible to HR and admin only. Parents / guardian, next of kin, marital status, insurance beneficiaries, health, academic qualifications, security clearance and consent.
                 </p>
-                <FrCheck checked={captureFamily} onChange={setCaptureFamily} disabled={saving}>
-                  Capture the background record now
-                  <span style={{ color: '#7A8A9A' }}> — or untick to skip and complete it later with the “Background” button</span>
-                </FrCheck>
+                {familyLoading && <p style={{ ...fr.warn, background: '#EFF6FF', borderColor: '#BFDBFE', color: '#1D4ED8' }}>Loading the saved background record…</p>}
+                {!familyLoading && familyLoadError && <p style={{ ...fr.warn, background: '#FEF2F2', borderColor: '#FECACA', color: '#991B1B' }}>{familyLoadError} Employee details will still save; the background record is left untouched.</p>}
+                {!familyLoading && !familyLoadError && (
+                  <FrCheck checked={captureFamily} onChange={setCaptureFamily} disabled={saving}>
+                    {isEdit
+                      ? (familyExisting ? 'Save changes to the background record with this profile' : 'Add a background record for this employee now')
+                      : 'Capture the background record now'}
+                    <span style={{ color: '#7A8A9A' }}> — {isEdit ? 'untick to leave it unchanged (it can also be edited later from the “Background” button)' : 'or untick to skip and complete it later with the “Background” button'}</span>
+                  </FrCheck>
+                )}
 
-                {captureFamily && (
+                {captureFamily && !familyLoading && !familyLoadError && (
                   <div style={{ marginTop: 14 }}>
                     <div style={{ ...fr.tabs, marginBottom: 12 }}>
                       {FAMILY_TABS.map(t => (
@@ -1178,7 +1206,6 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
                   </div>
                 )}
               </div>
-            )}
 
             {error && <p ref={errorRef} style={s.loginErr}>{error}</p>}
           </div>
@@ -3342,7 +3369,7 @@ const HrManager = () => {
         const historyAdd = gradeChanged
           ? [{ date: new Date().toISOString().slice(0, 10), event: 'Job grade updated', note: `${before.jobGradeCode} → ${form.jobGradeCode}` }]
           : [];
-        await updateDoc(doc(db, 'employees', form.id), {
+        const empPatch = {
           firstName: form.firstName.trim(), lastName: form.lastName.trim(), email: form.email.trim(),
           phone: form.phone, gender: form.gender, dob: form.dob, department: form.department,
           position: form.position, jobGradeCode: form.jobGradeCode,
@@ -3353,7 +3380,28 @@ const HrManager = () => {
           origin: form.origin, reportsTo: form.reportsTo,
           ...internFieldsFromForm(form),
           ...(historyAdd.length ? { employmentHistory: [...(before.employmentHistory || []), ...historyAdd] } : {}),
-        });
+        };
+        if (familyPayload) {
+          // Profile changes + background record are saved in ONE atomic batch.
+          const email = auth.currentUser?.email;
+          if (!email) return { success: false, error: 'You are not signed in. Please sign in again.' };
+          const famRef = doc(db, FAMILY_COLLECTION, form.id);
+          const famSnap = await getDoc(famRef);
+          const famData = {
+            ...familyPayload,
+            consent: { ...familyPayload.consent, recordedBy: email },
+            employeeId: form.id, employeeName: name, employeeCode: before?.employeeCode || form.employeeCode || '',
+            updatedAt: serverTimestamp(), updatedBy: email,
+          };
+          const batch = writeBatch(db);
+          batch.update(doc(db, 'employees', form.id), empPatch);
+          if (famSnap.exists()) batch.update(famRef, famData);
+          else batch.set(famRef, { ...famData, createdAt: serverTimestamp(), createdBy: email });
+          await batch.commit();
+          await logAudit(famSnap.exists() ? 'Updated background record' : 'Created background record', name);
+        } else {
+          await updateDoc(doc(db, 'employees', form.id), empPatch);
+        }
         if (photoDataUrl) savePhotoLocal(form.id, photoDataUrl);
         await logAudit('Updated employee profile', name);
       } else {
