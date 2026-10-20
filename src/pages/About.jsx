@@ -526,7 +526,7 @@ const About = () => {
       {/* ── CTA ── */}
       <div className="about-cta">
         <h2>Slirus Global Inbound</h2>
-        <p>Connect with Slirus Global on LinkedIn and GitHub to explore partnerships, collaborations, and opportunities across software, finance, and uniforms.</p>
+        <p>Connect with Slirus Global on LinkedIn and GitHub to explore partnerships, collaborations, and opportunities across software, finance, and other inquiries.</p>
         <div className="about-cta-btns">
           {/* TODO: replace "#" with the LinkedIn link */}
           <a href="#" className="btn-white" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
