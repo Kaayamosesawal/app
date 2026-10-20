@@ -368,6 +368,7 @@ const Products = () => {
 
         .products-cta h2 {
           font-size: clamp(24px, 3vw, 36px);
+          color: #ffffff !important;
           font-weight: 800; margin-bottom: 14px;
         }
 
@@ -436,7 +437,7 @@ const Products = () => {
       {/* ── CTA ── */}
       <div className="products-cta">
         <h2>Check out Slirus Global Products</h2>
-        <p>Reach out and we'll walk you through a demo tailored to your organization's needs.</p>
+        <p>Stay connected with Slirus Global on WhatsApp and X for product updates, demos, and direct support from our team.</p>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap' }}>
           {/* TODO: replace "#" with the WhatsApp link */}
           <a href="#" aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">

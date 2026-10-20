@@ -488,11 +488,12 @@ const Home = () => {
 
         .cta-banner h2 {
           font-size: clamp(26px, 3vw, 38px);
+          color: #ffffff !important;
           font-weight: 800; margin-bottom: 14px;
         }
 
         .cta-banner p {
-          font-size: 18px; color: white;
+          font-size: 18px; color: #ffffff !important;
           margin-bottom: 28px; max-width: 480px;
           margin-left: auto; margin-right: auto; line-height: 1.7;
         }
@@ -696,7 +697,7 @@ const Home = () => {
       {/* ── CTA Banner ── */}
       <div className="cta-banner">
         <h2>Check out Slirus Global</h2>
-        <p>Tell us what you're building and we'll show you how we can help.</p>
+        <p>Follow Slirus Global on Instagram for updates, projects, and a closer look at how we are building Uganda's digital future.</p>
         {/* TODO: replace "#" with the Slirus Global Instagram link */}
         <a href="#" aria-label="Instagram" target="_blank" rel="noopener noreferrer">
           <i className="fab fa-instagram" style={{ fontSize: 22 }}></i>

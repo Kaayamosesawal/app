@@ -276,6 +276,7 @@ const About = () => {
         }
         .about-cta h2 {
           font-size: clamp(24px, 3vw, 36px);
+          color: #ffffff !important;
           font-weight: 800; margin-bottom: 10px;
         }
         .about-cta p {
@@ -525,7 +526,7 @@ const About = () => {
       {/* ── CTA ── */}
       <div className="about-cta">
         <h2>Slirus Global Inbound</h2>
-        <p>Whether you need software, financial solutions, or uniforms Slirus has you covered.</p>
+        <p>Connect with Slirus Global on LinkedIn and GitHub to explore partnerships, collaborations, and opportunities across software, finance, and uniforms.</p>
         <div className="about-cta-btns">
           {/* TODO: replace "#" with the LinkedIn link */}
           <a href="#" className="btn-white" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
