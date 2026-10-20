@@ -279,7 +279,7 @@ const About = () => {
           font-weight: 800; margin-bottom: 10px;
         }
         .about-cta p {
-          font-size: 18px; color: #94a3b8;
+          font-size: 18px; color: white;
           max-width: 500px; margin: 0 auto 24px; line-height: 1.7;
         }
         .about-cta-btns { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
@@ -524,14 +524,16 @@ const About = () => {
 
       {/* ── CTA ── */}
       <div className="about-cta">
-        <h2>Let's build something together</h2>
+        <h2>Slirus Global Inbound</h2>
         <p>Whether you need software, financial solutions, or uniforms Slirus has you covered.</p>
         <div className="about-cta-btns">
-          <a href="/services" className="btn-white">
-            Our Services <i className="fas fa-arrow-right"></i>
+          {/* TODO: replace "#" with the LinkedIn link */}
+          <a href="#" className="btn-white" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
+            <i className="fab fa-linkedin-in" style={{ fontSize: 22 }}></i>
           </a>
-          <a href="mailto:sales@slirus.com" className="btn-outline-white">
-            Contact Us <i className="fas fa-envelope"></i>
+          {/* TODO: replace "#" with the GitHub link */}
+          <a href="#" className="btn-outline-white" aria-label="GitHub" target="_blank" rel="noopener noreferrer">
+            <i className="fab fa-github" style={{ fontSize: 22 }}></i>
           </a>
         </div>
       </div>

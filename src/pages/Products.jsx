@@ -372,7 +372,7 @@ const Products = () => {
         }
 
         .products-cta p {
-          font-size: 18px; color: #94a3b8;
+          font-size: 18px; color: white;
           max-width: 460px; margin: 0 auto 32px; line-height: 1.7;
         }
 
@@ -435,11 +435,20 @@ const Products = () => {
 
       {/* ── CTA ── */}
       <div className="products-cta">
-        <h2>Interested in any of our products?</h2>
+        <h2>Check out Slirus Global Products</h2>
         <p>Reach out and we'll walk you through a demo tailored to your organization's needs.</p>
-        <a href="mailto:sales@slirus.com">
-          Request a Demo <i className="fas fa-arrow-right"></i>
-        </a>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap' }}>
+          {/* TODO: replace "#" with the WhatsApp link */}
+          <a href="#" aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">
+            <i className="fab fa-whatsapp" style={{ fontSize: 22 }}></i>
+          </a>
+          {/* TODO: replace "#" with the X link */}
+          <a href="#" aria-label="X" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+          </a>
+        </div>
       </div>
 
     </Layout>
