@@ -234,13 +234,15 @@ const TYPE_FILTERS = [
 const TrackSelector = ({ trackStatuses, statusLoading, onSelect }) => {
   const [filter, setFilter] = useState('all');
 
-  const visible = CAREER_TRACKS.filter(t => filter === 'all' || t.type === filter);
+  // Only open positions are listed — closed tracks are hidden from applicants.
+  const openTracks = CAREER_TRACKS.filter(t => trackStatuses[t.key] === true);
+  const visible = openTracks.filter(t => filter === 'all' || t.type === filter);
   const groups  = DIVISIONS.map(d => ({ ...d, tracks: visible.filter(t => t.division === d.name) }));
   const known   = new Set(DIVISIONS.map(d => d.name));
   const rest    = visible.filter(t => !known.has(t.division));
   if (rest.length) groups.push({ name: 'Other Opportunities', blurb: '', tracks: rest });
 
-  const openCount = CAREER_TRACKS.filter(t => trackStatuses[t.key] === true).length;
+  const openCount = openTracks.length;
 
   return (
     <div style={s.selectorWrap}>
@@ -248,7 +250,7 @@ const TrackSelector = ({ trackStatuses, statusLoading, onSelect }) => {
         <h1 style={s.selectorTitle}>Careers at Slirus Global Limited</h1>
         <p style={s.selectorSub}>
           Join our technology, fashion, agriculture and trade teams — through a job or a learning-based internship in any department. Select a position below to begin your application.
-          {!statusLoading && ` ${openCount} of ${CAREER_TRACKS.length} positions are currently open.`}
+          {!statusLoading && openCount > 0 && ` ${openCount} ${openCount === 1 ? 'position is' : 'positions are'} currently open.`}
         </p>
         <div style={s.filterBar}>
           {TYPE_FILTERS.map(f => (
@@ -265,6 +267,25 @@ const TrackSelector = ({ trackStatuses, statusLoading, onSelect }) => {
 
       {statusLoading ? (
         <TrackSkeleton />
+      ) : openCount === 0 ? (
+        <div style={s.noOpenings}>
+          <div style={{ fontSize: 46, marginBottom: 12 }}>🚪</div>
+          <span style={s.noOpeningsBadge}>No Current Openings</span>
+          <h2 style={s.noOpeningsTitle}>Great Things Are Coming — Your Future Could Start Here</h2>
+          <p style={s.noOpeningsBody}>
+            We are not hiring at this moment, but Slirus Global Limited is growing fast across technology,
+            fashion, agriculture and trade. New roles and learning-based internships open regularly — keep
+            sharpening your skills and be ready when the next opportunity arrives.
+          </p>
+          <p style={s.noOpeningsNote}>🔔 Please check back soon — positions appear here as soon as they open.</p>
+        </div>
+      ) : visible.length === 0 ? (
+        <div style={s.noOpenings}>
+          <h2 style={s.noOpeningsTitle}>No open positions in this category right now</h2>
+          <p style={s.noOpeningsBody}>
+            Try another category above — or check back soon, as new opportunities are added regularly.
+          </p>
+        </div>
       ) : (
         groups.filter(g => g.tracks.length).map(g => (
           <section key={g.name} style={s.divisionSection}>
@@ -826,7 +847,7 @@ const Apply = () => {
   }
 
   // ── Track was closed between selection and loading ──
-  if (trackStatuses[selectedTrack.key] === false) {
+  if (!statusLoading && trackStatuses[selectedTrack.key] !== true) {
     return (
       <Layout>
         <ClosedNotice track={selectedTrack} onBack={() => setSelectedTrack(null)} />
@@ -914,6 +935,11 @@ const s = {
   centreWrap:      { minHeight: '70vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' },
   spinner:         { width: 36, height: 36, borderRadius: '50%', border: '3px solid #E2E8F0', borderTopColor: '#2E6DA4', animation: 'spin 0.8s linear infinite' },
 
+  noOpenings:      { maxWidth: 760, margin: '24px auto 0', background: 'linear-gradient(135deg, #EFF6FF 0%, #F8FAFC 100%)', border: '1px solid #DBEAFE', borderRadius: 18, padding: '48px 32px', textAlign: 'center', boxShadow: '0 4px 24px rgba(37,99,235,0.08)' },
+  noOpeningsBadge: { display: 'inline-block', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 14px', borderRadius: 20, marginBottom: 14 },
+  noOpeningsTitle: { fontSize: 24, fontWeight: 800, color: '#1A3C5E', margin: '0 0 12px', lineHeight: 1.3 },
+  noOpeningsBody:  { fontSize: 15, color: '#4A6B8A', lineHeight: 1.75, maxWidth: 580, margin: '0 auto 14px' },
+  noOpeningsNote:  { fontSize: 14, fontWeight: 600, color: '#1E40AF', margin: '18px 0 0' },
   noticeCard:      { maxWidth: 520, width: '100%', background: '#fff', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', border: '1px solid #E2E8F0', padding: '48px 40px', textAlign: 'center' },
   noticeTitle:     { fontSize: 22, fontWeight: 700, color: '#1A3C5E', margin: '0 0 12px' },
   noticeBody:      { fontSize: 15, color: '#4A6B8A', lineHeight: 1.7, margin: '0 0 24px' },

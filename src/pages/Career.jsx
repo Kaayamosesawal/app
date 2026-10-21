@@ -9,6 +9,9 @@
  *     CAREER_TRACKS so careerTracks.js is the single source of truth.
  *  3. Apply Now passes { state: { trackKey } } so Apply.jsx can pre-select
  *     the track the user just read — no double-picking.
+ *  4. Visitors only see OPEN positions. Closed tracks are hidden entirely.
+ *     When nothing is open, a friendly "no current openings" notice with
+ *     encouraging copy is shown instead of an empty page.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -252,6 +255,12 @@ const Career = () => {
     return unsub;
   }, []);
 
+  // Visitors only see positions that are currently open (admin toggles in
+  // Admin.jsx write true/false to settings/applicationStatus).
+  const openJobs        = jobTracks.filter(t => trackStatuses[t.key] === true);
+  const openInternships = internshipTracks.filter(t => trackStatuses[t.key] === true);
+  const noOpenings      = !statusLoading && openJobs.length === 0 && openInternships.length === 0;
+
   return (
     <Layout>
       <style>{`
@@ -461,6 +470,60 @@ const Career = () => {
         }
         .intern-detail-block ul li i { color: #10b981; font-size: 12px; margin-top: 4px; flex-shrink: 0; }
 
+        /* No-openings notice */
+        .no-openings {
+          background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+          border: 1px solid #dbeafe;
+          border-radius: 20px;
+          padding: 56px 40px;
+          text-align: center;
+          box-shadow: 0 4px 24px rgba(37,99,235,0.08);
+          max-width: 820px;
+          margin: 24px auto 0;
+        }
+        .no-openings-icon {
+          width: 76px; height: 76px;
+          border-radius: 50%;
+          background: white;
+          border: 2px solid #bfdbfe;
+          display: flex; align-items: center; justify-content: center;
+          margin: 0 auto 22px;
+        }
+        .no-openings-icon i { font-size: 30px; color: #2563eb; }
+        .no-openings-badge {
+          display: inline-block;
+          background: #fef3c7; color: #92400e;
+          border: 1px solid #fde68a;
+          font-size: 12px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.06em;
+          padding: 4px 14px; border-radius: 20px;
+          margin-bottom: 16px;
+        }
+        .no-openings h3 {
+          font-size: 28px; font-weight: 800; color: #0f172a;
+          margin: 0 0 14px; line-height: 1.25;
+        }
+        .no-openings p {
+          font-size: 17px; color: #475569; line-height: 1.75;
+          max-width: 620px; margin: 0 auto 14px;
+        }
+        .no-openings-points {
+          display: flex; gap: 14px; flex-wrap: wrap;
+          justify-content: center; margin-top: 28px;
+        }
+        .no-openings-point {
+          background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+          padding: 14px 18px; font-size: 14px; font-weight: 600; color: #334155;
+          display: flex; align-items: center; gap: 8px;
+        }
+        .no-openings-point i { color: #2563eb; }
+        .no-openings p.no-openings-note {
+          margin-top: 26px; font-size: 15px; font-weight: 600; color: #1e40af;
+        }
+        .openings-loading {
+          text-align: center; color: #64748b; font-size: 16px; padding: 40px 0;
+        }
+
         .section-label {
           font-size: 13px; font-weight: 700;
           color: #2563eb; text-transform: uppercase;
@@ -475,6 +538,8 @@ const Career = () => {
           .job-card-header, .job-card-body,
           .intern-card-header, .intern-card-body { padding: 20px; }
           .job-detail-grid, .intern-detail-grid { grid-template-columns: 1fr; }
+          .no-openings { padding: 40px 22px; }
+          .no-openings h3 { font-size: 23px; }
         }
       `}</style>
 
@@ -489,32 +554,68 @@ const Career = () => {
       <section className="section">
         <div className="container">
 
-          {/* Job Tracks */}
-          <p className="section-label"><i className="fas fa-briefcase"></i> Career Track</p>
-          <h2 className="section-title">Track List</h2>
+          {statusLoading && (
+            <p className="openings-loading">
+              <i className="fas fa-spinner fa-spin"></i> Checking current openings…
+            </p>
+          )}
 
-          {jobTracks.map((track) => (
-            <JobCard
-              key={track.key}
-              track={track}
-              isOpen={trackStatuses[track.key] === true}
-              statusLoading={statusLoading}
-            />
-          ))}
+          {/* No current openings notice */}
+          {noOpenings && (
+            <div className="no-openings">
+              <div className="no-openings-icon"><i className="fas fa-door-open"></i></div>
+              <span className="no-openings-badge">No Current Openings</span>
+              <h3>Great Things Are Coming — Your Future Could Start Here</h3>
+              <p>
+                We are not hiring at this moment, but Slirus Global Limited is growing fast across
+                technology, fashion, agriculture and trade. Exceptional people are always the heart
+                of what we build, and new roles and learning-based internships open regularly.
+              </p>
+              <p>
+                Keep sharpening your skills, stay curious, and be ready — the next opportunity to
+                join a driven, ambitious team could be just around the corner.
+              </p>
+              <div className="no-openings-points">
+                <span className="no-openings-point"><i className="fas fa-rocket"></i> Fast-growing company</span>
+                <span className="no-openings-point"><i className="fas fa-users"></i> Passionate, supportive team</span>
+                <span className="no-openings-point"><i className="fas fa-seedling"></i> Real room to grow</span>
+              </div>
+              <p className="no-openings-note">
+                <i className="fas fa-bell"></i> Please check back soon — new positions are posted here as soon as they open.
+              </p>
+            </div>
+          )}
 
-          {/* Internship Tracks */}
-          {internshipTracks.length > 0 && (
+          {/* Job Tracks – open positions only */}
+          {!statusLoading && openJobs.length > 0 && (
             <>
-              <p className="section-label" style={{ marginTop: '36px' }}>
+              <p className="section-label"><i className="fas fa-briefcase"></i> Career Track</p>
+              <h2 className="section-title">Track List</h2>
+
+              {openJobs.map((track) => (
+                <JobCard
+                  key={track.key}
+                  track={track}
+                  isOpen={true}
+                  statusLoading={statusLoading}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Internship Tracks – open positions only */}
+          {!statusLoading && openInternships.length > 0 && (
+            <>
+              <p className="section-label" style={{ marginTop: openJobs.length > 0 ? '36px' : 0 }}>
                 <i className="fas fa-user-graduate"></i> Internship Program
               </p>
               <h2 className="section-title">Paid Internship</h2>
 
-              {internshipTracks.map((track) => (
+              {openInternships.map((track) => (
                 <InternCard
                   key={track.key}
                   track={track}
-                  isOpen={trackStatuses[track.key] === true}
+                  isOpen={true}
                   statusLoading={statusLoading}
                 />
               ))}
