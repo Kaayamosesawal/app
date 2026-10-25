@@ -54,6 +54,10 @@ import {
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
 import QRCode from 'qrcode';
+import {
+  HIRING_COLLECTION, HIRING_STAGES, HIRING_STAGE_META, HIRING_STEPS, BACKGROUND_TODO,
+  buildEmployeeDraft, buildBackgroundDraft,
+} from '../utils/hiringPipeline';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 // NOTE: This is a UX gate only. The real authorization boundary must live in
@@ -946,9 +950,11 @@ const internFieldsFromForm = (form) => isInternContract(form.contractType)
     }
   : { internStatus: '', internInstitution: '', internProgramme: '', internFocusArea: '' };
 
-const EmployeeFormModal = ({ initial, onClose, onSave }) => {
+// `prefill` = { approval, employee, background } when onboarding an applicant approved in Admin.jsx:
+// the profile fields and the background record start out filled from the CV.
+const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
   const isEdit = !!initial;
-  const [form, setForm] = useState(initial ? { ...EMPTY_EMPLOYEE, ...initial } : EMPTY_EMPLOYEE);
+  const [form, setForm] = useState(initial ? { ...EMPTY_EMPLOYEE, ...initial } : prefill ? { ...EMPTY_EMPLOYEE, ...prefill.employee } : EMPTY_EMPLOYEE);
   const [photoPreview, setPhotoPreview] = useState(() => initial ? getPhotoLocal(initial.id) : null);
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -963,6 +969,10 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
   const [familyForm, setFamilyForm] = useState(() => {
     const f = cloneEmptyFamilyRecord();
     f.consent.consentDate = new Date().toISOString().slice(0, 10);
+    if (prefill?.background) {
+      if (prefill.background.academics?.length) f.academics = prefill.background.academics.map(a => ({ ...EMPTY_ACADEMIC, ...a }));
+      f.personal = { ...f.personal, ...(prefill.background.personal || {}) };
+    }
     return f;
   });
   useEffect(() => {
@@ -1034,7 +1044,7 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
     }
     setSaving(true); setError('');
     const cleanedForm = { ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '' };
-    const outcome = await onSave(cleanedForm, photoDataUrl, isEdit, withFamily ? buildFamilyPayload(familyForm) : null);
+    const outcome = await onSave(cleanedForm, photoDataUrl, isEdit, withFamily ? buildFamilyPayload(familyForm) : null, prefill?.approval || null);
     setSaving(false);
     if (!outcome.success) setError(outcome.error || 'Could not save the employee record.');
     else onClose();
@@ -1052,6 +1062,25 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
         </div>
         <form onSubmit={handleSubmit} style={ms.modalForm}>
           <div style={ms.body}>
+            {prefill && (
+              <div style={{ border: '1px solid #A7F3D0', background: '#ECFDF5', borderRadius: 12, padding: '12px 14px', marginBottom: 18 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: '#065F46' }}>
+                  Pre-filled from {prefill.approval.fullName}&apos;s application
+                </div>
+                <p style={{ fontSize: 12.5, color: '#047857', margin: '4px 0 8px', lineHeight: 1.55 }}>
+                  Approved by {prefill.approval.approvedBy || 'the admin'} after both interviews
+                  {prefill.approval.onlineScorePercent != null ? ` (online ${prefill.approval.onlineScorePercent}%)` : ''}.
+                  Name, contact, position, department, contract type and qualifications came from the CV — check them, then add what a CV cannot tell us:
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: '#065F46', lineHeight: 1.6 }}>
+                  {BACKGROUND_TODO.map(t => <li key={t}>{t}</li>)}
+                  <li>Job grade, hire / contract dates and bank account</li>
+                </ul>
+                {prefill.approval.round2Notes && (
+                  <p style={{ fontSize: 12.5, color: '#065F46', margin: '8px 0 0' }}><strong>Panel notes:</strong> {prefill.approval.round2Notes}</p>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 18 }}>
               <div style={{ width: 72, height: 72, borderRadius: '50%', overflow: 'hidden', background: '#F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #E2E8F0', flexShrink: 0 }}>
                 {photoPreview ? <img src={photoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 28 }}>🙂</span>}
@@ -1218,6 +1247,104 @@ const EmployeeFormModal = ({ initial, onClose, onSave }) => {
         </form>
       </div>
     </div>
+  );
+};
+
+// ── New Hires queue (applicants approved in Admin.jsx) ───────────────────────
+const HireStepper = ({ stage }) => {
+  const current = HIRING_STAGE_META[stage]?.step ?? 2;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+      {HIRING_STEPS.map((label, i) => {
+        const n = i + 1; const done = n < current || stage === HIRING_STAGES.COMPLETED; const active = n === current && !done;
+        return (
+          <React.Fragment key={label}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: done ? '#065F46' : active ? '#5B21B6' : '#94A3B8' }}>
+              <span style={{ width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, background: done ? '#10B981' : active ? '#7C3AED' : '#E2E8F0', color: done || active ? '#fff' : '#64748B' }}>{done ? '✓' : n}</span>
+              {label}
+            </span>
+            {n < HIRING_STEPS.length && <span style={{ width: 10, height: 2, background: done ? '#10B981' : '#E2E8F0' }} />}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+const NewHiresPanel = ({ hires, loading, error, canWrite, onOnboard }) => {
+  const waiting = hires.filter(h => h.stage === HIRING_STAGES.AWAITING_HR);
+  const handedOver = hires.filter(h => h.stage !== HIRING_STAGES.AWAITING_HR);
+  const when = (t) => (t?.toDate ? t.toDate().toLocaleDateString('en-UG') : '—');
+  const Row = ({ h, action }) => {
+    const m = HIRING_STAGE_META[h.stage] || HIRING_STAGE_META.awaiting_hr;
+    return (
+      <tr style={s.tr}>
+        <td style={s.td}>
+          <strong style={{ color: '#1A3C5E' }}>{h.fullName}</strong>
+          <div style={{ fontSize: 12, color: '#7A8A9A', marginTop: 2 }}>{h.email}{h.phone ? ` · ${h.phone}` : ''}</div>
+          <HireStepper stage={h.stage} />
+        </td>
+        <td style={s.td}>
+          <div style={{ fontSize: 13, color: '#1A3C5E', fontWeight: 600 }}>{h.proposedPosition || h.program}</div>
+          <div style={{ fontSize: 12, color: '#7A8A9A' }}>{h.proposedDepartment} · {h.proposedContractType}</div>
+        </td>
+        <td style={{ ...s.td, fontSize: 12, color: '#5A7A9A' }}>
+          {h.onlineScorePercent != null ? `Online ${h.onlineScorePercent}%` : 'Online ✓'}<br />In-person ✓ {h.round2Date || ''}
+        </td>
+        <td style={{ ...s.td, fontSize: 12, color: '#5A7A9A', whiteSpace: 'nowrap' }}>
+          <span style={{ display: 'inline-block', background: m.bg, color: m.color, borderRadius: 12, padding: '2px 9px', fontSize: 11, fontWeight: 700 }}>{m.label}</span>
+          <div style={{ marginTop: 4 }}>Start {h.proposedStartDate || '—'}</div>
+        </td>
+        <td style={s.td}>{action}</td>
+      </tr>
+    );
+  };
+  const head = (
+    <thead><tr style={s.thead}>
+      <th style={s.th}>Candidate</th><th style={s.th}>Placement</th><th style={s.th}>Interviews</th><th style={s.th}>Stage</th><th style={s.th}>Action</th>
+    </tr></thead>
+  );
+  return (
+    <>
+      <h2 style={s.sectionHead}>New Hires — approved after both interviews</h2>
+      <p style={{ fontSize: 13, color: '#5A7A9A', margin: '-6px 0 14px', lineHeight: 1.6 }}>
+        The admin has approved these applicants. Press <strong>Onboard</strong> to open the employee form with their CV details already filled in,
+        complete the rest, and save — the CEO is then notified to create their login account.
+      </p>
+      {error && <p style={s.loginErr}>{error}</p>}
+      <div style={s.tableWrap}>
+        {loading ? <div style={s.tableMsg}>Loading new hires…</div>
+          : waiting.length === 0 ? <div style={s.tableMsg}>No approved applicants are waiting for onboarding.</div>
+          : (
+            <table style={s.table}>{head}<tbody>
+              {waiting.map(h => (
+                <Row key={h.id} h={h} action={
+                  canWrite
+                    ? <button style={{ ...s.btnView, background: '#7C3AED', color: '#fff' }} onClick={() => onOnboard(h)}>Onboard</button>
+                    : <span style={{ fontSize: 12, color: '#94A3B8' }}>Needs HR write access</span>
+                } />
+              ))}
+            </tbody></table>
+          )}
+      </div>
+
+      {handedOver.length > 0 && (
+        <>
+          <h2 style={{ ...s.sectionHead, marginTop: 28 }}>Handed over</h2>
+          <div style={s.tableWrap}>
+            <table style={s.table}>{head}<tbody>
+              {handedOver.map(h => (
+                <Row key={h.id} h={h} action={
+                  <span style={{ fontSize: 12, color: '#5A7A9A' }}>
+                    {h.employeeCode ? `${h.employeeCode} · ` : ''}HR done {when(h.hrCompletedAt)}
+                  </span>
+                } />
+              ))}
+            </tbody></table>
+          </div>
+        </>
+      )}
+    </>
   );
 };
 
@@ -3175,6 +3302,11 @@ const HrManager = () => {
   const [idCardTarget, setIdCardTarget] = useState(null);
   const [businessCardTarget, setBusinessCardTarget] = useState(null);
   const [familyTarget, setFamilyTarget] = useState(null);
+  // Approved hires (Admin.jsx → HR). hireDraft = the hire currently being onboarded in the employee form.
+  const [hires, setHires] = useState([]);
+  const [loadingHires, setLoadingHires] = useState(true);
+  const [hiresError, setHiresError] = useState(null);
+  const [hireDraft, setHireDraft] = useState(null);
   const [busyEmployeeId, setBusyEmployeeId] = useState(null);
 
   // Attendance (read-only, for the profile modal)
@@ -3346,6 +3478,27 @@ const HrManager = () => {
     }
   }, []);
 
+  // ── New-hire queue listener (hiringApprovals, written by Admin.jsx) ──────
+  useEffect(() => {
+    if (!isAuthorized) { setHires([]); return; }
+    setLoadingHires(true);
+    const unsub = onSnapshot(
+      collection(db, HIRING_COLLECTION),
+      (snap) => {
+        setHiresError(null);
+        setHires(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.approvedAt?.toMillis?.() || 0) - (a.approvedAt?.toMillis?.() || 0)));
+        setLoadingHires(false);
+      },
+      (err) => {
+        console.error('hiringApprovals listen error:', err);
+        setHiresError(err.code === 'permission-denied' ? 'Permission denied reading new hires — publish the updated firestore.rules.' : 'Could not load new hires: ' + err.message);
+        setLoadingHires(false);
+      }
+    );
+    return unsub;
+  }, [isAuthorized]);
+
   const logAudit = useCallback(async (action, target, details = '') => {
     try {
       await addDoc(collection(db, 'auditLogs'), {
@@ -3360,7 +3513,7 @@ const HrManager = () => {
   }, []);
 
   // ── Employee CRUD ──────────────────────────────────────────────────────
-  const handleSaveEmployee = useCallback(async (form, photoDataUrl, isEdit, familyPayload = null) => {
+  const handleSaveEmployee = useCallback(async (form, photoDataUrl, isEdit, familyPayload = null, approval = null) => {
     try {
       const name = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
       if (isEdit) {
@@ -3422,20 +3575,30 @@ const HrManager = () => {
           employmentHistory: [{ date: form.hireDate, event: isInternContract(form.contractType) ? 'Internship started' : 'Hired', note: `${form.position || form.department} · ${isInternContract(form.contractType) ? 'Learning-Based Internship' : form.jobGradeCode}` }],
           createdAt: serverTimestamp(), createdBy: auth.currentUser?.email || 'unknown',
         };
-        if (familyPayload) {
+        if (approval) { employeeData.applicationId = approval.applicationId; employeeData.hiringApprovalId = approval.id; }
+        if (familyPayload || approval) {
           // Profile + family record are written as ONE atomic batch, so a new
           // employee can never exist half-captured. (The Firestore rule for the
           // family record uses existsAfter() to accept this batch.)
           const email = auth.currentUser?.email || 'unknown';
           const batch = writeBatch(db);
           batch.set(ref, employeeData);
-          batch.set(doc(db, FAMILY_COLLECTION, ref.id), {
+          if (familyPayload) batch.set(doc(db, FAMILY_COLLECTION, ref.id), {
             ...familyPayload,
             consent: { ...familyPayload.consent, recordedBy: email },
             employeeId: ref.id, employeeName: name, employeeCode,
             updatedAt: serverTimestamp(), updatedBy: email,
             createdAt: serverTimestamp(), createdBy: email,
           });
+          // Onboarding an approved hire: hand the pipeline on to the CEO in the same commit,
+          // so an employee can never exist without the hire moving to "awaiting account".
+          if (approval) {
+            batch.update(doc(db, HIRING_COLLECTION, approval.id), {
+              stage: HIRING_STAGES.AWAITING_ACCOUNT,
+              employeeId: ref.id, employeeCode,
+              hrCompletedAt: serverTimestamp(), hrCompletedBy: email,
+            });
+          }
           await batch.commit();
         } else {
           await setDoc(ref, employeeData);
@@ -3443,6 +3606,7 @@ const HrManager = () => {
         if (photoDataUrl) savePhotoLocal(ref.id, photoDataUrl);
         await logAudit('Created employee profile', name, employeeCode);
         if (familyPayload) await logAudit('Created background record', name);
+        if (approval) await logAudit('Onboarded approved hire', name, `application ${approval.applicationId} → awaiting CEO account`);
       }
       return { success: true };
     } catch (err) {
@@ -3450,6 +3614,12 @@ const HrManager = () => {
       return { success: false, error: err.message };
     }
   }, [employees, logAudit]);
+
+  const startOnboarding = useCallback((hire) => {
+    setEditingEmployee(null);
+    setHireDraft({ approval: hire, employee: buildEmployeeDraft(hire), background: buildBackgroundDraft(hire) });
+    setShowEmployeeForm(true);
+  }, []);
 
   const handleDeleteEmployee = useCallback(async (employee) => {
     const confirmed = window.confirm(`Permanently delete ${employeeFullName(employee)}'s profile? This cannot be undone.`);
@@ -3764,6 +3934,7 @@ const HrManager = () => {
         <div style={s.dashSwitcher}>
           <button style={{ ...s.dashTab, ...(activeTab === 'dashboard' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('dashboard')}>📊 Dashboard</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'employees' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('employees')}>🧑‍🤝‍🧑 Employees <span style={s.tabCount}>{employees.length}</span></button>
+          <button style={{ ...s.dashTab, ...(activeTab === 'onboarding' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('onboarding')}>New Hires {hires.some(h => h.stage === HIRING_STAGES.AWAITING_HR) && <span style={{ ...s.tabCount, background: '#EDE9FE', color: '#5B21B6' }}>{hires.filter(h => h.stage === HIRING_STAGES.AWAITING_HR).length}</span>}</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'contracts' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('contracts')}>📄 Contracts {expiringSoon.length > 0 && <span style={{ ...s.tabCount, background: '#FEF3C7', color: '#92400E' }}>{expiringSoon.length}</span>}</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'payroll' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('payroll')}>💵 Payroll & Grades</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'leave' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('leave')}>🌴 Leave <span style={s.tabCount}>{leaveCounts.pending}</span></button>
@@ -3797,6 +3968,11 @@ const HrManager = () => {
           </>
         )}
 
+        {/* New Hires (approved in Admin.jsx) */}
+        {activeTab === 'onboarding' && (
+          <NewHiresPanel hires={hires} loading={loadingHires} error={hiresError} canWrite={canWrite} onOnboard={startOnboarding} />
+        )}
+
         {/* ── Employees ── */}
         {activeTab === 'employees' && (
           <>
@@ -3805,7 +3981,7 @@ const HrManager = () => {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button style={s.tab} onClick={exportEmployeesCSV}>⬇ Export CSV</button>
                 {canWrite && (
-                  <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#7C3AED' }} onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }}>
+                  <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#7C3AED' }} onClick={() => { setEditingEmployee(null); setHireDraft(null); setShowEmployeeForm(true); }}>
                     ➕ New Employee
                   </button>
                 )}
@@ -4169,8 +4345,10 @@ const HrManager = () => {
 
       {showEmployeeForm && (
         <EmployeeFormModal
+          key={hireDraft ? `hire-${hireDraft.approval.id}` : (editingEmployee?.id || 'new')}
           initial={editingEmployee}
-          onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}
+          prefill={hireDraft}
+          onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); setHireDraft(null); }}
           onSave={handleSaveEmployee}
         />
       )}

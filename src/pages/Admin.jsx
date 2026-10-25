@@ -14,6 +14,11 @@
  *    30 minutes run out) a score card pops up here and "Select Round 2" appears for the
  *    in-person interview.
  *  - Admin-copy PDF generation (jsPDF, lazy-loaded)
+ *  - Hiring approval: once an applicant has passed BOTH interviews (online + in-person) the
+ *    "Approve as Employee" button writes hiringApprovals/{applicationId} — a snapshot of the CV
+ *    that HrManager.jsx uses to pre-fill the employee profile + background record, and that
+ *    CeoManager.jsx uses to provision the login with almost nothing left to type.
+ *    Pipeline: Admin approves → HR onboards → CEO provisions the account (see utils/hiringPipeline.js).
  *
  * No prop drilling issues — state lives at Admin level and is passed explicitly.
  * All Firebase calls are try/catch with user-friendly error feedback.
@@ -21,12 +26,16 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db, auth } from '../firebase/firebase';
-import { collection, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { CAREER_TRACKS } from './careerTracks';
 import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from '../utils/pdfBrand';
 import { generateProjectRequestPDF, generateProjectProposalPDF } from '../utils/projectPdf';
+import {
+  HIRING_COLLECTION, HIRING_STAGES, HIRING_STEPS, HIRING_STAGE_META, HR_DEPARTMENTS, HR_CONTRACT_TYPES,
+  SENIORITY_LEVELS, INTERN_CONTRACT, placementForTrack, buildApprovalSnapshot,
+} from '../utils/hiringPipeline';
 import {
   SERVICE_CATEGORIES, CONTRACT_STATUS_CONFIG, CONTRACT_TYPE_FIELDS, CONTRACT_TYPE_SECTION_TITLE,
   generateContractPDF, generateBothContractCopies,
@@ -319,8 +328,157 @@ const TrackToggle = ({ track, isOpen, onToggle, toggling, appCount }) => (
   </div>
 );
 
+// ─── Hiring approval (Admin → HR → CEO) ───────────────────────────────────────
+// Access roles offered here are exactly the JOB_ROLES in CeoManager.jsx.
+const ACCESS_ROLES = ['Secretary', 'Accountant', 'HR Officer', 'Sales Officer', 'Marketing Officer', 'Operations Officer', 'Technical Staff', 'Executive'];
+
+// Four-step progress strip: Interviews passed → Employee profile → Login account → Onboarded.
+const HireStepper = ({ stage }) => {
+  const current = stage ? (HIRING_STAGE_META[stage]?.step ?? 2) : 1;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {HIRING_STEPS.map((label, i) => {
+        const n = i + 1;
+        const done = n < current || (stage === HIRING_STAGES.COMPLETED);
+        const active = n === current && stage !== HIRING_STAGES.COMPLETED;
+        return (
+          <React.Fragment key={label}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: done ? '#065F46' : active ? '#1A3C5E' : '#94A3B8' }}>
+              <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, background: done ? '#10B981' : active ? '#1A3C5E' : '#E2E8F0', color: done || active ? '#fff' : '#64748B' }}>{done ? '✓' : n}</span>
+              {label}
+            </span>
+            {n < HIRING_STEPS.length && <span style={{ width: 14, height: 2, background: done ? '#10B981' : '#E2E8F0' }} />}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+// Chip under the status badge in the applications table.
+const HireChip = ({ app, approval }) => {
+  if (approval) {
+    const m = HIRING_STAGE_META[approval.stage] || HIRING_STAGE_META.awaiting_hr;
+    return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: m.bg, color: m.color }}>Hire · {m.short}</span></div>;
+  }
+  if (app.secondRound === 'Selected') return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: '#E0E7FF', color: '#3730A3' }}>Round 2 selected</span></div>;
+  return null;
+};
+
+// Confirmation form shown by "Approve as Employee".
+const HireModal = ({ app, onCancel, onConfirm, busy }) => {
+  const placement = placementForTrack(app.trackKey);
+  const isIntern = app.type === 'Internship';
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    onlinePassed: app.interviewStatus === 'completed',
+    inPersonPassed: false,
+    notes: '',
+    department: placement.department,
+    position: app.program || '',
+    contractType: isIntern ? INTERN_CONTRACT : 'Probation',
+    startDate: '',
+    role: placement.role,
+    level: 'Staff',
+  });
+  const [err, setErr] = useState('');
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.onlinePassed)   { setErr('Confirm the applicant passed the online interview.'); return; }
+    if (!form.inPersonPassed) { setErr('Confirm the applicant passed the in-person interview.'); return; }
+    if (!form.position.trim()) { setErr('Enter the position they are being hired into.'); return; }
+    if (!form.startDate || form.startDate < today) { setErr('Choose today or a future start date.'); return; }
+    setErr('');
+    onConfirm({ ...form, position: form.position.trim(), notes: form.notes.trim() });
+  };
+  const fld = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 14, border: '1.5px solid #CBD5E1', borderRadius: 8, fontFamily: 'inherit', color: '#1A3C5E', background: '#fff' };
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 700, color: '#5A7A9A', margin: '12px 0 5px' };
+  const chk = { display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13.5, color: '#1A3C5E', margin: '8px 0', cursor: 'pointer' };
+
+  return (
+    <div style={{ ...ms.overlay, zIndex: 2100 }} onClick={busy ? undefined : onCancel}>
+      <form style={{ ...ms.modal, maxWidth: 560 }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div style={{ ...ms.header, borderTop: '4px solid #10B981' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Approve as Employee</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{app.fullName} · {app.program}</p>
+          </div>
+          <button type="button" style={ms.closeBtn} onClick={onCancel} disabled={busy} title="Close">✕</button>
+        </div>
+
+        <div style={ms.body}>
+          <HireStepper stage={null} />
+          <p style={{ fontSize: 13, color: '#5A7A9A', lineHeight: 1.6, margin: '14px 0 4px' }}>
+            Approving sends this applicant to <strong>HR</strong> with their CV details already filled in. HR then completes the
+            employee profile and background record, and the <strong>CEO</strong> provisions the login account last.
+          </p>
+
+          <h4 style={{ ...ms.secTitle, color: '#1A3C5E', marginTop: 16 }}>1 · Interview outcome</h4>
+          <label style={chk}>
+            <input type="checkbox" checked={form.onlinePassed} onChange={set('onlinePassed')} style={{ marginTop: 3 }} />
+            <span>Passed the <strong>online interview</strong>{app.interviewStatus === 'completed' ? ` (${app.interviewScore}/${app.interviewTotal} · ${app.interviewPercent}%)` : ''}</span>
+          </label>
+          <label style={chk}>
+            <input type="checkbox" checked={form.inPersonPassed} onChange={set('inPersonPassed')} style={{ marginTop: 3 }} />
+            <span>Passed the <strong>in-person interview</strong>{app.secondRoundDate ? ` (${app.secondRoundDate}${app.secondRoundVenue ? ' · ' + app.secondRoundVenue : ''})` : ''}</span>
+          </label>
+          <label style={lbl} htmlFor="hire-notes">Panel notes (optional, visible to HR)</label>
+          <textarea id="hire-notes" rows={2} maxLength={1000} value={form.notes} onChange={set('notes')} style={{ ...fld, resize: 'vertical' }} placeholder="Strengths, conditions, salary expectations agreed…" />
+
+          <h4 style={{ ...ms.secTitle, color: '#1A3C5E', marginTop: 20 }}>2 · Placement</h4>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="hire-dept">Department</label>
+              <select id="hire-dept" style={fld} value={form.department} onChange={set('department')}>
+                {HR_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="hire-contract">Contract type</label>
+              <select id="hire-contract" style={fld} value={form.contractType} onChange={set('contractType')}>
+                {HR_CONTRACT_TYPES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <label style={lbl} htmlFor="hire-pos">Position / job title</label>
+          <input id="hire-pos" style={fld} maxLength={200} value={form.position} onChange={set('position')} />
+          <label style={lbl} htmlFor="hire-start">Start date</label>
+          <input id="hire-start" type="date" min={today} style={fld} value={form.startDate} onChange={set('startDate')} />
+
+          <h4 style={{ ...ms.secTitle, color: '#1A3C5E', marginTop: 20 }}>3 · Suggested system access (for the CEO)</h4>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1.4 }}>
+              <label style={lbl} htmlFor="hire-role">Access role</label>
+              <select id="hire-role" style={fld} value={form.role} onChange={set('role')}>
+                {ACCESS_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="hire-level">Level</label>
+              <select id="hire-level" style={fld} value={form.level} onChange={set('level')}>
+                {SENIORITY_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {err && <div style={{ marginTop: 14, background: '#FEE2E2', color: '#991B1B', borderRadius: 8, padding: '8px 12px', fontSize: 13, fontWeight: 600 }}>{err}</div>}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid #E2E8F0' }}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#F1F5F9', color: '#475569' }} onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="submit" style={{ ...ms.actionBtn, background: '#059669', color: '#fff', opacity: busy ? 0.6 : 1 }} disabled={busy}>
+            {busy ? 'Approving…' : 'Approve & send to HR'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
-const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, onSecondRound, interviewBusy }) => {
+const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, onSecondRound, interviewBusy, approval, onHire, onWithdrawHire }) => {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [localStatus, setLocalStatus] = useState(app?.status);
 
@@ -416,6 +574,18 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               ✎ {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
             </button>
           )}
+          {app.secondRound === 'Selected' && !approval && (
+            <button style={{ ...ms.actionBtn, background: '#059669', color: '#fff' }} onClick={() => onHire(app)} disabled={interviewBusy === app.id}
+                    title="Passed both interviews — send to HR for onboarding">
+              ✔ Approve as Employee
+            </button>
+          )}
+          {approval?.stage === HIRING_STAGES.AWAITING_HR && (
+            <button style={{ ...ms.actionBtn, background: '#FEE2E2', color: '#991B1B' }} onClick={() => onWithdrawHire(app)} disabled={interviewBusy === app.id}
+                    title="Possible only until HR has created the employee profile">
+              ↩ Withdraw approval
+            </button>
+          )}
         </div>
 
         {/* Scrollable body */}
@@ -487,6 +657,19 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
                   <Row label="Email" val={app.secondRoundEmailSent === true ? 'Sent' : app.secondRoundEmailSent === false ? 'NOT sent — use Resend' : ''} />
                 </>
               )}
+            </Sec>
+          )}
+          {approval && (
+            <Sec title="Hiring">
+              <div style={{ margin: '2px 0 10px' }}><HireStepper stage={approval.stage} /></div>
+              <Row label="Stage" val={(HIRING_STAGE_META[approval.stage] || {}).label} />
+              <Row label="Position" val={approval.proposedPosition} />
+              <Row label="Department" val={approval.proposedDepartment} />
+              <Row label="Contract" val={approval.proposedContractType} />
+              <Row label="Start date" val={approval.proposedStartDate} />
+              <Row label="Access (CEO)" val={`${approval.suggestedRole} · ${approval.suggestedLevel}`} />
+              <Row label="Panel notes" val={approval.round2Notes} />
+              <Row label="Approved by" val={approval.approvedBy} />
             </Sec>
           )}
           <Sec title="Submission">
@@ -936,6 +1119,8 @@ const Admin = () => {
   const [selected, setSelected]       = useState(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [round2Target, setRound2Target] = useState(null);       // applicant whose Round 2 details are being entered
+  const [approvals, setApprovals]     = useState({});         // applicationId → hiringApprovals doc
+  const [hireTarget, setHireTarget]   = useState(null);       // applicant being approved as an employee
   const [interviewBusy, setInterviewBusy] = useState(null);     // application id being invited / promoted
   const [interviewAlerts, setInterviewAlerts] = useState([]);   // pop-up result cards
   const prevInterviewRef   = useRef({});                         // id → last seen interviewStatus
@@ -985,6 +1170,8 @@ const Admin = () => {
       prevInterviewRef.current = {};
       setInterviewAlerts([]);
       setApplications([]);
+      setApprovals({});
+      setHireTarget(null);
       setTrackStatuses({});
       setAppsError(null);
       setSettingsError(null);
@@ -1026,6 +1213,12 @@ const Admin = () => {
       }
     );
 
+    const unsubApprovals = onSnapshot(
+      collection(db, HIRING_COLLECTION),
+      (snap) => setApprovals(Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]))),
+      (err) => console.warn('hiringApprovals listen error:', err)
+    );
+
     const unsubSettings = onSnapshot(
       doc(db, 'settings', 'applicationStatus'),
       async (snap) => {
@@ -1062,7 +1255,7 @@ const Admin = () => {
       }
     );
 
-    return () => { unsubApps(); unsubSettings(); };
+    return () => { unsubApps(); unsubApprovals(); unsubSettings(); };
   }, [user]);
 
   // ── Project Requests listener — only when logged in ───────────────────────
@@ -1309,6 +1502,61 @@ const Admin = () => {
       setInterviewBusy(null);
     }
   }, [round2Target]);
+
+
+  // "Approve as Employee" — opens the confirmation form (both interviews passed).
+  const openHire = useCallback((appOrId) => {
+    const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
+    const app = applications.find(a => a.id === id);
+    if (app) setHireTarget(app);
+  }, [applications]);
+
+  // Writes the hiring snapshot HR + CEO work from, and flags the application, in ONE atomic batch.
+  const confirmHire = useCallback(async (decision) => {
+    const app = hireTarget;
+    if (!app) return;
+    const email = auth.currentUser?.email;
+    if (!email) { alert('You are not signed in. Please sign in again.'); return; }
+    setInterviewBusy(app.id);
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, HIRING_COLLECTION, app.id), {
+        ...buildApprovalSnapshot(app, decision),
+        approvedAt: serverTimestamp(), approvedBy: email,
+      });
+      batch.update(doc(db, 'applications', app.id), {
+        hireStatus: 'Approved', hireApprovedAt: serverTimestamp(), hireApprovedBy: email,
+        round2Result: 'Passed', round2Notes: decision.notes || '',
+      });
+      await batch.commit();
+      setHireTarget(null);
+      alert(`${app.fullName} is approved. HR can now onboard them — their CV details are already filled in.`);
+    } catch (err) {
+      console.error('confirmHire error:', err);
+      alert('Could not approve this applicant: ' + (err.code === 'permission-denied' ? 'permission denied — publish the updated firestore.rules.' : err.message));
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [hireTarget]);
+
+  // Only possible before HR has created the employee profile.
+  const withdrawHire = useCallback(async (appOrId) => {
+    const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
+    const app = applications.find(a => a.id === id);
+    if (!app || approvals[id]?.stage !== HIRING_STAGES.AWAITING_HR) return;
+    if (!window.confirm(`Withdraw the hiring approval for ${app.fullName}?\n\nHR has not started onboarding yet, so this simply removes them from the HR queue.`)) return;
+    setInterviewBusy(id);
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, HIRING_COLLECTION, id));
+      batch.update(doc(db, 'applications', id), { hireStatus: null });
+      await batch.commit();
+    } catch (err) {
+      alert('Could not withdraw the approval: ' + err.message);
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [applications, approvals]);
 
   const updateProjectStatus = useCallback(async (id, status) => {
     setProjectStatusUpdating(true);
@@ -1627,7 +1875,7 @@ const Admin = () => {
                           {appTrack?.title || app.program || '—'}
                         </span>
                       </td>
-                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /></td>
+                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /><HireChip app={app} approval={approvals[app.id]} /></td>
                       <td style={{ ...s.td, fontSize: 12, color: '#7A8A9A', whiteSpace: 'nowrap' }}>
                         {app.submittedAt?.toDate ? app.submittedAt.toDate().toLocaleDateString('en-UG') : '—'}
                       </td>
@@ -1667,6 +1915,18 @@ const Admin = () => {
                               title="Change the date, time or venue and email the applicant again"
                             >
                               {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
+                            </button>
+                          )}
+                          {app.secondRound === 'Selected' && !approvals[app.id] && (
+                            <button style={s.btnHire} onClick={() => openHire(app)} disabled={interviewBusy === app.id}
+                                    title="Passed both interviews — approve as an employee and send to HR">
+                              Approve as Employee
+                            </button>
+                          )}
+                          {approvals[app.id]?.stage === HIRING_STAGES.AWAITING_HR && (
+                            <button style={{ ...s.btnView, background: '#FEE2E2', color: '#991B1B' }} onClick={() => withdrawHire(app)} disabled={interviewBusy === app.id}
+                                    title="Remove from the HR queue (only before HR starts)">
+                              Withdraw
                             </button>
                           )}
                           <button style={s.btnView} onClick={() => setSelected(app)}>View</button>
@@ -1901,6 +2161,15 @@ const Admin = () => {
           onConfirm={confirmSecondRound}
         />
       )}
+      {hireTarget && (
+        <HireModal
+          key={hireTarget.id}
+          app={hireTarget}
+          busy={interviewBusy === hireTarget.id}
+          onCancel={() => setHireTarget(null)}
+          onConfirm={confirmHire}
+        />
+      )}
       <InterviewAlerts
         alerts={interviewAlerts}
         busyId={interviewBusy}
@@ -1916,6 +2185,9 @@ const Admin = () => {
         onOnline={inviteOnline}
         onSecondRound={selectSecondRound}
         interviewBusy={interviewBusy}
+        approval={selected ? approvals[selected.id] : null}
+        onHire={openHire}
+        onWithdrawHire={withdrawHire}
       />
       <ProjectDetailModal
         project={selectedProject}
@@ -1979,6 +2251,7 @@ const s = {
   btnView:     { background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnDelete:   { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnOnline:   { background: '#E0F2FE', color: '#075985', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnHire:     { background: '#059669', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnRound2:   { background: '#1A3C5E', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 };
 

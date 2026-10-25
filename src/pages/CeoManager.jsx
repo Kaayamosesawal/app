@@ -37,10 +37,11 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { db, auth } from '../firebase/firebase';
 import {
   collection, doc, setDoc, updateDoc, deleteDoc, addDoc,
-  onSnapshot, query, orderBy, limit, serverTimestamp,
+  onSnapshot, query, orderBy, limit, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
+import { HIRING_COLLECTION, HIRING_STAGES, HIRING_STAGE_META, HIRING_STEPS } from '../utils/hiringPipeline';
 import {
   CONTRACT_TYPES, SERVICE_CATEGORIES, CONTRACT_STATUSES, CONTRACT_STATUS_CONFIG,
   CONTRACT_TYPE_FIELDS, emptyContractForm, generateContractPDF, generateBothContractCopies,
@@ -445,11 +446,80 @@ const RoleMatrixModal = ({ targetUser, onClose, onSave }) => {
       </div>
     </div>
   );
+// ── Approved hires queue (Admin → HR → CEO) ──────────────────────────────────
+// The CEO is the LAST step: an applicant appears here as soon as the admin has approved them,
+// but "Create account" only unlocks once HR has created the employee profile + background record.
+const HireStepper = ({ stage }) => {
+  const current = HIRING_STAGE_META[stage]?.step ?? 2;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+      {HIRING_STEPS.map((label, i) => {
+        const n = i + 1; const done = n < current || stage === HIRING_STAGES.COMPLETED; const active = n === current && !done;
+        return (
+          <React.Fragment key={label}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: done ? '#065F46' : active ? '#1A3C5E' : '#94A3B8' }}>
+              <span style={{ width: 16, height: 16, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, background: done ? '#10B981' : active ? '#1A3C5E' : '#E2E8F0', color: done || active ? '#fff' : '#64748B' }}>{done ? '✓' : n}</span>
+              {label}
+            </span>
+            {n < HIRING_STEPS.length && <span style={{ width: 10, height: 2, background: done ? '#10B981' : '#E2E8F0' }} />}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+const HireQueue = ({ hires, onProvision }) => {
+  const open = hires.filter(h => h.stage !== HIRING_STAGES.COMPLETED);
+  if (!open.length) return null;
+  return (
+    <div style={{ background: '#fff', border: '1px solid #DCE4EC', borderLeft: '5px solid #1A3C5E', borderRadius: 12, padding: '16px 18px', marginBottom: 24 }}>
+      <h2 style={{ ...s.sectionHead, margin: 0 }}>Approved Hires — login accounts</h2>
+      <p style={{ fontSize: 13, color: '#5A7A9A', margin: '4px 0 12px', lineHeight: 1.6 }}>
+        Applicants who passed both interviews. Once HR has completed their employee profile, their name, email, role and department
+        are pulled in automatically — you only confirm the access level.
+      </p>
+      {open.map(h => {
+        const ready = h.stage === HIRING_STAGES.AWAITING_ACCOUNT;
+        return (
+          <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '12px 0', borderTop: '1px solid #EEF2F6' }}>
+            <div style={{ minWidth: 240, flex: 1 }}>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: '#1A3C5E' }}>{h.fullName}</div>
+              <div style={{ fontSize: 12.5, color: '#5A7A9A', marginTop: 2 }}>
+                {h.proposedPosition || h.program} · {h.proposedDepartment}{h.employeeCode ? ` · ${h.employeeCode}` : ''}
+              </div>
+              <HireStepper stage={h.stage} />
+            </div>
+            {ready ? (
+              <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0 }} onClick={() => onProvision(h)}>
+                Create account
+              </button>
+            ) : (
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: '#92400E', background: '#FEF3C7', borderRadius: 8, padding: '6px 10px' }}>
+                Waiting for HR to onboard
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 };
 
 // ─── Create User Modal ───────────────────────────────────────────────────────
-const CreateUserModal = ({ onClose, onCreate }) => {
-  const [form, setForm] = useState({ name: '', email: '', department: JOB_ROLES[0].department, role: JOB_ROLES[0].key, level: ROLES[0] });
+// `hire` = an approved applicant at stage awaiting_account. Name, email, role, department and level
+// arrive pre-filled and locked, so the CEO only reviews and (optionally) changes role or level.
+const CreateUserModal = ({ onClose, onCreate, hire = null }) => {
+  const hireRole = hire && JOB_ROLE_MAP[hire.suggestedRole] ? hire.suggestedRole : null;
+  const [changeRole, setChangeRole] = useState(false);
+  const [form, setForm] = useState(hire ? {
+    name: hire.fullName || '', email: hire.email || '',
+    department: JOB_ROLE_MAP[hireRole || JOB_ROLES[0].key].department,
+    role: hireRole || JOB_ROLES[0].key,
+    level: ROLES.includes(hire.suggestedLevel) ? hire.suggestedLevel : ROLES[0],
+  } : { name: '', email: '', department: JOB_ROLES[0].department, role: JOB_ROLES[0].key, level: ROLES[0] });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null); // { password, emailSent, emailError }
@@ -466,7 +536,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
     e.preventDefault();
     if (!form.name.trim() || !form.email.trim()) { setError('Name and email are required.'); return; }
     setSubmitting(true); setError('');
-    const outcome = await onCreate(form);
+    const outcome = await onCreate(form, hire);
     setSubmitting(false);
     if (outcome.success) {
       setResult({ password: outcome.password, emailSent: outcome.emailSent, emailError: outcome.emailError, granted: outcome.granted || [], portalPath: outcome.portalPath });
@@ -489,7 +559,7 @@ const CreateUserModal = ({ onClose, onCreate }) => {
         <div style={{ ...ms.header, borderTop: '4px solid #1A3C5E' }}>
           <div>
             <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>
-              {result ? 'Account Created' : 'New Team Account'}
+              {result ? 'Account Created' : hire ? 'Create Login for New Hire' : 'New Team Account'}
             </h3>
             <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
               {result ? 'Share these credentials securely.' : 'Provisions a login with the access that goes with the chosen role.'}
@@ -551,6 +621,41 @@ const CreateUserModal = ({ onClose, onCreate }) => {
             </>
           ) : (
             <form onSubmit={handleSubmit}>
+              {hire && (
+                <>
+                  <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#065F46', marginBottom: 6 }}>
+                      Pulled from the approved hire{hire.employeeCode ? ` · ${hire.employeeCode}` : ''}
+                    </div>
+                    <div style={cu.credRow}><span style={cu.credLabel}>Name</span><span style={cu.credVal}>{form.name}</span></div>
+                    <div style={cu.credRow}><span style={cu.credLabel}>Email</span><span style={cu.credVal}>{form.email}</span></div>
+                    <div style={cu.credRow}><span style={cu.credLabel}>Position</span><span style={cu.credVal}>{hire.proposedPosition || hire.program}</span></div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12, alignItems: 'flex-end' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={cu.label}>Level</label>
+                      <select style={cu.select} value={form.level} onChange={e => update('level', e.target.value)} disabled={submitting}>
+                        {ROLES.map(l => <option key={l} value={l}>{l}</option>)}
+                      </select>
+                    </div>
+                    {changeRole ? (
+                      <div style={{ flex: 1.4 }}>
+                        <label style={cu.label}>Role</label>
+                        <select style={cu.select} value={form.role} onChange={e => selectJobRole(e.target.value)} disabled={submitting}>
+                          {JOB_ROLES.map(r => <option key={r.key} value={r.key}>{r.key} ({r.department})</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <div style={{ flex: 1.4, fontSize: 12.5, color: '#475569', paddingBottom: 9 }}>
+                        Role: <strong>{form.role}</strong>{' '}
+                        <button type="button" style={{ background: 'none', border: 'none', color: '#1D4ED8', fontWeight: 700, cursor: 'pointer', padding: 0, fontSize: 12.5 }} onClick={() => setChangeRole(true)}>Change</button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+              {!hire && (
+                <>
               <label style={cu.label}>Full name</label>
               <input style={s.loginInput} value={form.name} onChange={e => update('name', e.target.value)} disabled={submitting} autoFocus />
 
@@ -571,6 +676,9 @@ const CreateUserModal = ({ onClose, onCreate }) => {
                   </select>
                 </div>
               </div>
+
+                </>
+              )}
 
               <div style={{ background: '#F0F4F8', border: '1px solid #DCE4EC', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
                 <div style={{ fontSize: 12.5, color: '#1A3C5E', fontWeight: 700 }}>
@@ -888,6 +996,9 @@ const CeoManager = () => {
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [roleTarget, setRoleTarget] = useState(null);
   const [busyUserId, setBusyUserId] = useState(null);
+  // Approved hires (Admin → HR → CEO); provisionHire = the hire whose login is being created.
+  const [hires, setHires] = useState([]);
+  const [provisionHire, setProvisionHire] = useState(null);
 
   // Audit log
   const [auditLogs, setAuditLogs] = useState([]);
@@ -937,6 +1048,18 @@ const CeoManager = () => {
         setUsersError(err.code === 'permission-denied' ? 'Permission denied reading team accounts.' : 'Could not load team accounts: ' + err.message);
         setLoadingUsers(false);
       }
+    );
+    return unsub;
+  }, [isCeo]);
+
+  // Approved hires (written by Admin.jsx, advanced by HrManager.jsx)
+  useEffect(() => {
+    if (!isCeo) { setHires([]); return; }
+    const unsub = onSnapshot(
+      collection(db, HIRING_COLLECTION),
+      (snap) => setHires(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.approvedAt?.toMillis?.() || 0) - (b.approvedAt?.toMillis?.() || 0))),
+      (err) => console.warn('hiringApprovals listen error:', err)
     );
     return unsub;
   }, [isCeo]);
@@ -1030,7 +1153,7 @@ const CeoManager = () => {
     setLoggingOut(true);
     try {
       setTeamUsers([]); setAuditLogs([]); setSalesData(null); setHrData(null); setFinanceData(null);
-      setRoleTarget(null); setShowCreateUser(false);
+      setRoleTarget(null); setShowCreateUser(false); setHires([]); setProvisionHire(null);
       setContracts([]); setShowContractForm(false); setEditingContract(null);
       await signOut(auth);
     } catch (err) {
@@ -1071,11 +1194,15 @@ const CeoManager = () => {
     });
   }, []);
 
-  const handleCreateUser = useCallback(async ({ name, email, department: requestedDepartment, role, level = ROLES[0] }) => {
+  const handleCreateUser = useCallback(async ({ name, email, department: requestedDepartment, role, level = ROLES[0] }, hire = null) => {
     // The role is the source of truth: its department and permissions are applied here, not trusted from the form.
     const department = JOB_ROLE_MAP[role]?.department || requestedDepartment;
     const permissions = permissionsForRole(role, level);
     try {
+      // Sequential guard: a hired applicant only gets a login after HR has onboarded them.
+      if (hire && hire.stage !== HIRING_STAGES.AWAITING_ACCOUNT) {
+        throw new Error('HR has not completed this hire\'s employee profile yet.');
+      }
       const password = generatePassword();
       const res = await authFetch('/api/create-user', {
         name, email, department, role, password, createdBy: auth.currentUser?.email,
@@ -1086,13 +1213,33 @@ const CeoManager = () => {
       }
       const { uid } = await res.json();
 
-      await setDoc(doc(db, 'teamUsers', uid), {
+      const teamUserData = {
         name, email, department, role, level,
         status: 'active',
         permissions,
         createdAt: serverTimestamp(),
         createdBy: auth.currentUser?.email || 'unknown',
-      });
+        ...(hire ? { employeeId: hire.employeeId || null, applicationId: hire.applicationId || hire.id } : {}),
+      };
+      if (hire) {
+        // Login + pipeline hand-off commit together: the hire is "completed" exactly when the account exists.
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'teamUsers', uid), teamUserData);
+        batch.update(doc(db, HIRING_COLLECTION, hire.id), {
+          stage: HIRING_STAGES.COMPLETED,
+          teamUserUid: uid,
+          accountCreatedAt: serverTimestamp(),
+          accountCreatedBy: auth.currentUser?.email || 'unknown',
+        });
+        await batch.commit();
+        // Link the HR employee record to the new login (non-critical).
+        if (hire.employeeId) {
+          updateDoc(doc(db, 'employees', hire.employeeId), { teamUserUid: uid, portalAccess: true })
+            .catch(e => console.warn('Could not link employee to team account:', e));
+        }
+      } else {
+        await setDoc(doc(db, 'teamUsers', uid), teamUserData);
+      }
 
       // Email the new hire their temporary password + portal link, the
       // same way Admin.jsx emails applicants via POST /api/send-email.
@@ -1130,7 +1277,7 @@ const CeoManager = () => {
       await logAudit(
         'Created user account',
         email,
-        `Department: ${department} · Role: ${role} (${level}) · Access: ${describePermissions(permissions).join('; ') || 'none'} · Welcome email: ${emailSent ? 'sent' : 'failed'}`
+        `Department: ${department} · Role: ${role} (${level}) · Access: ${describePermissions(permissions).join('; ') || 'none'} · Welcome email: ${emailSent ? 'sent' : 'failed'}${hire ? ` | From approved hire ${hire.id}` : ''}`
       );
       return { success: true, password, emailSent, emailError, granted: describePermissions(permissions), portalPath: JOB_ROLE_MAP[role]?.path || '/portals' };
     } catch (err) {
@@ -1368,7 +1515,7 @@ const CeoManager = () => {
             📊 Global Dashboard
           </button>
           <button style={{ ...s.dashTab, ...(activeTab === 'users' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('users')}>
-            👥 User Provisioning <span style={s.tabCount}>{teamUsers.length}</span>
+            👥 User Provisioning <span style={s.tabCount}>{teamUsers.length}</span>{hires.some(h => h.stage === HIRING_STAGES.AWAITING_ACCOUNT) && <span style={{ ...s.tabCount, background: '#FEF3C7', color: '#92400E' }}>{hires.filter(h => h.stage === HIRING_STAGES.AWAITING_ACCOUNT).length} new</span>}
           </button>
           <button style={{ ...s.dashTab, ...(activeTab === 'contracts' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('contracts')}>
             📄 Contracts & Agreements <span style={s.tabCount}>{contracts.length}</span>
@@ -1401,11 +1548,13 @@ const CeoManager = () => {
         {/* ── User Provisioning tab ── */}
         {activeTab === 'users' && (
           <>
+            <HireQueue hires={hires} onProvision={(h) => { setProvisionHire(h); setShowCreateUser(true); }} />
+
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
               <h2 style={{ ...s.sectionHead, margin: 0 }}>Team Accounts</h2>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button style={{ ...s.tab }} onClick={exportUsersCSV}>⬇ Export CSV</button>
-                <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0 }} onClick={() => setShowCreateUser(true)}>
+                <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0 }} onClick={() => { setProvisionHire(null); setShowCreateUser(true); }}>
                   ➕ New Account
                 </button>
               </div>
@@ -1651,7 +1800,12 @@ const CeoManager = () => {
       </div>
 
       {showCreateUser && (
-        <CreateUserModal onClose={() => setShowCreateUser(false)} onCreate={handleCreateUser} />
+        <CreateUserModal
+          key={provisionHire ? `hire-${provisionHire.id}` : 'manual'}
+          hire={provisionHire}
+          onClose={() => { setShowCreateUser(false); setProvisionHire(null); }}
+          onCreate={handleCreateUser}
+        />
       )}
       {roleTarget && (
         <RoleMatrixModal targetUser={roleTarget} onClose={() => setRoleTarget(null)} onSave={savePermissions} />
