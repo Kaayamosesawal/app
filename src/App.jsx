@@ -9,6 +9,7 @@ import Admin from './pages/Admin';
 import ProjectRequest from './pages/ProjectRequest';
 import Privacy from './pages/Privacy'; 
 import Terms from './pages/Terms';
+import Interview from './pages/Interview';
 import CeoManager from './pages/CeoManager';
 import HrManager from './pages/HrManager';
 import AccountsManager from './pages/AccountsManager';
@@ -34,6 +35,7 @@ function App() {
             <Route path="/start-project" element={<ProjectRequest />} />
             <Route path="/ceo-manager" element={<CeoManager />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/interview" element={<Interview />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/hr-manager" element={<HrManager />} />
             <Route path="/sales-manager" element={<SalesManager />} />

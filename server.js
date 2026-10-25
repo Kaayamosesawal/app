@@ -11,6 +11,10 @@
  *   POST /api/create-user         – (CEO-only) Create a Firebase Auth user + temp password
  *   POST /api/set-user-disabled   – (CEO-only) Enable/disable a Firebase Auth user
  *   POST /api/delete-user         – (CEO-only) Permanently delete a Firebase Auth user
+ *   POST /api/interview/invite    – (CEO-only) Email a shortlisted applicant their private online-interview link
+ *   POST /api/interview/start     – (Applicant) Verify link + email, start / resume the 30-minute timed interview
+ *   POST /api/interview/save      – (Applicant) Autosave answers during the interview
+ *   POST /api/interview/submit    – (Applicant) Finish; the server grades against the in-code answer key
  *   GET  /api/health              – Health check for uptime monitors & Render keep-alive
  *
  * "CEO-only" routes require an `Authorization: Bearer <Firebase ID token>` header.
@@ -41,6 +45,8 @@ import { Resend } from 'resend';
 import cors       from 'cors';
 import { initializeApp as initFirebaseAdmin, cert as firebaseCert } from 'firebase-admin/app';
 import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
+import { getFirestore as getFirebaseAdminFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import crypto from 'node:crypto';
 
 // ─── Validate required environment variables on startup ───────────────────────
 const REQUIRED_ENV = ['RESEND_API_KEY'];
@@ -99,6 +105,23 @@ const portalUrlFor = (department, role) =>
 // Escapes text before it is placed inside email HTML.
 const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
+// ── Round-2 (in-person interview) detail formatters ──
+// The Admin form sends <input type="date"> (YYYY-MM-DD) and <input type="time"> (HH:MM);
+// they are validated and turned into readable text here, so nothing raw reaches the email.
+const cleanLine = (v, max) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
+const formatInterviewDate = (v) => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) return null;
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+const formatInterviewTime = (v) => {
+  const m = typeof v === 'string' ? v.match(/^([01]\d|2[0-3]):([0-5]\d)$/) : null;
+  if (!m) return null;
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+
 const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:5173',
@@ -114,6 +137,7 @@ const EMAIL_TYPES = new Set([
   'shortlisted',
   'unqualified',
   'position_closed',
+  'second_round',   // in-person (physical) interview, sent when Admin selects an applicant for round 2
   // Project / proposal request lifecycle
   'project_request_received',
   'project_accepted',
@@ -138,6 +162,7 @@ const ACCOUNT_EMAIL_TYPES = new Set([
 
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', 1); // Render sits behind a proxy — needed so rate limiting sees the real client IP
 
 // IMPORTANT: Allow preflight OPTIONS requests for all routes (required for CORS)
 app.options('*', cors());
@@ -150,7 +175,7 @@ app.use(cors({
     callback(new Error(`CORS: origin "${origin}" is not allowed`));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 app.use(express.json({ limit: '16kb' }));
@@ -164,6 +189,7 @@ console.log('[Email] ✅ Resend client initialized');
 // as normal and only the three user-management routes below respond 503.
 let firebaseAdminReady = false;
 let adminAuth = null;
+let adminDb   = null;   // Firestore (Admin SDK) — used ONLY by the online-interview routes
 try {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
@@ -173,6 +199,7 @@ try {
   const serviceAccount = JSON.parse(jsonStr);
   const firebaseApp = initFirebaseAdmin({ credential: firebaseCert(serviceAccount) });
   adminAuth = getFirebaseAdminAuth(firebaseApp);
+  adminDb   = getFirebaseAdminFirestore(firebaseApp);
   firebaseAdminReady = true;
   console.log('[Server] ✅ Firebase Admin initialized — user-management endpoints active');
 } catch (err) {
@@ -525,6 +552,49 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       '',
       'Thank you for trusting Slirus Global Limited with your project.',
     ],
+    second_round: [
+      `Dear ${name},`,
+      '',
+      ...(extra.isUpdate ? ['UPDATE: this message replaces any date, time or venue you were given before.', ''] : []),
+      `Thank you for completing the online interview for the ${program} position`,
+      'at Slirus Global Limited. You have been selected for the second round:',
+      'a physical (in-person) interview with our hiring panel.',
+      '',
+      `Date  : ${extra.date || ''}`,
+      `Time  : ${extra.time || ''}`,
+      `Venue : ${extra.venue || ''}`,
+      ...(extra.note ? ['', `Note from HR: ${extra.note}`] : []),
+      '',
+      'Please arrive about 15 minutes early.',
+      '',
+      'Please bring:',
+      '  - A valid national ID or passport',
+      '  - Original academic/professional certificates plus one photocopy of each',
+      '  - Your updated CV',
+      '  - Contact details of your referees',
+      '',
+      'If you cannot attend or need to reschedule, reply to this email as early as possible.',
+      '',
+      'Congratulations — we look forward to meeting you.',
+    ],
+    interview_invite: [
+      `Dear ${name},`,
+      '',
+      `You have been shortlisted for the ${program} position and are invited to`,
+      'complete the online interview (objective, multiple-choice, auto-marked).',
+      '',
+      `Time allowed : ${extra.minutes || 30} minutes (closes automatically)`,
+      `Link valid   : ${extra.validDays || 7} days — one attempt only`,
+      `Start here   : ${extra.link || ''}`,
+      '',
+      'Before you begin:',
+      '  - The link is personal; you must confirm the email you applied with.',
+      '  - The interview runs full-screen. Leaving the page is recorded.',
+      '  - Copying, pasting and screenshots are not permitted.',
+      '  - The timer cannot be paused or restarted once started.',
+      '',
+      'Do not share this email or link.',
+    ],
     project_declined: [
       `Dear ${name},`,
       '',
@@ -840,6 +910,118 @@ const buildEmailContent = (type, name, program, extra = {}) => {
       };
     }
 
+    // ── Round 2: in-person (physical) interview ─────────────────────────────
+    case 'second_round':
+      return {
+        subject: `${extra.isUpdate ? 'Updated: ' : ''}Invitation to In-Person Interview – ${program} | Slirus Global Limited`,
+        title:   extra.isUpdate ? 'Updated Interview Details' : 'You Have Been Selected for the Next Stage 🎉',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          ${extra.isUpdate ? `<p style="margin:0 0 16px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:14px;color:#92400E;">
+            <strong>Please note:</strong> this message updates our earlier communication. The details below
+            replace any date, time or venue you were given before.
+          </p>` : ''}
+          <p>
+            Thank you for completing the online interview for the <strong>${program}</strong>
+            position at Slirus Global Limited. We are pleased to inform you that you have been
+            <strong>selected for the second round: a physical (in-person) interview</strong>
+            with our hiring panel.
+          </p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                 style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin:20px 0;">
+            <tr><td style="padding:16px 20px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="padding:5px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;width:80px;vertical-align:top;">Date</td>
+                  <td style="padding:5px 0;font-size:15px;color:#1e293b;font-weight:700;">${escHtml(extra.date)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:5px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;vertical-align:top;">Time</td>
+                  <td style="padding:5px 0;font-size:15px;color:#1e293b;font-weight:700;">${escHtml(extra.time)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:5px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;vertical-align:top;">Venue</td>
+                  <td style="padding:5px 0;font-size:15px;color:#1e293b;font-weight:700;">${escHtml(extra.venue)}</td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>${extra.note ? `
+          <p style="margin:0 0 16px;padding:12px 16px;background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:14px;color:#1e3a8a;">
+            <strong>Note from HR:</strong> ${escHtml(extra.note)}
+          </p>` : ''}
+          <p>
+            Please arrive about 15 minutes early and keep your phone reachable in case HR needs to reach you.
+          </p>
+          <p style="margin:0 0 6px;"><strong>Please come prepared with:</strong></p>
+          <ul style="margin:0 0 16px;padding-left:20px;color:#475569;">
+            <li>A valid national ID or passport</li>
+            <li>Original academic and professional certificates, plus one photocopy of each</li>
+            <li>Your updated CV</li>
+            <li>The contact details of your referees</li>
+          </ul>
+          <p>
+            If you are unable to attend or need to reschedule, please reply to this email as early as possible.
+          </p>
+          <p style="margin-top:24px;">
+            Congratulations once again, and we look forward to meeting you in person.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
+          </p>`,
+      };
+
+    // ── Online interview invitation (sent ONLY by /api/interview/invite) ──
+    case 'interview_invite': {
+      const { link = '', minutes = 30, validDays = 7 } = extra;
+      return {
+        subject: `Online Interview Invitation – ${extra.rawProgram || 'Your Application'} | Slirus Global Limited`,
+        title:   'Your Online Interview',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          <p>
+            Following your shortlisting for the <strong>${program}</strong> position, you are invited
+            to complete the first stage of our selection process: a short <strong>online interview</strong>.
+          </p>
+          <p>
+            This stage evaluates objective data, logical reasoning, workplace compliance and
+            fundamental entry requirements. It consists of multiple-choice questions and is
+            marked automatically.
+          </p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                 style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin:20px 0;">
+            <tr><td style="padding:16px 20px;font-size:14px;color:#334155;line-height:1.8;">
+              <strong>Time allowed:</strong> ${minutes} minutes (the interview closes automatically)<br />
+              <strong>Link valid for:</strong> ${validDays} days &nbsp;·&nbsp; <strong>One attempt only</strong><br />
+              <strong>Device:</strong> a laptop or desktop computer is strongly recommended
+            </td></tr>
+          </table>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:8px 0 20px;">
+            <tr>
+              <td style="border-radius:8px;background-color:#1A3C5E;">
+                <a href="${link}"
+                   style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;
+                          color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,Helvetica,sans-serif;">
+                  Start Online Interview
+                </a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0 0 6px;"><strong>Please read before you begin:</strong></p>
+          <ul style="margin:0 0 16px;padding-left:20px;color:#475569;">
+            <li>The link is personal to you. You will be asked to confirm the email address you applied with.</li>
+            <li>The interview runs in full-screen. Leaving the page, switching tabs or exiting full-screen is recorded and may end your attempt.</li>
+            <li>Copying, pasting, screenshots and screen recording are not permitted.</li>
+            <li>Once started, the ${minutes}-minute timer cannot be paused or restarted.</li>
+          </ul>
+          <p style="margin-top:8px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+            🔒 Do not share this email or link. It only works for the applicant it was issued to.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Good luck,<br /><strong style="color:#475569;">Slirus HR Team</strong>
+          </p>`,
+      };
+    }
+
     default:
       return null;
   }
@@ -847,7 +1029,7 @@ const buildEmailContent = (type, name, program, extra = {}) => {
 
 // ─── POST /api/send-email ─────────────────────────────────────────────────────
 app.post('/api/send-email', async (req, res) => {
-  const { type, to, name, program, service, password, department, role, level, access, portalUrl } = req.body ?? {};
+  const { type, to, name, program, service, password, department, role, level, access, portalUrl, date, time, venue, note, isUpdate } = req.body ?? {};
   const isAccountEmail = ACCOUNT_EMAIL_TYPES.has(type);
 
   // account_created has its own required-field shape (no `program`, but
@@ -873,6 +1055,16 @@ app.post('/api/send-email', async (req, res) => {
     return res.status(400).json({ success: false, message: `Invalid recipient email: "${to}"` });
   }
 
+  // Round 2 needs a valid date, time and venue from the Admin form.
+  let round2 = null;
+  if (type === 'second_round') {
+    const d = formatInterviewDate(date), t = formatInterviewTime(time), v = cleanLine(venue, 200);
+    if (!d || !t || !v) {
+      return res.status(400).json({ success: false, message: 'second_round requires a valid date (YYYY-MM-DD), time (HH:MM) and venue.' });
+    }
+    round2 = { date: d, time: t, venue: v, note: cleanLine(note, 500), isUpdate: isUpdate === true };
+  }
+
   const extra = isAccountEmail
     ? {
         to, password, department, role,
@@ -882,9 +1074,11 @@ app.post('/api/send-email', async (req, res) => {
           : [],
         portalUrl: portalUrl || portalUrlFor(department, role),
       }
-    : PROJECT_EMAIL_TYPES.has(type)
-      ? { service }
-      : {};
+    : type === 'second_round'
+      ? round2
+      : PROJECT_EMAIL_TYPES.has(type)
+        ? { service }
+        : {};
 
   const content = buildEmailContent(type, name, program, extra);
   if (!content) {
@@ -1027,6 +1221,373 @@ app.post('/api/delete-user', verifyCeoAuth, async (req, res) => {
     });
   }
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  ONLINE INTERVIEW  (Admin.jsx "Online" button → email → Interview.jsx)
+// ═════════════════════════════════════════════════════════════════════════════
+//  Why this lives on the server and not in Interview.jsx:
+//   • The ANSWER KEY below never leaves this file. Anything shipped inside a
+//     React bundle can be read by any applicant with DevTools.
+//   • Grading, the 30-minute clock and "one attempt only" are enforced here,
+//     so refreshing, editing the page or changing the PC clock cannot buy time.
+//   • Applicants have no Firebase accounts, so Firestore rules (default-deny on
+//     `interviews`) keep the collection private; only this server (Admin SDK)
+//     reads/writes it.
+//  Firestore documents used:
+//   interviews/{secretToken}  – invite, session, saved answers, result
+//   applications/{id}         – mirrored fields Admin.jsx listens to:
+//        interviewStatus ('invited' | 'in_progress' | 'completed'),
+//        interviewScore, interviewTotal, interviewPercent, interviewViolations,
+//        interviewAutoClosed, interviewReason, interviewInvitedAt, interviewCompletedAt
+// ─────────────────────────────────────────────────────────────────────────────
+const INTERVIEW_MINUTES        = 30;
+const INTERVIEW_TOTAL_MS       = INTERVIEW_MINUTES * 60 * 1000;
+const INTERVIEW_GRACE_MS       = 20 * 1000;              // network slack for the final auto-submit
+const INTERVIEW_INVITE_TTL_MS  = 7 * 24 * 60 * 60 * 1000; // link valid 7 days if never started
+const INTERVIEW_MAX_VIOLATIONS = 3;
+const INTERVIEW_MAX_BAD_EMAIL  = 5;
+
+// Each question = 1 mark. `answer` is the index into `options` as written here.
+// Options are shuffled per applicant before sending, so positions here don't matter.
+const INTERVIEW_BANK = [
+  { id: 'q01', q: 'You notice a colleague has left their computer unlocked with confidential client records open. What should you do first?',
+    options: ['Read the records to check nothing is missing', 'Lock the screen and let your colleague know', 'Ignore it, it is not your responsibility', 'Post a photo of the screen in the staff group chat'], answer: 1 },
+  { id: 'q02', q: 'Which of these is the most professional email subject line?',
+    options: ['Hi', 'URGENT!!! READ NOW', 'Request: Approval of Q3 budget – reply by Friday 5 PM', 'Question'], answer: 2 },
+  { id: 'q03', q: 'All managers attend the Monday meeting. Grace attends the Monday meeting. Which statement must be true?',
+    options: ['Grace is a manager', 'Every person at the meeting is a manager', 'If Grace is a manager, she attends the Monday meeting', 'Grace is not a manager'], answer: 2 },
+  { id: 'q04', q: 'What number comes next?  2, 6, 18, 54, ?',
+    options: ['108', '148', '162', '216'], answer: 2 },
+  { id: 'q05', q: 'An employee earns UGX 1,200,000 per month and a 10% statutory deduction applies. What is the take-home amount?',
+    options: ['UGX 1,000,000', 'UGX 1,080,000', 'UGX 1,100,000', 'UGX 1,120,000'], answer: 1 },
+  { id: 'q06', q: 'A task takes 4 people 6 days. Working at the same rate, how many days will 8 people need?',
+    options: ['2 days', '3 days', '4 days', '12 days'], answer: 1 },
+  { id: 'q07', q: 'Your supervisor gives an instruction that appears to conflict with written company policy. What is the best response?',
+    options: ['Follow it without saying anything', 'Ignore the instruction', 'Politely raise the conflict and ask for clarification before proceeding', 'Discuss the problem with colleagues instead'], answer: 2 },
+  { id: 'q08', q: 'Using the urgent-versus-important approach, which task should you do FIRST?',
+    options: ['Reply to a newsletter due next month', 'Correct an error in a payment that must be sent today', 'Tidy your desk', "Plan next year's training calendar"], answer: 1 },
+  { id: 'q09', q: 'If today is Wednesday, what day of the week was it 100 days ago?',
+    options: ['Monday', 'Tuesday', 'Friday', 'Sunday'], answer: 0 },
+  { id: 'q10', q: 'No contractors are permanent staff. Some drivers are contractors. Which statement must be true?',
+    options: ['Some drivers are not permanent staff', 'All drivers are contractors', 'No driver is permanent staff', 'Some permanent staff are drivers'], answer: 0 },
+  { id: 'q11', q: "A caller says they are from a client company and asks for another client's phone number. What should you do?",
+    options: ['Give it, they sound genuine', 'Decline to share it and follow the data-protection and verification policy', 'Give only half of the number', 'Ask a colleague to give it instead'], answer: 1 },
+  { id: 'q12', q: 'A conflict of interest arises when:',
+    options: ["An employee's personal interests could improperly influence their work duties", 'Two employees disagree about a method', 'The company has many clients', 'An employee goes on approved leave'], answer: 0 },
+  { id: 'q13', q: 'Sales rose from 400 units to 500 units. What is the percentage increase?',
+    options: ['20%', '25%', '100%', '125%'], answer: 1 },
+  { id: 'q14', q: 'Which item does not belong with the others?',
+    options: ['Invoice', 'Receipt', 'Purchase order', 'Meeting room'], answer: 3 },
+  { id: 'q15', q: 'A small fire has just started in the office. What is your first priority?',
+    options: ['Collect your personal belongings', 'Raise the alarm and alert others; only tackle it if it is safe and you are trained', 'Wait to see if it goes out', 'Film it for the incident report'], answer: 1 },
+  { id: 'q16', q: 'Staff are split between Operations and Sales in the ratio 3:5. There are 40 staff in total. How many are in Sales?',
+    options: ['15', '20', '25', '30'], answer: 2 },
+  { id: 'q17', q: 'A is taller than B. C is shorter than B. D is taller than A. Who is the shortest?',
+    options: ['A', 'B', 'C', 'D'], answer: 2 },
+  { id: 'q18', q: 'You will be 15 minutes late because of an unavoidable transport problem. What is the best action?',
+    options: ['Slip in quietly and hope nobody notices', 'Inform your supervisor as early as possible and agree how to make up the time', 'Blame a colleague', 'Go home for the day'], answer: 1 },
+  { id: 'q19', q: 'Which password is the strongest?',
+    options: ['Slirus123', 'password', 'Tr!ee#Lamp9$Rain', '12345678'], answer: 2 },
+  { id: 'q20', q: 'Which file format is best for sharing a finished document that should not be edited?',
+    options: ['.docx', '.pdf', '.xlsx', '.txt'], answer: 1 },
+  { id: 'q21', q: 'What is 15% of 2,000?',
+    options: ['150', '200', '300', '350'], answer: 2 },
+  { id: 'q22', q: 'A job requires applicants to be at least 18 and to hold a valid national ID. An applicant is 19 and has an expired ID. Do they meet the requirements?',
+    options: ['Yes, age is all that matters', 'No, the ID is not valid', 'Yes, an expired ID is acceptable', 'Yes, if they promise to renew it later'], answer: 1 },
+  { id: 'q23', q: 'Two colleagues disagree about the method for a task and ask for your input. What is the best approach?',
+    options: ['Side with the colleague you like most', 'Listen to both and recommend the option best supported by facts and the task goal', 'Avoid the discussion', 'Escalate immediately without speaking to either'], answer: 1 },
+  { id: 'q24', q: 'All Bloops are Razzies, and all Razzies are Lazzies. Which statement must be true?',
+    options: ['All Lazzies are Bloops', 'All Bloops are Lazzies', 'No Razzies are Bloops', 'Some Lazzies are not Razzies'], answer: 1 },
+  { id: 'q25', q: 'What is the average of 4, 6, 8, 10 and 12?',
+    options: ['7', '8', '9', '10'], answer: 1 },
+];
+const INTERVIEW_QMAP = new Map(INTERVIEW_BANK.map((q) => [q.id, q]));
+
+// Deterministic per-token shuffle so a resumed session sees the same paper.
+const seededRng = (str) => {
+  let a = crypto.createHash('sha256').update(str).digest().readUInt32LE(0);
+  return () => {            // mulberry32
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const shuffled = (arr, rnd) => {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+};
+// The paper sent to the browser: NO answers. Option `id` is the original index.
+const buildPaper = (token) => {
+  const rnd = seededRng(token);
+  return shuffled(INTERVIEW_BANK, rnd).map((q) => ({
+    id: q.id,
+    q: q.q,
+    options: shuffled(q.options.map((text, id) => ({ id, text })), rnd),
+  }));
+};
+const sanitizeAnswers = (raw) => {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [qid, v] of Object.entries(raw)) {
+    const q = INTERVIEW_QMAP.get(qid);
+    if (q && Number.isInteger(v) && v >= 0 && v < q.options.length) out[qid] = v;
+  }
+  return out;
+};
+const gradeAnswers = (answers) => {
+  let score = 0;
+  for (const q of INTERVIEW_BANK) if (answers[q.id] === q.answer) score++;
+  const total = INTERVIEW_BANK.length;
+  return { score, total, percent: Math.round((score / total) * 1000) / 10 };
+};
+
+// ── tiny in-memory rate limiter (per IP) for the public interview routes ──
+const ivHits = new Map();
+const interviewLimiter = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || 'x';
+  const rec = ivHits.get(key) || { n: 0, reset: now + 60_000 };
+  if (now > rec.reset) { rec.n = 0; rec.reset = now + 60_000; }
+  rec.n++; ivHits.set(key, rec);
+  if (rec.n > 90) return res.status(429).json({ success: false, message: 'Too many requests. Please slow down.' });
+  res.set('Cache-Control', 'no-store');
+  next();
+};
+setInterval(() => { const n = Date.now(); for (const [k, v] of ivHits) if (n > v.reset) ivHits.delete(k); }, 5 * 60_000).unref?.();
+
+const requireDb = (_req, res, next) =>
+  adminDb ? next() : res.status(503).json({ success: false, message: 'Online interviews are not configured on this server.' });
+
+const TOKEN_RE = /^[A-Za-z0-9_-]{20,64}$/;
+const loadInterview = async (token) => {
+  if (typeof token !== 'string' || !TOKEN_RE.test(token)) return null;
+  const ref  = adminDb.collection('interviews').doc(token);
+  const snap = await ref.get();
+  return snap.exists ? { ref, token, data: snap.data() } : null;
+};
+const sameSecret = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+};
+const BAD_LINK = { success: false, code: 'invalid', message: 'This interview link is not valid.' };
+
+// Grades and closes an interview exactly once (transaction-guarded, so a
+// manual submit racing the timeout sweeper cannot double-post a result).
+const finalizeInterview = async (token, { answers, reason, violations }) =>
+  adminDb.runTransaction(async (tx) => {
+    const ref  = adminDb.collection('interviews').doc(token);
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const d = snap.data();
+    if (d.status === 'completed') return d;
+    const appRef  = adminDb.collection('applications').doc(d.applicationId);
+    const appSnap = await tx.get(appRef);
+
+    const finalAnswers = answers ?? d.answers ?? {};
+    const { score, total, percent } = gradeAnswers(finalAnswers);
+    const v = Math.min(99, Math.max(d.violations || 0, violations || 0));
+    const autoClosed = reason !== 'manual';
+
+    tx.update(ref, {
+      status: 'completed', answers: finalAnswers, score, total, percent,
+      violations: v, reason, autoClosed, completedAt: FieldValue.serverTimestamp(), completedAtMs: Date.now(),
+    });
+    if (appSnap.exists) {
+      tx.update(appRef, {
+        interviewStatus: 'completed', interviewScore: score, interviewTotal: total,
+        interviewPercent: percent, interviewViolations: v, interviewAutoClosed: autoClosed,
+        interviewReason: reason, interviewCompletedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    return { ...d, score, total, percent };
+  });
+
+// ── POST /api/interview/invite  (CEO/Admin only) ─────────────────────────────
+app.post('/api/interview/invite', verifyCeoAuth, requireDb, async (req, res) => {
+  const { applicationId } = req.body ?? {};
+  if (typeof applicationId !== 'string' || !applicationId || applicationId.includes('/')) {
+    return res.status(400).json({ success: false, message: 'Missing required field: applicationId.' });
+  }
+  try {
+    const appRef  = adminDb.collection('applications').doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) return res.status(404).json({ success: false, message: 'Application not found.' });
+    const a = appSnap.data();
+    if (a.status !== 'Shortlisted') {
+      return res.status(409).json({ success: false, message: 'Only shortlisted applicants can be invited to the online interview.' });
+    }
+    if (!a.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)) {
+      return res.status(400).json({ success: false, message: 'This application has no valid email address.' });
+    }
+
+    // One interview per application. Resend is allowed only until it is started.
+    const existing = await adminDb.collection('interviews').where('applicationId', '==', applicationId).limit(1).get();
+    let token, ivRef;
+    if (!existing.empty) {
+      const doc = existing.docs[0];
+      if (doc.data().status !== 'invited') {
+        return res.status(409).json({ success: false, message: 'The applicant has already started or completed the online interview.' });
+      }
+      token = doc.id; ivRef = doc.ref;
+      await ivRef.update({ expiresAtMs: Date.now() + INTERVIEW_INVITE_TTL_MS, failedAttempts: 0, lastInvitedBy: req.callerEmail, reinvitedAt: FieldValue.serverTimestamp() });
+    } else {
+      token = crypto.randomBytes(32).toString('base64url');
+      ivRef = adminDb.collection('interviews').doc(token);
+      await ivRef.set({
+        applicationId, email: String(a.email).trim().toLowerCase(), name: a.fullName || '', program: a.program || '',
+        status: 'invited', createdAt: FieldValue.serverTimestamp(), expiresAtMs: Date.now() + INTERVIEW_INVITE_TTL_MS,
+        invitedBy: req.callerEmail, failedAttempts: 0, violations: 0, answers: {},
+      });
+    }
+
+    const link  = `${PORTAL_BASE_URL}/interview?t=${encodeURIComponent(token)}`;
+    const name  = a.fullName || 'Applicant';
+    const prog  = a.program  || 'the advertised';
+    const extra = { link, minutes: INTERVIEW_MINUTES, validDays: Math.round(INTERVIEW_INVITE_TTL_MS / 86_400_000), rawProgram: String(prog).replace(/[\r\n]+/g, ' ').slice(0, 120) };
+    const content = buildEmailContent('interview_invite', escHtml(name), escHtml(prog), extra);
+    const html    = buildEmailHtml(content.title, content.body, 'HR Department', a.email);
+    const text    = buildPlainText(content.title, name, prog, 'interview_invite', 'HR Department', extra);
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS, to: a.email, reply_to: 'hr@slirus.com',
+      subject: content.subject, html, text,
+      headers: { 'Precedence': 'transactional', 'X-Entity-Ref-ID': `slirus-interview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 'X-Mailer': 'Slirus-Email-API/1.0' },
+    });
+    if (error) throw new Error(error.message || 'Resend API error');
+
+    await appRef.update({ interviewStatus: 'invited', interviewInvitedAt: FieldValue.serverTimestamp() });
+    console.log(`[Interview] ✉️  Invite → ${a.email} (application ${applicationId}) by ${req.callerEmail} | messageId: ${data.id}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Interview] ❌ invite failed:', err.message);
+    return res.status(500).json({ success: false, message: NODE_ENV === 'production' ? 'Could not send the interview invitation.' : err.message });
+  }
+});
+
+// ── POST /api/interview/start  (applicant) ───────────────────────────────────
+app.post('/api/interview/start', interviewLimiter, requireDb, async (req, res) => {
+  try {
+    const { token, email } = req.body ?? {};
+    const iv = await loadInterview(token);
+    if (!iv) return res.status(404).json(BAD_LINK);
+    const d = iv.data;
+
+    if ((d.failedAttempts || 0) >= INTERVIEW_MAX_BAD_EMAIL) {
+      return res.status(423).json({ success: false, code: 'locked', message: 'This link has been locked after too many failed attempts. Please contact HR.' });
+    }
+    if (typeof email !== 'string' || email.trim().toLowerCase() !== d.email) {
+      await iv.ref.update({ failedAttempts: FieldValue.increment(1) });
+      return res.status(403).json({ success: false, code: 'email', message: 'We could not verify these details. Use the exact email address you applied with.' });
+    }
+    if (d.status === 'completed') {
+      return res.status(410).json({ success: false, code: 'completed', message: 'This interview has already been completed.' });
+    }
+
+    const now = Date.now();
+    const sessionKey = crypto.randomBytes(24).toString('base64url');
+
+    if (d.status === 'invited') {
+      if (now > d.expiresAtMs) {
+        return res.status(410).json({ success: false, code: 'expired', message: 'This interview link has expired. Please contact HR.' });
+      }
+      await iv.ref.update({ status: 'in_progress', startedAtMs: now, endsAtMs: now + INTERVIEW_TOTAL_MS, startedAt: FieldValue.serverTimestamp(), sessionKey });
+      await adminDb.collection('applications').doc(d.applicationId).update({ interviewStatus: 'in_progress' }).catch(() => {});
+      d.endsAtMs = now + INTERVIEW_TOTAL_MS; d.answers = {}; d.violations = 0;
+    } else {
+      // in_progress → resume (timer never resets). Newest session wins; older tab is cut off.
+      if (now > d.endsAtMs + INTERVIEW_GRACE_MS) {
+        await finalizeInterview(iv.token, { reason: 'timeout' });
+        return res.status(410).json({ success: false, code: 'completed', message: 'Your 30 minutes have ended and the interview has been closed.' });
+      }
+      await iv.ref.update({ sessionKey });
+    }
+
+    return res.status(200).json({
+      success: true, sessionKey, name: d.name,
+      remainingMs: Math.max(0, d.endsAtMs - now), totalMs: INTERVIEW_TOTAL_MS,
+      maxViolations: INTERVIEW_MAX_VIOLATIONS,
+      questions: buildPaper(iv.token), answers: d.answers || {}, violations: d.violations || 0,
+    });
+  } catch (err) {
+    console.error('[Interview] start failed:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not start the interview. Please try again.' });
+  }
+});
+
+// Shared guard for save/submit: valid token + live session.
+const loadLiveSession = async (req, res) => {
+  const { token, sessionKey } = req.body ?? {};
+  const iv = await loadInterview(token);
+  if (!iv) { res.status(404).json(BAD_LINK); return null; }
+  if (iv.data.status === 'completed') { res.status(410).json({ success: false, code: 'completed', message: 'This interview has already been completed.' }); return null; }
+  if (iv.data.status !== 'in_progress' || !sameSecret(sessionKey, iv.data.sessionKey)) {
+    res.status(409).json({ success: false, code: 'session', message: 'This interview is open in another window. Only one session is allowed.' });
+    return null;
+  }
+  return iv;
+};
+
+// ── POST /api/interview/save  (autosave) ─────────────────────────────────────
+app.post('/api/interview/save', interviewLimiter, requireDb, async (req, res) => {
+  try {
+    const iv = await loadLiveSession(req, res);
+    if (!iv) return;
+    const now = Date.now();
+    if (now > iv.data.endsAtMs + INTERVIEW_GRACE_MS) {
+      await finalizeInterview(iv.token, { reason: 'timeout' });
+      return res.status(200).json({ success: true, done: true });
+    }
+    const patch = { answers: sanitizeAnswers(req.body.answers) };
+    const v = Number.isInteger(req.body.violations) ? Math.min(99, Math.max(0, req.body.violations)) : 0;
+    if (v > (iv.data.violations || 0)) patch.violations = v;
+    await iv.ref.update(patch);
+    return res.status(200).json({ success: true, remainingMs: Math.max(0, iv.data.endsAtMs - now) });
+  } catch (err) {
+    console.error('[Interview] save failed:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not save.' });
+  }
+});
+
+// ── POST /api/interview/submit ───────────────────────────────────────────────
+app.post('/api/interview/submit', interviewLimiter, requireDb, async (req, res) => {
+  try {
+    const iv = await loadLiveSession(req, res);
+    if (!iv) return;
+    const late = Date.now() > iv.data.endsAtMs + INTERVIEW_GRACE_MS;
+    const reasonIn = ['manual', 'timeout', 'violations'].includes(req.body.reason) ? req.body.reason : 'manual';
+    await finalizeInterview(iv.token, {
+      // After the deadline only what was autosaved in time counts.
+      answers: late ? undefined : sanitizeAnswers(req.body.answers),
+      reason: late ? 'timeout' : reasonIn,
+      violations: Number.isInteger(req.body.violations) ? req.body.violations : 0,
+    });
+    return res.status(200).json({ success: true }); // applicants are never shown their score
+  } catch (err) {
+    console.error('[Interview] submit failed:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not submit. Please try again.' });
+  }
+});
+
+// Closes interviews whose applicant simply walked away (browser closed, power cut…).
+// Grades whatever was autosaved so the result still reaches the Admin dashboard.
+if (adminDb) {
+  setInterval(async () => {
+    try {
+      const snap = await adminDb.collection('interviews').where('status', '==', 'in_progress').get();
+      const now = Date.now();
+      for (const doc of snap.docs) {
+        if (now > (doc.data().endsAtMs || 0) + INTERVIEW_GRACE_MS) {
+          await finalizeInterview(doc.id, { reason: 'timeout' });
+          console.log(`[Interview] ⏱  Auto-closed expired interview for application ${doc.data().applicationId}`);
+        }
+      }
+    } catch (err) {
+      console.warn('[Interview] sweeper error:', err.message);
+    }
+  }, 30_000).unref?.();
+}
 
 // ─── GET /api/health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

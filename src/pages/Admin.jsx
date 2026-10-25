@@ -9,15 +9,19 @@
  *  - Inline status update (Shortlist / Reject) — calls POST /api/send-email
  *    (server.js → Nodemailer + Mailtrap API) to notify the applicant by email
  *  - Detail modal with full applicant data + status actions + PDF download
+ *  - Online interview: "Online" button (shortlisted only) emails the applicant a private
+ *    link to Interview.jsx via POST /api/interview/invite. When the applicant finishes (or the
+ *    30 minutes run out) a score card pops up here and "Select Round 2" appears for the
+ *    in-person interview.
  *  - Admin-copy PDF generation (jsPDF, lazy-loaded)
  *
  * No prop drilling issues — state lives at Admin level and is passed explicitly.
  * All Firebase calls are try/catch with user-friendly error feedback.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { db, auth } from '../firebase/firebase';
-import { collection, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { CAREER_TRACKS } from './careerTracks';
@@ -166,6 +170,131 @@ const Badge = ({ status }) => {
   );
 };
 
+// ─── Online interview helpers ─────────────────────────────────────────────────
+const INTERVIEW_PASS_PERCENT = 60; // guide colour only — the Admin decides who goes to round 2
+
+const interviewTone = (percent) =>
+  percent >= INTERVIEW_PASS_PERCENT
+    ? { bg: '#D1FAE5', color: '#065F46', dot: '#10B981' }
+    : { bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B' };
+
+// Small chip under the status badge in the table.
+const InterviewChip = ({ app }) => {
+  if (app.secondRound === 'Selected') {
+    return (
+      <div style={{ marginTop: 5, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ ...ic.chip, background: '#E0E7FF', color: '#3730A3' }}>★ Round 2 selected</span>
+        {app.secondRoundEmailSent === false && <span style={{ ...ic.chip, background: '#FEE2E2', color: '#991B1B' }}>⚠ Email not sent</span>}
+      </div>
+    );
+  }
+  if (app.interviewStatus === 'completed') {
+    const t = interviewTone(app.interviewPercent);
+    return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: t.bg, color: t.color }}>Online {app.interviewScore}/{app.interviewTotal} · {app.interviewPercent}%</span></div>;
+  }
+  if (app.interviewStatus === 'in_progress') return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: '#DBEAFE', color: '#1D4ED8' }}>Online in progress…</span></div>;
+  if (app.interviewStatus === 'invited')     return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: '#F1F5F9', color: '#475569' }}>Online link sent</span></div>;
+  return null;
+};
+// Date / time / venue form shown when the Admin presses "Select Round 2".
+const Round2Modal = ({ app, onCancel, onConfirm, busy, initial, isUpdate }) => {
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const [form, setForm] = useState(initial || { date: '', time: '', venue: '', note: '' });
+  const [err, setErr] = useState('');
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.date || form.date < today) { setErr('Choose today or a future date.'); return; }
+    if (!form.time)                      { setErr('Choose the interview time.'); return; }
+    if (!form.venue.trim())              { setErr('Enter the venue.'); return; }
+    setErr('');
+    onConfirm({ ...form, venue: form.venue.trim(), note: form.note.trim() });
+  };
+  const fld = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 14, border: '1.5px solid #CBD5E1', borderRadius: 8, fontFamily: 'inherit', color: '#1A3C5E' };
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 700, color: '#5A7A9A', margin: '12px 0 5px' };
+
+  return (
+    <div style={{ ...ms.overlay, zIndex: 2100 }} onClick={busy ? undefined : onCancel}>
+      <form style={{ ...ms.modal, maxWidth: 480, padding: 24 }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{isUpdate ? 'Update Round 2 details & resend' : 'Round 2 — in-person interview'}</h3>
+        <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>
+          {app.fullName} · {app.program}. {isUpdate ? 'The email is sent again marked as an update; change anything that has moved.' : `These details are emailed to ${app.email}.`}
+        </p>
+
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={lbl} htmlFor="r2-date">Date</label>
+            <input id="r2-date" type="date" min={today} value={form.date} onChange={set('date')} style={fld} required />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lbl} htmlFor="r2-time">Time</label>
+            <input id="r2-time" type="time" value={form.time} onChange={set('time')} style={fld} required />
+          </div>
+        </div>
+
+        <label style={lbl} htmlFor="r2-venue">Venue</label>
+        <input id="r2-venue" type="text" maxLength={200} value={form.venue} onChange={set('venue')} style={fld}
+               placeholder="e.g. Slirus head office, Plot 12 Main Street, Lira — Boardroom" required />
+
+        <label style={lbl} htmlFor="r2-note">Note to the applicant (optional)</label>
+        <textarea id="r2-note" rows={3} maxLength={500} value={form.note} onChange={set('note')} style={{ ...fld, resize: 'vertical' }}
+                  placeholder="e.g. Ask for the HR office at reception. Bring a pen." />
+
+        {err && <div style={{ marginTop: 12, background: '#FEE2E2', color: '#991B1B', borderRadius: 8, padding: '8px 12px', fontSize: 13, fontWeight: 600 }}>{err}</div>}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#F1F5F9', color: '#475569' }} onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="submit" style={{ ...ms.actionBtn, background: '#1A3C5E', color: '#fff', opacity: busy ? 0.6 : 1 }} disabled={busy}>
+            {busy ? 'Sending…' : isUpdate ? 'Save & resend email' : 'Select & send invitation'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const ic = { chip: { display: 'inline-block', borderRadius: 12, padding: '2px 9px', fontSize: 11, fontWeight: 700 } };
+
+// Pop-up result cards, top-right of the dashboard.
+const InterviewAlerts = ({ alerts, onSelectRound2, onView, onDismiss, busyId }) => {
+  if (!alerts.length) return null;
+  return (
+    <div style={{ position: 'fixed', top: 18, right: 18, zIndex: 2000, display: 'flex', flexDirection: 'column', gap: 12, width: 340, maxWidth: 'calc(100vw - 36px)', maxHeight: 'calc(100vh - 36px)', overflowY: 'auto' }}>
+      {alerts.map(a => {
+        const t = interviewTone(a.percent);
+        return (
+          <div key={a.id} role="status" style={{ background: '#fff', borderRadius: 12, border: '1px solid #E2E8F0', borderLeft: `5px solid ${t.dot}`, boxShadow: '0 8px 30px rgba(0,0,0,0.18)', padding: '14px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#7A8A9A' }}>Online interview finished</div>
+              <button onClick={() => onDismiss(a.id)} title="Dismiss" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7A8A9A', fontSize: 16, lineHeight: 1, padding: 0 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1A3C5E', marginTop: 4 }}>{a.name}</div>
+            <div style={{ fontSize: 12, color: '#5A7A9A', marginBottom: 8 }}>{a.program}</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 30, fontWeight: 800, color: t.color }}>{a.score}<span style={{ fontSize: 16, color: '#7A8A9A' }}> / {a.total}</span></span>
+              <span style={{ ...ic.chip, background: t.bg, color: t.color }}>{a.percent}%</span>
+            </div>
+            {(a.autoClosed || a.violations > 0) && (
+              <div style={{ fontSize: 12, color: '#92400E', background: '#FFFBEB', borderRadius: 6, padding: '6px 8px', marginTop: 8, lineHeight: 1.5 }}>
+                {a.reason === 'timeout' ? 'Closed automatically at the 30-minute limit. ' : a.reason === 'violations' ? 'Closed automatically after repeated rule warnings. ' : ''}
+                {a.violations > 0 ? `${a.violations} rule warning${a.violations > 1 ? 's' : ''} recorded.` : ''}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button
+                style={{ flex: 1, background: '#1A3C5E', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: busyId === a.id ? 0.6 : 1 }}
+                onClick={() => onSelectRound2(a.id)} disabled={busyId === a.id}
+              >Select for Round 2 (in-person)</button>
+              <button style={{ background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 7, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }} onClick={() => onView(a.id)}>View</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── Track Toggle Card ────────────────────────────────────────────────────────
 const TrackToggle = ({ track, isOpen, onToggle, toggling, appCount }) => (
   <div style={{ ...tt.card, borderTop: `3px solid ${track.color}` }}>
@@ -191,7 +320,7 @@ const TrackToggle = ({ track, isOpen, onToggle, toggling, appCount }) => (
 );
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
-const DetailModal = ({ app, onClose, onStatusChange, statusUpdating }) => {
+const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, onSecondRound, interviewBusy }) => {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [localStatus, setLocalStatus] = useState(app?.status);
 
@@ -264,6 +393,29 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating }) => {
           >
             {pdfLoading ? '⏳ Generating…' : '⬇ Download PDF'}
           </button>
+          {app.interviewStatus !== 'completed' && (
+            <button
+              style={{ ...ms.actionBtn, background: '#E0F2FE', color: '#075985', opacity: (localStatus !== 'Shortlisted' || app.interviewStatus === 'in_progress') ? 0.4 : 1 }}
+              onClick={() => onOnline(app)}
+              disabled={localStatus !== 'Shortlisted' || app.interviewStatus === 'in_progress' || interviewBusy === app.id}
+              title={localStatus !== 'Shortlisted' ? 'Shortlist the applicant first' : 'Email the online interview link'}
+            >
+              {interviewBusy === app.id ? '⏳ Sending…' : app.interviewStatus === 'invited' ? '🌐 Online (resend)' : app.interviewStatus === 'in_progress' ? '🌐 Online — in progress' : '🌐 Online'}
+            </button>
+          )}
+          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && (
+            <button style={{ ...ms.actionBtn, background: '#1A3C5E', color: '#fff' }} onClick={() => onSecondRound(app)} disabled={interviewBusy === app.id}>
+              ★ Select Round 2
+            </button>
+          )}
+          {app.secondRound === 'Selected' && (
+            <button
+              style={{ ...ms.actionBtn, background: app.secondRoundEmailSent === false ? '#FEE2E2' : '#E0E7FF', color: app.secondRoundEmailSent === false ? '#991B1B' : '#3730A3' }}
+              onClick={() => onSecondRound(app)} disabled={interviewBusy === app.id}
+            >
+              ✎ {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
+            </button>
+          )}
         </div>
 
         {/* Scrollable body */}
@@ -311,6 +463,29 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating }) => {
               {(app.referees || []).map((r, i) => r.name
                 ? <Row key={i} label={r.name} val={[r.title, r.contact].filter(Boolean).join(' · ')} />
                 : null
+              )}
+            </Sec>
+          )}
+          {app.interviewStatus && (
+            <Sec title="Online Interview">
+              <Row label="Status" val={{ invited: 'Link sent — not started', in_progress: 'In progress', completed: 'Completed' }[app.interviewStatus] || app.interviewStatus} />
+              {app.interviewStatus === 'completed' && (
+                <>
+                  <Row label="Score" val={`${app.interviewScore} / ${app.interviewTotal}  (${app.interviewPercent}%)`} />
+                  <Row label="Closed" val={app.interviewReason === 'timeout' ? 'Automatically — 30-minute limit' : app.interviewReason === 'violations' ? 'Automatically — repeated rule warnings' : 'Submitted by applicant'} />
+                  <Row label="Rule warnings" val={String(app.interviewViolations ?? 0)} />
+                  <Row label="Completed" val={app.interviewCompletedAt?.toDate ? app.interviewCompletedAt.toDate().toLocaleString('en-UG') : ''} />
+                </>
+              )}
+              {app.secondRound === 'Selected' && (
+                <>
+                  <Row label="Round 2" val="Selected for in-person interview" />
+                  <Row label="Date"  val={app.secondRoundDate} />
+                  <Row label="Time"  val={app.secondRoundTime} />
+                  <Row label="Venue" val={app.secondRoundVenue} />
+                  <Row label="Note"  val={app.secondRoundNote} />
+                  <Row label="Email" val={app.secondRoundEmailSent === true ? 'Sent' : app.secondRoundEmailSent === false ? 'NOT sent — use Resend' : ''} />
+                </>
               )}
             </Sec>
           )}
@@ -760,6 +935,11 @@ const Admin = () => {
   const [toggling, setToggling]       = useState(null);
   const [selected, setSelected]       = useState(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [round2Target, setRound2Target] = useState(null);       // applicant whose Round 2 details are being entered
+  const [interviewBusy, setInterviewBusy] = useState(null);     // application id being invited / promoted
+  const [interviewAlerts, setInterviewAlerts] = useState([]);   // pop-up result cards
+  const prevInterviewRef   = useRef({});                         // id → last seen interviewStatus
+  const interviewSeededRef = useRef(false);                      // skip alerts for the initial load
   const [deletingId, setDeletingId] = useState(null);
   const [loadingApps, setLoadingApps] = useState(true);
   const [trackFilter, setTrackFilter] = useState('All');
@@ -801,6 +981,9 @@ const Admin = () => {
   // Firestore listeners — only when logged in
   useEffect(() => {
     if (!user) {
+      interviewSeededRef.current = false;
+      prevInterviewRef.current = {};
+      setInterviewAlerts([]);
       setApplications([]);
       setTrackStatuses({});
       setAppsError(null);
@@ -813,7 +996,25 @@ const Admin = () => {
       collection(db, 'applications'),
       (snap) => {
         setAppsError(null);
-        setApplications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // Pop a result card when an online interview flips to "completed" while the dashboard is open.
+        const prev = prevInterviewRef.current;
+        if (interviewSeededRef.current) {
+          docs.forEach(a => {
+            if (a.interviewStatus === 'completed' && prev[a.id] !== undefined && prev[a.id] !== 'completed' && a.secondRound !== 'Selected') {
+              setInterviewAlerts(list => [{
+                id: a.id, name: a.fullName, program: a.program,
+                score: a.interviewScore, total: a.interviewTotal, percent: a.interviewPercent,
+                reason: a.interviewReason, autoClosed: a.interviewAutoClosed, violations: a.interviewViolations || 0,
+              }, ...list.filter(x => x.id !== a.id)]);
+            }
+          });
+        }
+        prevInterviewRef.current = Object.fromEntries(docs.map(a => [a.id, a.interviewStatus || 'none']));
+        interviewSeededRef.current = true;
+
+        setApplications(docs);
         setLoadingApps(false);
       },
       (err) => {
@@ -1025,6 +1226,89 @@ const Admin = () => {
       setStatusUpdating(false);
     }
   }, [applications]);
+
+  // "Online" — emails the shortlisted applicant their private interview link.
+  // Runs through server.js so the secret token is created and emailed server-side only.
+  const inviteOnline = useCallback(async (app) => {
+    if (!app || interviewBusy) return;
+    const resend = app.interviewStatus === 'invited';
+    if (!window.confirm(`${resend ? 'Resend the' : 'Send the'} online interview link to ${app.fullName} (${app.email})?\n\nThe interview takes 30 minutes and can only be attempted once.`)) return;
+    setInterviewBusy(app.id);
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch(`${API_URL}/api/interview/invite`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body:    JSON.stringify({ applicationId: app.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.message || `Server error (${res.status})`);
+      alert(`Online interview link sent to ${app.email}.`);
+    } catch (err) {
+      console.error('inviteOnline error:', err);
+      alert('Could not send the online interview invitation: ' + err.message);
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [interviewBusy]);
+
+  // "Select Round 2" — opens the date/time/venue form for that applicant.
+  const selectSecondRound = useCallback((appOrId) => {
+    const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
+    const app = applications.find(a => a.id === id);
+    if (app) setRound2Target(app);
+  }, [applications]);
+
+  // Form submitted: record the selection (or the updated details), then email the applicant.
+  // Also records whether the email actually went out so a failure stays visible on the dashboard.
+  const confirmSecondRound = useCallback(async (details) => {
+    const app = round2Target;
+    if (!app) return;
+    const isUpdate = app.secondRound === 'Selected';
+    setInterviewBusy(app.id);
+    try {
+      await updateDoc(doc(db, 'applications', app.id), {
+        ...(isUpdate ? { secondRoundUpdatedAt: serverTimestamp() } : { secondRound: 'Selected', secondRoundAt: serverTimestamp() }),
+        secondRoundDate: details.date, secondRoundTime: details.time,
+        secondRoundVenue: details.venue, secondRoundNote: details.note || '',
+      });
+      setInterviewAlerts(list => list.filter(x => x.id !== app.id));
+      setRound2Target(null);
+
+      if (!app.email) return;
+      let sent = false, msg = '';
+      try {
+        const res = await fetch(`${API_URL}/api/send-email`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            type: 'second_round', to: app.email, name: app.fullName, program: app.program,
+            date: details.date, time: details.time, venue: details.venue, note: details.note,
+            isUpdate,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.message || `Server error (${res.status})`);
+        sent = true;
+      } catch (mailErr) {
+        console.warn('[Email] Round 2 email failed:', mailErr);
+        msg = mailErr.message;
+      }
+      // Remember the outcome (drives the "Email not sent" chip + the Resend button).
+      updateDoc(doc(db, 'applications', app.id), {
+        secondRoundEmailSent: sent, secondRoundEmailAt: serverTimestamp(),
+      }).catch(e => console.warn('Could not record Round 2 email status:', e));
+
+      alert(sent
+        ? `${isUpdate ? 'Updated Round 2 details' : `${app.fullName} is selected for Round 2 and the invitation`} sent to ${app.email}.`
+        : `${app.fullName} is ${isUpdate ? 'still' : ''} selected for Round 2, but the email could not be sent: ${msg}\n\nUse "Edit / Resend Round 2" to try again, or contact the applicant directly.`);
+    } catch (err) {
+      console.error('confirmSecondRound error:', err);
+      alert('Could not save the Round 2 details: ' + err.message);
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [round2Target]);
 
   const updateProjectStatus = useCallback(async (id, status) => {
     setProjectStatusUpdating(true);
@@ -1343,12 +1627,12 @@ const Admin = () => {
                           {appTrack?.title || app.program || '—'}
                         </span>
                       </td>
-                      <td style={s.td}><Badge status={app.status} /></td>
+                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /></td>
                       <td style={{ ...s.td, fontSize: 12, color: '#7A8A9A', whiteSpace: 'nowrap' }}>
                         {app.submittedAt?.toDate ? app.submittedAt.toDate().toLocaleDateString('en-UG') : '—'}
                       </td>
                       <td style={s.td}>
-                        <div style={{ display: 'flex', gap: 6 }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           <button
                             style={{ ...s.btnShortlist, opacity: app.status === 'Shortlisted' ? 0.45 : 1 }}
                             onClick={() => updateStatus(app.id, 'Shortlisted')}
@@ -1363,6 +1647,28 @@ const Admin = () => {
                           >
                             Reject
                           </button>
+                          {app.interviewStatus !== 'completed' && (
+                            <button
+                              style={{ ...s.btnOnline, opacity: (app.status !== 'Shortlisted' || app.interviewStatus === 'in_progress') ? 0.4 : 1 }}
+                              onClick={() => inviteOnline(app)}
+                              disabled={app.status !== 'Shortlisted' || app.interviewStatus === 'in_progress' || interviewBusy === app.id}
+                              title={app.status !== 'Shortlisted' ? 'Shortlist the applicant to enable the online interview' : app.interviewStatus === 'invited' ? 'Resend the interview link' : 'Email the online interview link'}
+                            >
+                              {interviewBusy === app.id ? '…' : 'Online'}
+                            </button>
+                          )}
+                          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && (
+                            <button style={s.btnRound2} onClick={() => selectSecondRound(app)} disabled={interviewBusy === app.id}>Select Round 2</button>
+                          )}
+                          {app.secondRound === 'Selected' && (
+                            <button
+                              style={{ ...s.btnView, background: app.secondRoundEmailSent === false ? '#FEE2E2' : '#E0E7FF', color: app.secondRoundEmailSent === false ? '#991B1B' : '#3730A3' }}
+                              onClick={() => selectSecondRound(app)} disabled={interviewBusy === app.id}
+                              title="Change the date, time or venue and email the applicant again"
+                            >
+                              {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
+                            </button>
+                          )}
                           <button style={s.btnView} onClick={() => setSelected(app)}>View</button>
                           <button
                             style={{ ...s.btnDelete, opacity: deletingId === app.id ? 0.5 : 1 }}
@@ -1581,11 +1887,35 @@ const Admin = () => {
       </div>
 
       {/* Detail modals */}
+      {round2Target && (
+        <Round2Modal
+          key={round2Target.id}
+          app={round2Target}
+          isUpdate={round2Target.secondRound === 'Selected'}
+          initial={round2Target.secondRound === 'Selected' ? {
+            date: round2Target.secondRoundDate || '', time: round2Target.secondRoundTime || '',
+            venue: round2Target.secondRoundVenue || '', note: round2Target.secondRoundNote || '',
+          } : null}
+          busy={interviewBusy === round2Target.id}
+          onCancel={() => setRound2Target(null)}
+          onConfirm={confirmSecondRound}
+        />
+      )}
+      <InterviewAlerts
+        alerts={interviewAlerts}
+        busyId={interviewBusy}
+        onSelectRound2={selectSecondRound}
+        onView={(id) => { const a = applications.find(x => x.id === id); if (a) setSelected(a); }}
+        onDismiss={(id) => setInterviewAlerts(list => list.filter(x => x.id !== id))}
+      />
       <DetailModal
-        app={selected}
+        app={selected ? (applications.find(a => a.id === selected.id) || selected) : null}
         onClose={() => setSelected(null)}
         onStatusChange={updateStatus}
         statusUpdating={statusUpdating}
+        onOnline={inviteOnline}
+        onSecondRound={selectSecondRound}
+        interviewBusy={interviewBusy}
       />
       <ProjectDetailModal
         project={selectedProject}
@@ -1648,6 +1978,8 @@ const s = {
   btnReject:   { background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnView:     { background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnDelete:   { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnOnline:   { background: '#E0F2FE', color: '#075985', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnRound2:   { background: '#1A3C5E', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 };
 
 const tt = {
