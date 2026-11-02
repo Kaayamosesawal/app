@@ -1596,13 +1596,17 @@ app.get('/api/health', (_req, res) => {
     service:   'Slirus Email API',
     env:       NODE_ENV,
     userManagement: firebaseAdminReady ? 'enabled' : 'disabled',
+    // Open /api/health after every deploy: if "onlineInterview" is missing, Render is still running an OLD server.js.
+    onlineInterview: adminDb ? 'enabled' : 'disabled (Firebase Admin not configured)',
+    version:   'online-interview-v1',
     timestamp: new Date().toISOString(),
   });
 });
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
-app.use((_req, res) => {
-  res.status(404).json({ success: false, message: 'Route not found.' });
+app.use((req, res) => {
+  console.warn(`[404] ${req.method} ${req.originalUrl} — no such route on this server (is the latest server.js deployed?)`);
+  res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.path}` });
 });
 
 // ─── Global error handler ─────────────────────────────────────────────────────
@@ -1625,6 +1629,7 @@ app.listen(PORT, () => {
   console.log(`  From (Proj) : ${PROJECTS_FROM}`);
   console.log(`  Portal base : ${PORTAL_BASE_URL}`);
   console.log(`  User mgmt   : ${firebaseAdminReady ? 'enabled (Firebase Admin)' : 'disabled — set FIREBASE_SERVICE_ACCOUNT_KEY'}`);
+  console.log(`  Interviews  : ${adminDb ? 'enabled — /api/interview/*' : 'DISABLED — needs FIREBASE_SERVICE_ACCOUNT_KEY'}`);
   console.log('─────────────────────────────────────────');
   console.log('  Deliverability checklist (DNS required):');
   console.log('  ✉  SPF   — TXT record on your sending domain');
