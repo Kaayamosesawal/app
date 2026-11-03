@@ -81,7 +81,7 @@ const LINE = [208, 220, 232];
 export const buildAppointmentLetterPdf = async (letter) => {
   const { jsPDF } = await import('jspdf');
   const logoDataUrl = await loadLogoDataUrl();
-  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
 
   const PW = 210, M = 20, CW = PW - M * 2, BOTTOM = 268;
   const grade = gradeByCode(letter.jobGradeCode);

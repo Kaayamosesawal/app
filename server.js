@@ -182,7 +182,7 @@ app.use(cors({
 
 // Small body limit everywhere, except the one route that carries a PDF attachment.
 const jsonSmall = express.json({ limit: '16kb' });
-const jsonLarge = express.json({ limit: '3mb' });
+const jsonLarge = express.json({ limit: '12mb' });
 const LARGE_BODY_PATHS = new Set(['/api/appointment/send', '/api/placement/send']);
 app.use((req, res, next) => (LARGE_BODY_PATHS.has(req.path) ? next() : jsonSmall(req, res, next)));
 
@@ -1788,8 +1788,8 @@ app.post('/api/appointment/send', verifyCeoAuth, requireDb, jsonLarge, async (re
     }
 
     const pdf = Buffer.from(pdfBase64, 'base64');
-    if (!pdf.length || pdf.length > 2 * 1024 * 1024) {
-      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 2 MB.' });
+    if (!pdf.length || pdf.length > 8 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 8 MB.' });
     }
     if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
       return res.status(400).json({ success: false, message: 'The attachment is not a valid PDF.' });
@@ -1864,8 +1864,8 @@ app.post('/api/placement/send', verifyCeoAuth, requireDb, jsonLarge, async (req,
     }
 
     const pdf = Buffer.from(pdfBase64, 'base64');
-    if (!pdf.length || pdf.length > 2 * 1024 * 1024) {
-      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 2 MB.' });
+    if (!pdf.length || pdf.length > 8 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 8 MB.' });
     }
     if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
       return res.status(400).json({ success: false, message: 'The attachment is not a valid PDF.' });
@@ -1932,7 +1932,7 @@ app.use((err, req, res, _next) => {
   // Body-parser failures are the CLIENT's problem — report them as such instead of a blank 500.
   if (err?.type === 'entity.too.large' || err?.status === 413) {
     console.warn(`[Server] 413 on ${req.method} ${req.path}: body larger than the limit for this route`);
-    return res.status(413).json({ success: false, message: 'The request is too large (the letter PDF is over the 3 MB upload limit).' });
+    return res.status(413).json({ success: false, message: 'The request is too large (the letter PDF is over the 12 MB upload limit).' });
   }
   if (err?.type === 'entity.parse.failed' || err?.status === 400) {
     console.warn(`[Server] 400 on ${req.method} ${req.path}: ${err.message}`);

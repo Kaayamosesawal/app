@@ -9,6 +9,9 @@
  */
 
 const LOGO_PATH = '/Slirus.png';
+// The logo is only drawn ~15 mm wide, so 256 px is already sharp when printed.
+// Embedding the original (often several MB) is what made letter PDFs huge.
+const LOGO_MAX_PX = 256;
 let _logoCache = null;
 let _logoPromise = null;
 
@@ -28,12 +31,34 @@ export const loadLogoDataUrl = async () => {
       const res = await fetch(LOGO_PATH);
       if (!res.ok) throw new Error(`Logo fetch failed (${res.status})`);
       const blob = await res.blob();
-      const dataUrl = await new Promise((resolve, reject) => {
+      const original = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = () => reject(new Error('Could not read logo file'));
         reader.readAsDataURL(blob);
       });
+      // Downscale to a small PNG (keeps transparency). Falls back to the original on any failure.
+      let dataUrl = original;
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const im = new Image();
+          im.onload = () => resolve(im);
+          im.onerror = () => reject(new Error('Could not decode logo'));
+          im.src = original;
+        });
+        const scale = Math.min(1, LOGO_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+        if (scale < 1) {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const small = canvas.toDataURL('image/png');
+          if (small.length < original.length) dataUrl = small;
+        }
+      } catch (e) {
+        console.warn('[PDF] Logo downscale skipped:', e.message);
+      }
       _logoCache = dataUrl;
       return dataUrl;
     } catch (err) {
@@ -79,7 +104,7 @@ export const drawLetterhead = (pdf, {
     try {
       pdf.setFillColor(255, 255, 255);
       pdf.roundedRect(margin, badgeY, badge, badge, 2, 2, 'F');
-      pdf.addImage(logoDataUrl, 'PNG', margin + 1.4, badgeY + 1.4, badge - 2.8, badge - 2.8);
+      pdf.addImage(logoDataUrl, 'PNG', margin + 1.4, badgeY + 1.4, badge - 2.8, badge - 2.8, 'slirus-logo', 'FAST');
       textX = margin + badge + 8;
     } catch (err) {
       textX = margin;
