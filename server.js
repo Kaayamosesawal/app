@@ -16,6 +16,7 @@
  *   POST /api/interview/save      – (Applicant) Autosave answers during the interview
  *   POST /api/interview/submit    – (Applicant) Finish; the server grades against the in-code answer key
  *   POST /api/appointment/send    – (CEO-only) Email the issued Letter of Appointment, PDF attached, to an approved hire
+ *   POST /api/placement/send      – (CEO-only) Email the issued Internship Placement Letter, PDF attached, to an approved intern
  *   GET  /api/health              – Health check for uptime monitors & Render keep-alive
  *
  * "CEO-only" routes require an `Authorization: Bearer <Firebase ID token>` header.
@@ -182,7 +183,8 @@ app.use(cors({
 // Small body limit everywhere, except the one route that carries a PDF attachment.
 const jsonSmall = express.json({ limit: '16kb' });
 const jsonLarge = express.json({ limit: '3mb' });
-app.use((req, res, next) => (req.path === '/api/appointment/send' ? next() : jsonSmall(req, res, next)));
+const LARGE_BODY_PATHS = new Set(['/api/appointment/send', '/api/placement/send']);
+app.use((req, res, next) => (LARGE_BODY_PATHS.has(req.path) ? next() : jsonSmall(req, res, next)));
 
 // ─── Resend client ────────────────────────────────────────────────────────────
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -577,6 +579,29 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       'If you have any questions, or cannot accept the offer, reply to this email as soon as possible.',
       '',
       'Congratulations once again - we look forward to welcoming you to the team.',
+    ],
+    placement_letter: [
+      `Dear ${name},`,
+      '',
+      ...(extra.isUpdate ? ['UPDATE: this letter replaces any placement letter we sent you earlier.', ''] : []),
+      'Following your successful online interview, we are pleased to offer you an',
+      `internship placement as ${program}${extra.department ? ' in the ' + extra.department + ' department' : ''} at Slirus Global Limited.`,
+      '',
+      `Start date : ${extra.startDate || ''}`,
+      `End date   : ${extra.endDate || ''}`,
+      `Reply by   : ${extra.acceptBy || ''}`,
+      '',
+      `Your Internship Placement Letter is attached to this email (${extra.filename || 'PDF'}).`,
+      '',
+      'To accept the placement:',
+      '  1. Read the letter carefully.',
+      '  2. Print it, then sign and date the acceptance section.',
+      `  3. Reply to this email with a clear scan or photo of the signed letter by ${extra.acceptBy || 'the date above'}.`,
+      '  4. Bring the original signed copy and the documents listed in the letter on your first day.',
+      '',
+      'If you have any questions, or cannot take up the placement, reply to this email as soon as possible.',
+      '',
+      'Congratulations - we look forward to welcoming you to the team.',
     ],
     second_round: [
       `Dear ${name},`,
@@ -1041,6 +1066,62 @@ const buildEmailContent = (type, name, program, extra = {}) => {
           </ol>
           <p>
             If you have any questions, or you cannot accept the offer, please reply to this email as soon as possible.
+          </p>
+          <p style="margin-top:24px;">
+            Congratulations once again. We look forward to welcoming you to the team.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
+          </p>`,
+      };
+    }
+
+    // ── Internship Placement Letter (sent ONLY by /api/placement/send, PDF attached) ──
+    case 'placement_letter': {
+      const { startDate = '', endDate = '', acceptBy = '', filename = 'Placement_Letter.pdf', isUpdate = false, department = '', rawPosition = '' } = extra;
+      const row = (label, value) => `
+                <tr>
+                  <td style="padding:5px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;width:110px;vertical-align:top;">${label}</td>
+                  <td style="padding:5px 0;font-size:15px;color:#1e293b;font-weight:700;">${value}</td>
+                </tr>`;
+      return {
+        subject: `${isUpdate ? 'Updated: ' : ''}Internship Placement Letter – ${rawPosition || 'Slirus Global Limited'} | Slirus Global Limited`,
+        title:   isUpdate ? 'Your Updated Internship Placement Letter' : 'Congratulations — Your Internship Placement 🎉',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          ${isUpdate ? `<p style="margin:0 0 16px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:14px;color:#92400E;">
+            <strong>Please note:</strong> this letter replaces any placement letter we sent you earlier.
+          </p>` : ''}
+          <p>
+            Following your successful online interview, we are pleased to offer you an internship placement
+            as <strong>${program}</strong>${department ? ` in the <strong>${escHtml(department)}</strong> department` : ''}
+            at Slirus Global Limited.
+          </p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                 style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin:20px 0;">
+            <tr><td style="padding:16px 20px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                ${row('Placement', program)}
+                ${department ? row('Department', escHtml(department)) : ''}
+                ${row('Start date', escHtml(startDate))}
+                ${row('End date', escHtml(endDate))}
+                ${row('Reply by', escHtml(acceptBy))}
+              </table>
+            </td></tr>
+          </table>
+          <p>
+            Your <strong>Internship Placement Letter</strong> is attached to this email as a PDF
+            (<em>${escHtml(filename)}</em>). It sets out the duration, learning focus and conditions of your placement.
+          </p>
+          <p style="margin:0 0 6px;"><strong>To accept the placement:</strong></p>
+          <ol style="margin:0 0 16px;padding-left:20px;color:#475569;">
+            <li>Read the letter carefully.</li>
+            <li>Print it, then sign and date the acceptance section.</li>
+            <li>Reply to this email with a clear scan or photo of the signed letter by <strong>${escHtml(acceptBy)}</strong>.</li>
+            <li>Bring the original signed copy and the documents listed in the letter on your first day.</li>
+          </ol>
+          <p>
+            If you have any questions, or you cannot take up the placement, please reply to this email as soon as possible.
           </p>
           <p style="margin-top:24px;">
             Congratulations once again. We look forward to welcoming you to the team.
@@ -1749,6 +1830,83 @@ app.post('/api/appointment/send', verifyCeoAuth, requireDb, jsonLarge, async (re
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  INTERNSHIP PLACEMENT LETTER  (Admin.jsx creates it → emailed here → HrManager.jsx downloads it)
+// ═════════════════════════════════════════════════════════════════════════════
+//  Same delivery rules as the appointment letter above, for interns (who do the ONLINE
+//  interview only). Admin.jsx saves placementLetters/{applicationId} and builds the PDF in the
+//  browser (utils/placementLetter.js); this route only DELIVERS it. The recipient comes from the
+//  application in Firestore, never from the request; the applicant must be an approved intern.
+app.post('/api/placement/send', verifyCeoAuth, requireDb, jsonLarge, async (req, res) => {
+  const { applicationId, pdfBase64 } = req.body ?? {};
+  if (typeof applicationId !== 'string' || !applicationId || applicationId.includes('/')) {
+    return res.status(400).json({ success: false, message: 'Missing required field: applicationId.' });
+  }
+  if (typeof pdfBase64 !== 'string' || !pdfBase64) {
+    return res.status(400).json({ success: false, message: 'Missing required field: pdfBase64.' });
+  }
+
+  const letterRef = adminDb.collection('placementLetters').doc(applicationId);
+  try {
+    const [appSnap, letterSnap] = await Promise.all([
+      adminDb.collection('applications').doc(applicationId).get(),
+      letterRef.get(),
+    ]);
+    if (!appSnap.exists) return res.status(404).json({ success: false, message: 'Application not found.' });
+    if (!letterSnap.exists) return res.status(404).json({ success: false, message: 'Create the placement letter first.' });
+    const a = appSnap.data();
+    const L = letterSnap.data();
+    if (a.hireStatus !== 'Approved' || a.type !== 'Internship') {
+      return res.status(409).json({ success: false, message: 'Only applicants approved as interns can receive a placement letter.' });
+    }
+    if (!a.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)) {
+      return res.status(400).json({ success: false, message: 'This application has no valid email address.' });
+    }
+
+    const pdf = Buffer.from(pdfBase64, 'base64');
+    if (!pdf.length || pdf.length > 2 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 2 MB.' });
+    }
+    if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      return res.status(400).json({ success: false, message: 'The attachment is not a valid PDF.' });
+    }
+
+    const safe     = String(L.name || a.fullName || 'intern').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'intern';
+    const filename = `Placement_Letter_${safe}.pdf`;
+    const name     = a.fullName || L.name || 'Applicant';
+    const position = L.position || a.program || 'the internship programme';
+    const extra = {
+      startDate:  formatInterviewDate(L.startDate)  || cleanLine(L.startDate, 40),
+      endDate:    formatInterviewDate(L.endDate)    || cleanLine(L.endDate, 40),
+      acceptBy:   formatInterviewDate(L.acceptBy)   || cleanLine(L.acceptBy, 40),
+      department: cleanLine(L.department, 80),
+      rawPosition: cleanLine(position, 120),
+      filename, isUpdate: L.emailedOnce === true,
+    };
+    const content = buildEmailContent('placement_letter', escHtml(name), escHtml(position), extra);
+    const html    = buildEmailHtml(content.title, content.body, 'HR Department', a.email);
+    const text    = buildPlainText(content.title, name, position, 'placement_letter', 'HR Department', extra);
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS, to: a.email, reply_to: 'hr@slirus.com',
+      subject: content.subject, html, text,
+      attachments: [{ filename, content: pdf }],
+      headers: { 'Precedence': 'transactional', 'X-Entity-Ref-ID': `slirus-placement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 'X-Mailer': 'Slirus-Email-API/1.0' },
+    });
+    if (error) throw new Error(error.message || 'Resend API error');
+
+    await letterRef.update({
+      emailStatus: 'sent', emailedOnce: true, emailSentAt: FieldValue.serverTimestamp(), emailTo: a.email, emailError: FieldValue.delete(),
+    });
+    console.log(`[Placement] ✉️  Letter → ${a.email} (application ${applicationId}) by ${req.callerEmail} | messageId: ${data.id}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Placement] ❌ send failed:', err.message);
+    await letterRef.update({ emailStatus: 'failed', emailError: String(err.message || 'send failed').slice(0, 300) }).catch(() => {});
+    return res.status(500).json({ success: false, message: NODE_ENV === 'production' ? 'Could not email the placement letter.' : err.message });
+  }
+});
+
 // ─── GET /api/health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.status(200).json({
@@ -1770,8 +1928,17 @@ app.use((req, res) => {
 });
 
 // ─── Global error handler ─────────────────────────────────────────────────────
-app.use((err, _req, res, _next) => {
-  console.error('[Server] Unhandled error:', err.message);
+app.use((err, req, res, _next) => {
+  // Body-parser failures are the CLIENT's problem — report them as such instead of a blank 500.
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    console.warn(`[Server] 413 on ${req.method} ${req.path}: body larger than the limit for this route`);
+    return res.status(413).json({ success: false, message: 'The request is too large (the letter PDF is over the 3 MB upload limit).' });
+  }
+  if (err?.type === 'entity.parse.failed' || err?.status === 400) {
+    console.warn(`[Server] 400 on ${req.method} ${req.path}: ${err.message}`);
+    return res.status(400).json({ success: false, message: 'The request body was not valid JSON.' });
+  }
+  console.error(`[Server] Unhandled error on ${req.method} ${req.path}:`, err?.stack || err?.message || err);
   res.status(500).json({
     success: false,
     message: NODE_ENV === 'production' ? 'Internal server error.' : err.message,

@@ -45,6 +45,10 @@ import {
   fmtMoney, fmtLetterDate, todayISO, letterRefNo, downloadAppointmentLetter, appointmentLetterBase64,
 } from '../utils/appointmentLetter';
 import {
+  PLACEMENT_COLLECTION, INTERN_FOCUS_AREAS, INTERNSHIP_DURATION_WEEKS, addWeeksISO,
+  placementRefNo, downloadPlacementLetter, placementLetterBase64,
+} from '../utils/placementLetter';
+import {
   SERVICE_CATEGORIES, CONTRACT_STATUS_CONFIG, CONTRACT_TYPE_FIELDS, CONTRACT_TYPE_SECTION_TITLE,
   generateContractPDF, generateBothContractCopies,
 } from '../utils/contractPdf';
@@ -274,7 +278,7 @@ const Round2Modal = ({ app, onCancel, onConfirm, busy, initial, isUpdate }) => {
 const ic = { chip: { display: 'inline-block', borderRadius: 12, padding: '2px 9px', fontSize: 11, fontWeight: 700 } };
 
 // Pop-up result cards, top-right of the dashboard.
-const InterviewAlerts = ({ alerts, onSelectRound2, onView, onDismiss, busyId }) => {
+const InterviewAlerts = ({ alerts, onSelectRound2, onHire, onView, onDismiss, busyId }) => {
   if (!alerts.length) return null;
   return (
     <div style={{ position: 'fixed', top: 18, right: 18, zIndex: 2000, display: 'flex', flexDirection: 'column', gap: 12, width: 340, maxWidth: 'calc(100vw - 36px)', maxHeight: 'calc(100vh - 36px)', overflowY: 'auto' }}>
@@ -301,8 +305,8 @@ const InterviewAlerts = ({ alerts, onSelectRound2, onView, onDismiss, busyId }) 
             <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
               <button
                 style={{ flex: 1, background: '#1A3C5E', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: busyId === a.id ? 0.6 : 1 }}
-                onClick={() => onSelectRound2(a.id)} disabled={busyId === a.id}
-              >Select for Round 2 (in-person)</button>
+                onClick={() => (a.isIntern ? onHire(a.id) : onSelectRound2(a.id))} disabled={busyId === a.id}
+              >{a.isIntern ? 'Approve as Intern (placement letter)' : 'Select for Round 2 (in-person)'}</button>
               <button style={{ background: '#EFF6FF', color: '#1D4ED8', border: 'none', borderRadius: 7, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }} onClick={() => onView(a.id)}>View</button>
             </div>
           </div>
@@ -551,14 +555,155 @@ const LetterModal = ({ app, approval, letter, onCancel, onConfirm, busy }) => {
   );
 };
 
-// Confirmation form shown by "Approve as Employee".
+// Form for creating / re-issuing the Internship Placement (acceptance) Letter of an approved intern.
+// Interns only sit the ONLINE interview, so this letter is their offer. HrManager.jsx can only download it.
+const PlacementLetterModal = ({ app, approval, letter, onCancel, onConfirm, busy }) => {
+  const isUpdate = !!letter;
+  const today = todayISO();
+  const plusDays = (iso, n) => { const d = new Date(`${iso}T00:00:00`); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+
+  const [form, setForm] = useState(() => letter ? {
+    position: letter.position || '', department: letter.department || '', focusArea: letter.focusArea || '',
+    startDate: letter.startDate || '', reportsTo: letter.reportsTo || REPORTS_TO_OPTIONS[0], placeOfWork: letter.placeOfWork || '',
+    acceptBy: letter.acceptBy && letter.acceptBy >= today ? letter.acceptBy : plusDays(today, 7),
+    specialConditions: letter.specialConditions || '', signatoryName: letter.signatoryName || '', signatoryTitle: letter.signatoryTitle || 'Chief Executive Officer',
+  } : {
+    position: approval?.proposedPosition || app.program || '',
+    department: approval?.proposedDepartment || HR_DEPARTMENTS[0],
+    focusArea: INTERN_FOCUS_AREAS.find(f => f.toLowerCase() === String(approval?.internFocusArea || '').trim().toLowerCase()) || '',
+    startDate: approval?.proposedStartDate || '', reportsTo: REPORTS_TO_OPTIONS[0], placeOfWork: '',
+    acceptBy: plusDays(today, 7), specialConditions: '', signatoryName: '', signatoryTitle: 'Chief Executive Officer',
+  });
+  const [err, setErr] = useState('');
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const endDate = form.startDate ? addWeeksISO(form.startDate, INTERNSHIP_DURATION_WEEKS) : '';
+
+  const clean = () => ({
+    ...form,
+    position: form.position.trim(), placeOfWork: form.placeOfWork.trim(), specialConditions: form.specialConditions.trim(),
+    signatoryName: form.signatoryName.trim(), signatoryTitle: form.signatoryTitle.trim(), endDate,
+  });
+  const check = (f) => {
+    if (!f.position)    return 'Enter the internship position / title.';
+    if (!f.focusArea)   return 'Choose the focus (learning) area.';
+    if (!f.startDate)   return 'Choose the start date.';
+    if (!isUpdate && f.startDate < today) return 'The start date cannot be in the past.';
+    if (!f.placeOfWork) return 'Enter the place of work.';
+    if (!f.acceptBy || f.acceptBy < today) return 'Choose a reply-by date that is today or later.';
+    return '';
+  };
+  const submit = (e) => { e.preventDefault(); const f = clean(); const m = check(f); if (m) { setErr(m); return; } setErr(''); onConfirm(f); };
+  const preview = async () => {
+    try {
+      await downloadPlacementLetter({ ...clean(), name: app.fullName, email: app.email, refNo: letter?.refNo || placementRefNo(app.id, today), issueDate: today });
+    } catch (e) { setErr('Could not build the preview: ' + e.message); }
+  };
+
+  const fld = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 14, border: '1.5px solid #CBD5E1', borderRadius: 8, fontFamily: 'inherit', color: '#1A3C5E', background: '#fff' };
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 700, color: '#5A7A9A', margin: '12px 0 5px' };
+  const row = { display: 'flex', gap: 12 };
+
+  return (
+    <div style={{ ...ms.overlay, zIndex: 2100 }} onClick={busy ? undefined : onCancel}>
+      <form style={{ ...ms.modal, maxWidth: 580 }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div style={{ ...ms.header, borderTop: '4px solid #D97706' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{isUpdate ? 'Edit / resend placement letter' : 'Create internship placement letter'}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{app.fullName} · {app.email}</p>
+          </div>
+          <button type="button" style={ms.closeBtn} onClick={onCancel} disabled={busy} title="Close">✕</button>
+        </div>
+
+        <div style={ms.body}>
+          <p style={{ fontSize: 13, color: '#5A7A9A', lineHeight: 1.6, margin: '0 0 4px' }}>
+            Interns only sit the online interview, so this letter is their offer. It is saved for <strong>HR to download</strong> and emailed to the intern as a <strong>PDF attachment</strong>.
+            It is a learning placement: no salary, grade, PAYE or NSSF. The programme runs <strong>{INTERNSHIP_DURATION_WEEKS} weeks</strong>.
+            {isUpdate && letter.emailStatus === 'sent' && <> An earlier letter was already emailed; the new one will be marked as an update.</>}
+          </p>
+
+          <label style={lbl} htmlFor="pl-pos">Position / title</label>
+          <input id="pl-pos" style={fld} maxLength={200} value={form.position} onChange={set('position')} />
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-dept">Department</label>
+              <select id="pl-dept" style={fld} value={form.department} onChange={set('department')}>
+                {HR_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-focus">Focus area</label>
+              <select id="pl-focus" style={fld} value={form.focusArea} onChange={set('focusArea')}>
+                <option value="">Select…</option>
+                {INTERN_FOCUS_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-start">Start date</label>
+              <input id="pl-start" type="date" min={isUpdate ? undefined : today} style={fld} value={form.startDate} onChange={set('startDate')} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>End date ({INTERNSHIP_DURATION_WEEKS} weeks)</label>
+              <div style={{ ...fld, background: '#F7F9FC', fontWeight: 700 }}>{endDate ? fmtLetterDate(endDate) : '—'}</div>
+            </div>
+          </div>
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-rep">Reports to</label>
+              <select id="pl-rep" style={fld} value={form.reportsTo} onChange={set('reportsTo')}>
+                {REPORTS_TO_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1.4 }}>
+              <label style={lbl} htmlFor="pl-place">Place of work</label>
+              <input id="pl-place" style={fld} maxLength={200} value={form.placeOfWork} onChange={set('placeOfWork')} placeholder="e.g. Head office, Lira" />
+            </div>
+          </div>
+
+          <label style={lbl} htmlFor="pl-accept">Intern must reply by</label>
+          <input id="pl-accept" type="date" min={today} style={fld} value={form.acceptBy} onChange={set('acceptBy')} />
+
+          <label style={lbl} htmlFor="pl-special">Special conditions (optional)</label>
+          <textarea id="pl-special" rows={2} maxLength={1000} style={{ ...fld, resize: 'vertical' }} value={form.specialConditions} onChange={set('specialConditions')} />
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-sn">Signatory name (optional)</label>
+              <input id="pl-sn" style={fld} maxLength={120} value={form.signatoryName} onChange={set('signatoryName')} placeholder="Leave blank to sign by hand" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="pl-st">Signatory title</label>
+              <input id="pl-st" style={fld} maxLength={80} value={form.signatoryTitle} onChange={set('signatoryTitle')} />
+            </div>
+          </div>
+
+          {err && <div style={{ marginTop: 14, background: '#FEE2E2', color: '#991B1B', borderRadius: 8, padding: '8px 12px', fontSize: 13, fontWeight: 600 }}>{err}</div>}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid #E2E8F0', flexWrap: 'wrap' }}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#F1F5F9', color: '#475569' }} onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" style={{ ...ms.actionBtn, background: '#FEF3C7', color: '#92400E' }} onClick={preview} disabled={busy}>⬇ Download preview</button>
+          <button type="submit" style={{ ...ms.actionBtn, background: '#D97706', color: '#fff', opacity: busy ? 0.6 : 1 }} disabled={busy}>
+            {busy ? 'Sending…' : isUpdate ? 'Save & email letter' : 'Create & email letter'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+// Confirmation form shown by "Approve as Employee" (or "Approve as Intern" for online-only interns).
 const HireModal = ({ app, onCancel, onConfirm, busy }) => {
   const placement = placementForTrack(app.trackKey);
   const isIntern = app.type === 'Internship';
   const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const [form, setForm] = useState({
     onlinePassed: app.interviewStatus === 'completed',
-    inPersonPassed: false,
+    inPersonPassed: isIntern, // interns have no in-person round
     notes: '',
     department: placement.department,
     position: app.program || '',
@@ -573,7 +718,7 @@ const HireModal = ({ app, onCancel, onConfirm, busy }) => {
   const submit = (e) => {
     e.preventDefault();
     if (!form.onlinePassed)   { setErr('Confirm the applicant passed the online interview.'); return; }
-    if (!form.inPersonPassed) { setErr('Confirm the applicant passed the in-person interview.'); return; }
+    if (!isIntern && !form.inPersonPassed) { setErr('Confirm the applicant passed the in-person interview.'); return; }
     if (!form.position.trim()) { setErr('Enter the position they are being hired into.'); return; }
     if (!form.startDate || form.startDate < today) { setErr('Choose today or a future start date.'); return; }
     setErr('');
@@ -588,7 +733,7 @@ const HireModal = ({ app, onCancel, onConfirm, busy }) => {
       <form style={{ ...ms.modal, maxWidth: 560 }} onClick={e => e.stopPropagation()} onSubmit={submit}>
         <div style={{ ...ms.header, borderTop: '4px solid #10B981' }}>
           <div>
-            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Approve as Employee</h3>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{isIntern ? 'Approve as Intern' : 'Approve as Employee'}</h3>
             <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{app.fullName} · {app.program}</p>
           </div>
           <button type="button" style={ms.closeBtn} onClick={onCancel} disabled={busy} title="Close">✕</button>
@@ -606,10 +751,16 @@ const HireModal = ({ app, onCancel, onConfirm, busy }) => {
             <input type="checkbox" checked={form.onlinePassed} onChange={set('onlinePassed')} style={{ marginTop: 3 }} />
             <span>Passed the <strong>online interview</strong>{app.interviewStatus === 'completed' ? ` (${app.interviewScore}/${app.interviewTotal} · ${app.interviewPercent}%)` : ''}</span>
           </label>
-          <label style={chk}>
-            <input type="checkbox" checked={form.inPersonPassed} onChange={set('inPersonPassed')} style={{ marginTop: 3 }} />
-            <span>Passed the <strong>in-person interview</strong>{app.secondRoundDate ? ` (${app.secondRoundDate}${app.secondRoundVenue ? ' · ' + app.secondRoundVenue : ''})` : ''}</span>
-          </label>
+          {isIntern ? (
+            <p style={{ fontSize: 12.5, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 10px', margin: '8px 0' }}>
+              Interns only sit the online interview — no in-person round. After approval, create their Internship Placement Letter.
+            </p>
+          ) : (
+            <label style={chk}>
+              <input type="checkbox" checked={form.inPersonPassed} onChange={set('inPersonPassed')} style={{ marginTop: 3 }} />
+              <span>Passed the <strong>in-person interview</strong>{app.secondRoundDate ? ` (${app.secondRoundDate}${app.secondRoundVenue ? ' · ' + app.secondRoundVenue : ''})` : ''}</span>
+            </label>
+          )}
           <label style={lbl} htmlFor="hire-notes">Panel notes (optional, visible to HR)</label>
           <textarea id="hire-notes" rows={2} maxLength={1000} value={form.notes} onChange={set('notes')} style={{ ...fld, resize: 'vertical' }} placeholder="Strengths, conditions, salary expectations agreed…" />
 
@@ -747,7 +898,7 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               {interviewBusy === app.id ? '⏳ Sending…' : app.interviewStatus === 'invited' ? '🌐 Online (resend)' : app.interviewStatus === 'in_progress' ? '🌐 Online — in progress' : '🌐 Online'}
             </button>
           )}
-          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && (
+          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && app.type !== 'Internship' && (
             <button style={{ ...ms.actionBtn, background: '#1A3C5E', color: '#fff' }} onClick={() => onSecondRound(app)} disabled={interviewBusy === app.id}>
               ★ Select Round 2
             </button>
@@ -760,10 +911,10 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               ✎ {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
             </button>
           )}
-          {app.secondRound === 'Selected' && !approval && (
+          {(app.secondRound === 'Selected' || (app.type === 'Internship' && app.interviewStatus === 'completed')) && !approval && (
             <button style={{ ...ms.actionBtn, background: '#059669', color: '#fff' }} onClick={() => onHire(app)} disabled={interviewBusy === app.id}
                     title="Passed both interviews — send to HR for onboarding">
-              ✔ Approve as Employee
+              ✔ {app.type === 'Internship' ? 'Approve as Intern' : 'Approve as Employee'}
             </button>
           )}
           {approval?.stage === HIRING_STAGES.AWAITING_HR && (
@@ -772,11 +923,11 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               ↩ Withdraw approval
             </button>
           )}
-          {approval && !isInternHire(app, approval) && (
+          {approval && (
             <button style={{ ...ms.actionBtn, background: letter?.emailStatus === 'sent' ? '#FFF7ED' : '#EA580C', color: letter?.emailStatus === 'sent' ? '#9A3412' : '#fff' }}
                     onClick={() => onLetter(app)} disabled={interviewBusy === app.id}
                     title="Create the appointment letter and email it to the applicant (HR can only download it)">
-              📨 {letter ? (letter.emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : 'Create Appointment Letter'}
+              📨 {letter ? (letter.emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : (isInternHire(app, approval) ? 'Create Placement Letter' : 'Create Appointment Letter')}
             </button>
           )}
           {letter && (
@@ -866,11 +1017,10 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               <Row label="Access (CEO)" val={`${approval.suggestedRole} · ${approval.suggestedLevel}`} />
               <Row label="Panel notes" val={approval.round2Notes} />
               <Row label="Approved by" val={approval.approvedBy} />
-              {isInternHire(app, approval) && <Row label="Letter" val="Internship Placement Letter — issued by HR" />}
               {letter && (
                 <>
-                  <Row label="Appointment letter" val={`${letter.refNo || ''}${letter.version > 1 ? ` · revision ${letter.version}` : ''}`} />
-                  <Row label="Letter terms" val={`${letter.position} · ${letter.jobGradeCode} · start ${fmtLetterDate(letter.startDate)}`} />
+                  <Row label={letter.kind === 'placement' ? 'Placement letter' : 'Appointment letter'} val={`${letter.refNo || ''}${letter.version > 1 ? ` · revision ${letter.version}` : ''}`} />
+                  <Row label="Letter terms" val={letter.kind === 'placement' ? `${letter.position} · ${letter.focusArea || letter.department} · ${fmtLetterDate(letter.startDate)} to ${fmtLetterDate(letter.endDate)}` : `${letter.position} · ${letter.jobGradeCode} · start ${fmtLetterDate(letter.startDate)}`} />
                   <Row label="Letter email" val={letter.emailStatus === 'sent' ? `Sent to ${letter.emailTo || app.email}` : letter.emailStatus === 'failed' ? `NOT sent${letter.emailError ? ' — ' + letter.emailError : ''} — use Send Letter` : 'Pending'} />
                 </>
               )}
@@ -1326,6 +1476,8 @@ const Admin = () => {
   const [approvals, setApprovals]     = useState({});         // applicationId → hiringApprovals doc
   const [hireTarget, setHireTarget]   = useState(null);       // applicant being approved as an employee
   const [letters, setLetters]         = useState({});         // applicationId → appointmentLetters doc
+  const [placements, setPlacements] = useState({});       // applicationId → placementLetters doc (interns)
+  const [placementTarget, setPlacementTarget] = useState(null); // intern whose placement letter is being created
   const [letterTarget, setLetterTarget] = useState(null);     // applicant whose appointment letter is being created
   const [interviewBusy, setInterviewBusy] = useState(null);     // application id being invited / promoted
   const [interviewAlerts, setInterviewAlerts] = useState([]);   // pop-up result cards
@@ -1400,6 +1552,7 @@ const Admin = () => {
                 id: a.id, name: a.fullName, program: a.program,
                 score: a.interviewScore, total: a.interviewTotal, percent: a.interviewPercent,
                 reason: a.interviewReason, autoClosed: a.interviewAutoClosed, violations: a.interviewViolations || 0,
+                isIntern: a.type === 'Internship',
               }, ...list.filter(x => x.id !== a.id)]);
             }
           });
@@ -1429,6 +1582,12 @@ const Admin = () => {
       collection(db, LETTER_COLLECTION),
       (snap) => setLetters(Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]))),
       (err) => console.warn('appointmentLetters listen error:', err)
+    );
+
+    const unsubPlacements = onSnapshot(
+      collection(db, PLACEMENT_COLLECTION),
+      (snap) => setPlacements(Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]))),
+      (err) => console.warn('placementLetters listen error:', err)
     );
 
     const unsubSettings = onSnapshot(
@@ -1467,7 +1626,7 @@ const Admin = () => {
       }
     );
 
-    return () => { unsubApps(); unsubApprovals(); unsubLetters(); unsubSettings(); };
+    return () => { unsubApps(); unsubApprovals(); unsubLetters(); unsubPlacements(); unsubSettings(); };
   }, [user]);
 
   // ── Project Requests listener — only when logged in ───────────────────────
@@ -1732,13 +1891,15 @@ const Admin = () => {
     setInterviewBusy(app.id);
     try {
       const batch = writeBatch(db);
-      batch.set(doc(db, HIRING_COLLECTION, app.id), {
+      const isIntern = app.type === 'Internship';
+      const snapshot = {
         ...buildApprovalSnapshot(app, decision),
         approvedAt: serverTimestamp(), approvedBy: email,
-      });
+      };
+      batch.set(doc(db, HIRING_COLLECTION, app.id), snapshot);
       batch.update(doc(db, 'applications', app.id), {
         hireStatus: 'Approved', hireApprovedAt: serverTimestamp(), hireApprovedBy: email,
-        round2Result: 'Passed', round2Notes: decision.notes || '',
+        round2Result: isIntern ? 'Not required' : 'Passed', round2Notes: decision.notes || '',
       });
       await batch.commit();
       setHireTarget(null);
@@ -1756,7 +1917,7 @@ const Admin = () => {
     const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
     const app = applications.find(a => a.id === id);
     if (!app || approvals[id]?.stage !== HIRING_STAGES.AWAITING_HR) return;
-    const lt = letters[id];
+    const lt = placements[id] || letters[id];
     if (lt && (lt.emailedOnce || lt.emailStatus === 'sent')) {
       alert(`An appointment letter has already been emailed to ${app.fullName}.\n\nWithdrawing the approval now would contradict it. Contact the applicant first.`);
       return;
@@ -1766,7 +1927,7 @@ const Admin = () => {
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, HIRING_COLLECTION, id));
-      if (lt) batch.delete(doc(db, LETTER_COLLECTION, id)); // an unsent draft letter goes with the approval
+      if (lt) batch.delete(doc(db, lt.kind === 'placement' ? PLACEMENT_COLLECTION : LETTER_COLLECTION, id)); // an unsent draft letter goes with the approval
       batch.update(doc(db, 'applications', id), { hireStatus: null });
       await batch.commit();
     } catch (err) {
@@ -1774,17 +1935,18 @@ const Admin = () => {
     } finally {
       setInterviewBusy(null);
     }
-  }, [applications, approvals, letters]);
+  }, [applications, approvals, letters, placements]);
 
   // ── Appointment letter (Admin creates; HR only downloads) ───────────────────────────────
   const openLetter = useCallback((appOrId) => {
     const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
     const app = applications.find(a => a.id === id);
-    if (app && approvals[id]) setLetterTarget(app);
+    if (!app || !approvals[id]) return;
+    if (isInternHire(app, approvals[id])) setPlacementTarget(app); else setLetterTarget(app);
   }, [applications, approvals]);
 
   const downloadLetter = useCallback(async (letter) => {
-    try { await downloadAppointmentLetter(letter); }
+    try { await (letter?.kind === 'placement' ? downloadPlacementLetter(letter) : downloadAppointmentLetter(letter)); }
     catch (err) { alert('Could not build the letter PDF: ' + err.message); }
   }, []);
 
@@ -1794,7 +1956,7 @@ const Admin = () => {
     if (!app) return;
     const adminEmail = auth.currentUser?.email;
     if (!adminEmail) { alert('You are not signed in. Please sign in again.'); return; }
-    const existing = letters[app.id];
+    const existing = letterOf(app.id);
     const record = {
       applicationId: app.id,
       refNo: existing?.refNo || letterRefNo(app.id, todayISO()),
@@ -1843,6 +2005,62 @@ const Admin = () => {
       setInterviewBusy(null);
     }
   }, [letterTarget, letters]);
+
+  // Intern equivalent of confirmLetter: saves the placement letter for HR, then emails the PDF to the intern.
+  const confirmPlacement = useCallback(async (form) => {
+    const app = placementTarget;
+    if (!app) return;
+    const adminEmail = auth.currentUser?.email;
+    if (!adminEmail) { alert('You are not signed in. Please sign in again.'); return; }
+    const existing = placements[app.id];
+    const record = {
+      kind: 'placement',
+      applicationId: app.id,
+      refNo: existing?.refNo || placementRefNo(app.id, todayISO()),
+      version: (existing?.version || 0) + 1,
+      name: app.fullName, email: app.email,
+      position: form.position, department: form.department, focusArea: form.focusArea,
+      startDate: form.startDate, endDate: form.endDate, reportsTo: form.reportsTo, placeOfWork: form.placeOfWork,
+      acceptBy: form.acceptBy, specialConditions: form.specialConditions || '',
+      signatoryName: form.signatoryName || '', signatoryTitle: form.signatoryTitle || '',
+      issueDate: todayISO(),
+    };
+    setInterviewBusy(app.id);
+    try {
+      await setDoc(doc(db, PLACEMENT_COLLECTION, app.id), {
+        ...record,
+        ...(existing ? { updatedAt: serverTimestamp(), updatedBy: adminEmail } : { issuedAt: serverTimestamp(), issuedBy: adminEmail }),
+        emailStatus: 'pending', emailError: '',
+      }, { merge: true });
+      setPlacementTarget(null);
+
+      let sent = false, msg = '';
+      try {
+        const { base64 } = await placementLetterBase64(record);
+        const idToken = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API_URL}/api/placement/send`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body:    JSON.stringify({ applicationId: app.id, pdfBase64: base64 }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.message || `Server error (${res.status})`);
+        sent = true;
+      } catch (mailErr) {
+        console.warn('[Placement] email failed:', mailErr);
+        msg = mailErr.message;
+        updateDoc(doc(db, PLACEMENT_COLLECTION, app.id), { emailStatus: 'failed', emailError: String(msg).slice(0, 300) }).catch(() => {});
+      }
+      alert(sent
+        ? `The placement letter was emailed to ${app.email} (PDF attached). HR can now download the same letter.`
+        : `The letter is saved and HR can download it, but the email could not be sent: ${msg}\n\nUse "Send Letter" to try again.`);
+    } catch (err) {
+      console.error('confirmPlacement error:', err);
+      alert('Could not save the placement letter: ' + (err.code === 'permission-denied' ? 'permission denied — publish the updated firestore.rules.' : err.message));
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [placementTarget, placements]);
 
   const updateProjectStatus = useCallback(async (id, status) => {
     setProjectStatusUpdating(true);
@@ -1943,6 +2161,7 @@ const Admin = () => {
   if (!user) return <LoginScreen />;
 
   // ── Derived data ──
+  const letterOf = (id) => placements[id] || letters[id];
   const countForTrack = (key) => applications.filter(a => a.trackKey === key).length;
 
   const displayed = applications
@@ -2161,7 +2380,7 @@ const Admin = () => {
                           {appTrack?.title || app.program || '—'}
                         </span>
                       </td>
-                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /><HireChip app={app} approval={approvals[app.id]} letter={letters[app.id]} /></td>
+                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /><HireChip app={app} approval={approvals[app.id]} letter={letterOf(app.id)} /></td>
                       <td style={{ ...s.td, fontSize: 12, color: '#7A8A9A', whiteSpace: 'nowrap' }}>
                         {app.submittedAt?.toDate ? app.submittedAt.toDate().toLocaleDateString('en-UG') : '—'}
                       </td>
@@ -2191,7 +2410,7 @@ const Admin = () => {
                               {interviewBusy === app.id ? '…' : 'Online'}
                             </button>
                           )}
-                          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && (
+                          {app.interviewStatus === 'completed' && app.secondRound !== 'Selected' && app.type !== 'Internship' && (
                             <button style={s.btnRound2} onClick={() => selectSecondRound(app)} disabled={interviewBusy === app.id}>Select Round 2</button>
                           )}
                           {app.secondRound === 'Selected' && (
@@ -2203,10 +2422,10 @@ const Admin = () => {
                               {app.secondRoundEmailSent === false ? 'Resend Round 2 email' : 'Edit / Resend Round 2'}
                             </button>
                           )}
-                          {app.secondRound === 'Selected' && !approvals[app.id] && (
+                          {(app.secondRound === 'Selected' || (app.type === 'Internship' && app.interviewStatus === 'completed')) && !approvals[app.id] && (
                             <button style={s.btnHire} onClick={() => openHire(app)} disabled={interviewBusy === app.id}
                                     title="Passed both interviews — approve as an employee and send to HR">
-                              Approve as Employee
+                              {app.type === 'Internship' ? 'Approve as Intern' : 'Approve as Employee'}
                             </button>
                           )}
                           {approvals[app.id]?.stage === HIRING_STAGES.AWAITING_HR && (
@@ -2215,13 +2434,13 @@ const Admin = () => {
                               Withdraw
                             </button>
                           )}
-                          {approvals[app.id] && !isInternHire(app, approvals[app.id]) && (
+                          {approvals[app.id] && (
                             <button
-                              style={{ ...s.btnLetter, ...(letters[app.id] && letters[app.id].emailStatus !== 'sent' ? { background: '#FEE2E2', color: '#991B1B' } : null) }}
+                              style={{ ...s.btnLetter, ...(letterOf(app.id) && letterOf(app.id).emailStatus !== 'sent' ? { background: '#FEE2E2', color: '#991B1B' } : null) }}
                               onClick={() => openLetter(app)} disabled={interviewBusy === app.id}
                               title="Create the appointment letter and email it to the applicant (HR can only download it)"
                             >
-                              {letters[app.id] ? (letters[app.id].emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : 'Appointment Letter'}
+                              {letterOf(app.id) ? (letterOf(app.id).emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : (isInternHire(app, approvals[app.id]) ? 'Placement Letter' : 'Appointment Letter')}
                             </button>
                           )}
                           <button style={s.btnView} onClick={() => setSelected(app)}>View</button>
@@ -2467,6 +2686,17 @@ const Admin = () => {
           onConfirm={confirmLetter}
         />
       )}
+      {placementTarget && (
+        <PlacementLetterModal
+          key={placementTarget.id}
+          app={placementTarget}
+          approval={approvals[placementTarget.id]}
+          letter={placements[placementTarget.id]}
+          busy={interviewBusy === placementTarget.id}
+          onCancel={() => setPlacementTarget(null)}
+          onConfirm={confirmPlacement}
+        />
+      )}
       {hireTarget && (
         <HireModal
           key={hireTarget.id}
@@ -2480,6 +2710,7 @@ const Admin = () => {
         alerts={interviewAlerts}
         busyId={interviewBusy}
         onSelectRound2={selectSecondRound}
+        onHire={openHire}
         onView={(id) => { const a = applications.find(x => x.id === id); if (a) setSelected(a); }}
         onDismiss={(id) => setInterviewAlerts(list => list.filter(x => x.id !== id))}
       />
@@ -2494,7 +2725,7 @@ const Admin = () => {
         approval={selected ? approvals[selected.id] : null}
         onHire={openHire}
         onWithdrawHire={withdrawHire}
-        letter={selected ? letters[selected.id] : null}
+        letter={selected ? letterOf(selected.id) : null}
         onLetter={openLetter}
         onDownloadLetter={downloadLetter}
       />

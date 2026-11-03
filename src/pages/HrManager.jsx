@@ -62,6 +62,8 @@ import {
 // HR can only DOWNLOAD it — the same PDF the applicant received by email. JOB_GRADES also lives in
 // that shared file now, so Admin and HR always quote the same salary.
 import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmployeeDraft } from '../utils/appointmentLetter';
+// Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
+import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 // NOTE: This is a UX gate only. The real authorization boundary must live in
@@ -1025,7 +1027,7 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
                   Pre-filled from {prefill.approval.fullName}&apos;s application
                 </div>
                 <p style={{ fontSize: 12.5, color: '#047857', margin: '4px 0 8px', lineHeight: 1.55 }}>
-                  Approved by {prefill.approval.approvedBy || 'the admin'} after both interviews
+                  Approved by {prefill.approval.approvedBy || 'the admin'} {prefill.approval.type === 'Internship' ? 'after the online interview' : 'after both interviews'}
                   {prefill.approval.onlineScorePercent != null ? ` (online ${prefill.approval.onlineScorePercent}%)` : ''}.
                   Name, contact, position, department, contract type and qualifications came from the CV — check them, then add what a CV cannot tell us:
                 </p>
@@ -1246,7 +1248,7 @@ const NewHiresPanel = ({ hires, loading, error, canWrite, onOnboard }) => {
           <div style={{ fontSize: 12, color: '#7A8A9A' }}>{h.proposedDepartment} · {h.proposedContractType}</div>
         </td>
         <td style={{ ...s.td, fontSize: 12, color: '#5A7A9A' }}>
-          {h.onlineScorePercent != null ? `Online ${h.onlineScorePercent}%` : 'Online ✓'}<br />In-person ✓ {h.round2Date || ''}
+          {h.onlineScorePercent != null ? `Online ${h.onlineScorePercent}%` : 'Online ✓'}{h.type === 'Internship' ? <><br />Online only (intern)</> : <><br />In-person ✓ {h.round2Date || ''}</>}
         </td>
         <td style={{ ...s.td, fontSize: 12, color: '#5A7A9A', whiteSpace: 'nowrap' }}>
           <span style={{ display: 'inline-block', background: m.bg, color: m.color, borderRadius: 12, padding: '2px 9px', fontSize: 11, fontWeight: 700 }}>{m.label}</span>
@@ -3270,6 +3272,7 @@ const HrManager = () => {
   const [hires, setHires] = useState([]);
   const [loadingHires, setLoadingHires] = useState(true);
   const [hiresError, setHiresError] = useState(null);
+  const [placements, setPlacements] = useState([]); // internship placement letters issued by Admin (download-only for HR)
   const [letters, setLetters] = useState([]);   // appointment letters issued by Admin (download-only for HR)
   const [hireDraft, setHireDraft] = useState(null);
   const [busyEmployeeId, setBusyEmployeeId] = useState(null);
@@ -3475,6 +3478,31 @@ const HrManager = () => {
     return unsub;
   }, [isAuthorized]);
 
+  // ── Internship placement letters issued by Admin.jsx (read-only here) ───────
+  useEffect(() => {
+    if (!isAuthorized) { setPlacements([]); return undefined; }
+    const unsub = onSnapshot(
+      collection(db, PLACEMENT_COLLECTION),
+      (snap) => setPlacements(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => console.warn('placementLetters listen error:', err.code === 'permission-denied' ? 'permission denied — publish the updated firestore.rules.' : err.message)
+    );
+    return unsub;
+  }, [isAuthorized]);
+
+  const placementIndex = useMemo(() => {
+    const byApp = {}, byEmail = {};
+    placements.forEach(l => {
+      if (l.applicationId) byApp[l.applicationId] = l;
+      if (l.email) byEmail[String(l.email).trim().toLowerCase()] = l;
+    });
+    return { byApp, byEmail };
+  }, [placements]);
+  const findPlacement = useCallback((emp) => {
+    if (!emp) return null;
+    return (emp.applicationId && placementIndex.byApp[emp.applicationId])
+      || placementIndex.byEmail[String(emp.email || '').trim().toLowerCase()] || null;
+  }, [placementIndex]);
+
   // An employee's letter: matched by the application it was hired from, falling back to email.
   const letterIndex = useMemo(() => {
     const byApp = {}, byEmail = {};
@@ -3498,6 +3526,15 @@ const HrManager = () => {
     try { await downloadAppointmentLetter(letter); }
     catch (err) { alert('Could not build the letter PDF: ' + err.message); }
   }, [findLetter]);
+
+  // Placement letter: the issued PDF (identical to the emailed one) when Admin has created it;
+  // otherwise falls back to the HR-generated printable version so nothing is blocked.
+  const handleDownloadPlacement = useCallback(async (emp) => {
+    const letter = findPlacement(emp);
+    if (!letter) { openPrintWindow(`Internship Placement Letter — ${employeeFullName(emp)}`, buildInternshipPlacementLetterHtml(emp)); return; }
+    try { await downloadPlacementLetter(letter); }
+    catch (err) { alert('Could not build the letter PDF: ' + err.message); }
+  }, [findPlacement]);
 
   const logAudit = useCallback(async (action, target, details = '') => {
     try {
@@ -3620,13 +3657,14 @@ const HrManager = () => {
     // If Admin already issued the appointment letter, start from its terms (position, grade, start date,
     // reporting line, place of work…) so the employee record matches the letter the hire received.
     const issued = letterIndex.byApp[hire.applicationId || hire.id] || null;
+    const issuedPlacement = placementIndex.byApp[hire.applicationId || hire.id] || null;
     setHireDraft({
       approval: hire,
-      employee: { ...buildEmployeeDraft(hire), ...letterToEmployeeDraft(issued) },
+      employee: { ...buildEmployeeDraft(hire), ...letterToEmployeeDraft(issued), ...placementLetterToEmployeeDraft(issuedPlacement) },
       background: buildBackgroundDraft(hire),
     });
     setShowEmployeeForm(true);
-  }, [letterIndex]);
+  }, [letterIndex, placementIndex]);
 
   const handleDeleteEmployee = useCallback(async (employee) => {
     const confirmed = window.confirm(`Permanently delete ${employeeFullName(employee)}'s profile? This cannot be undone.`);
@@ -4047,7 +4085,7 @@ const HrManager = () => {
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
                             ) : isInternContract(e.contractType) ? (
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}>Placement Letter</button>
+                              <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Placement Letter</button>
                             ) : (
                               <>
                                 <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
@@ -4118,7 +4156,7 @@ const HrManager = () => {
                             {e.engagementType === 'Independent Contractor' ? (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Document</button>
                             ) : isInternContract(e.contractType) ? (
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}>Document</button>
+                              <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Document</button>
                             ) : (
                               <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Document</button>
                             )}
@@ -4376,7 +4414,7 @@ const HrManager = () => {
           onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
           onDownloadAppointmentLetter={handleDownloadLetter}
           appointmentLetter={findLetter(profileTarget)}
-          onDownloadPlacementLetter={(e) => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}
+          onDownloadPlacementLetter={(e) => handleDownloadPlacement(e)}
           onDownloadServiceAgreement={(e) => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}
           onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Completion — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
         />
