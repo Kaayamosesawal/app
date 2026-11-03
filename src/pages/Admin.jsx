@@ -19,6 +19,10 @@
  *    that HrManager.jsx uses to pre-fill the employee profile + background record, and that
  *    CeoManager.jsx uses to provision the login with almost nothing left to type.
  *    Pipeline: Admin approves → HR onboards → CEO provisions the account (see utils/hiringPipeline.js).
+ *  - Appointment letter: for an approved hire, the CEO/Admin CREATES the Letter of Appointment here
+ *    (position, grade/salary, start date, probation…), the PDF is emailed to the applicant as an
+ *    attachment (POST /api/appointment/send) and saved to appointmentLetters/{applicationId}.
+ *    HrManager.jsx can only DOWNLOAD that letter, so HR and Admin always hold the same document.
  *
  * No prop drilling issues — state lives at Admin level and is passed explicitly.
  * All Firebase calls are try/catch with user-friendly error feedback.
@@ -36,6 +40,10 @@ import {
   HIRING_COLLECTION, HIRING_STAGES, HIRING_STEPS, HIRING_STAGE_META, HR_DEPARTMENTS, HR_CONTRACT_TYPES,
   SENIORITY_LEVELS, INTERN_CONTRACT, placementForTrack, buildApprovalSnapshot,
 } from '../utils/hiringPipeline';
+import {
+  LETTER_COLLECTION, JOB_GRADES, REPORTS_TO_OPTIONS, DEFAULT_PROBATION_MONTHS,
+  fmtMoney, fmtLetterDate, todayISO, letterRefNo, downloadAppointmentLetter, appointmentLetterBase64,
+} from '../utils/appointmentLetter';
 import {
   SERVICE_CATEGORIES, CONTRACT_STATUS_CONFIG, CONTRACT_TYPE_FIELDS, CONTRACT_TYPE_SECTION_TITLE,
   generateContractPDF, generateBothContractCopies,
@@ -356,13 +364,191 @@ const HireStepper = ({ stage }) => {
 };
 
 // Chip under the status badge in the applications table.
-const HireChip = ({ app, approval }) => {
+// Interns get a Placement Letter from HR, not an appointment letter.
+const isInternHire = (app, approval) => app?.type === 'Internship' || approval?.proposedContractType === INTERN_CONTRACT;
+
+const HireChip = ({ app, approval, letter }) => {
   if (approval) {
     const m = HIRING_STAGE_META[approval.stage] || HIRING_STAGE_META.awaiting_hr;
-    return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: m.bg, color: m.color }}>Hire · {m.short}</span></div>;
+    return (
+      <div style={{ marginTop: 5, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ ...ic.chip, background: m.bg, color: m.color }}>Hire · {m.short}</span>
+        {letter && (letter.emailStatus === 'sent'
+          ? <span style={{ ...ic.chip, background: '#FFF7ED', color: '#9A3412' }}>✉ Letter sent</span>
+          : <span style={{ ...ic.chip, background: '#FEE2E2', color: '#991B1B' }}>⚠ Letter not emailed</span>)}
+      </div>
+    );
   }
   if (app.secondRound === 'Selected') return <div style={{ marginTop: 5 }}><span style={{ ...ic.chip, background: '#E0E7FF', color: '#3730A3' }}>Round 2 selected</span></div>;
   return null;
+};
+
+// Form for creating / re-issuing the Letter of Appointment of an approved hire.
+// Only Admin has this form — HrManager.jsx can just download the result.
+const LetterModal = ({ app, approval, letter, onCancel, onConfirm, busy }) => {
+  const isUpdate = !!letter;
+  const today = todayISO();
+  const plusDays = (iso, n) => { const d = new Date(`${iso}T00:00:00`); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const contractTypes = HR_CONTRACT_TYPES.filter(c => c !== INTERN_CONTRACT);
+
+  const [form, setForm] = useState(() => letter ? {
+    position: letter.position || '', department: letter.department || '', contractType: letter.contractType || 'Probation',
+    startDate: letter.startDate || '', contractEnd: letter.contractEnd || '', probationMonths: letter.probationMonths || DEFAULT_PROBATION_MONTHS,
+    jobGradeCode: letter.jobGradeCode || JOB_GRADES[0].code, reportsTo: letter.reportsTo || 'Manager', placeOfWork: letter.placeOfWork || '',
+    acceptBy: letter.acceptBy && letter.acceptBy >= today ? letter.acceptBy : plusDays(today, 7),
+    specialConditions: letter.specialConditions || '', signatoryName: letter.signatoryName || '', signatoryTitle: letter.signatoryTitle || 'Chief Executive Officer',
+  } : {
+    position: approval?.proposedPosition || app.program || '',
+    department: approval?.proposedDepartment || HR_DEPARTMENTS[0],
+    contractType: contractTypes.includes(approval?.proposedContractType) ? approval.proposedContractType : (contractTypes[0] || 'Probation'),
+    startDate: approval?.proposedStartDate || '', contractEnd: '', probationMonths: DEFAULT_PROBATION_MONTHS,
+    jobGradeCode: JOB_GRADES[0].code, reportsTo: REPORTS_TO_OPTIONS[0], placeOfWork: '',
+    acceptBy: plusDays(today, 7), specialConditions: '', signatoryName: '', signatoryTitle: 'Chief Executive Officer',
+  });
+  const [err, setErr] = useState('');
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const grade = JOB_GRADES.find(g => g.code === form.jobGradeCode);
+
+  const clean = () => ({
+    ...form,
+    position: form.position.trim(), placeOfWork: form.placeOfWork.trim(), specialConditions: form.specialConditions.trim(),
+    signatoryName: form.signatoryName.trim(), signatoryTitle: form.signatoryTitle.trim(),
+    probationMonths: form.contractType === 'Probation' ? Number(form.probationMonths) : null,
+    contractEnd: form.contractType === 'Permanent' ? '' : form.contractEnd,
+  });
+  const check = (f) => {
+    if (!f.position)            return 'Enter the position / job title.';
+    if (!f.startDate)           return 'Choose the start date.';
+    if (!isUpdate && f.startDate < today) return 'The start date cannot be in the past.';
+    if (!f.placeOfWork)         return 'Enter the place of work.';
+    if (!f.acceptBy || f.acceptBy < today) return 'Choose a reply-by date that is today or later.';
+    if (f.contractType === 'Fixed-Term' && !f.contractEnd) return 'A fixed-term contract needs an end date.';
+    if (f.contractEnd && f.contractEnd <= f.startDate)     return 'The contract end date must be after the start date.';
+    if (f.contractType === 'Probation' && !(f.probationMonths >= 1 && f.probationMonths <= DEFAULT_PROBATION_MONTHS)) return `Probation must be 1 to ${DEFAULT_PROBATION_MONTHS} months.`;
+    return '';
+  };
+  const submit = (e) => { e.preventDefault(); const f = clean(); const m = check(f); if (m) { setErr(m); return; } setErr(''); onConfirm(f); };
+  const preview = async () => {
+    try {
+      await downloadAppointmentLetter({ ...clean(), name: app.fullName, email: app.email, refNo: letter?.refNo || letterRefNo(app.id, today), issueDate: today });
+    } catch (e) { setErr('Could not build the preview: ' + e.message); }
+  };
+
+  const fld = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 14, border: '1.5px solid #CBD5E1', borderRadius: 8, fontFamily: 'inherit', color: '#1A3C5E', background: '#fff' };
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 700, color: '#5A7A9A', margin: '12px 0 5px' };
+  const row = { display: 'flex', gap: 12 };
+
+  return (
+    <div style={{ ...ms.overlay, zIndex: 2100 }} onClick={busy ? undefined : onCancel}>
+      <form style={{ ...ms.modal, maxWidth: 580 }} onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div style={{ ...ms.header, borderTop: '4px solid #EA580C' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{isUpdate ? 'Edit / resend appointment letter' : 'Create appointment letter'}</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{app.fullName} · {app.email}</p>
+          </div>
+          <button type="button" style={ms.closeBtn} onClick={onCancel} disabled={busy} title="Close">✕</button>
+        </div>
+
+        <div style={ms.body}>
+          <p style={{ fontSize: 13, color: '#5A7A9A', lineHeight: 1.6, margin: '0 0 4px' }}>
+            The letter is saved for <strong>HR to download</strong> and emailed to the applicant as a <strong>PDF attachment</strong>.
+            Salary comes from the official job-grade table, so it always matches what HR records.
+            {isUpdate && letter.emailStatus === 'sent' && <> An earlier letter was already emailed; the new one will be marked as an update.</>}
+          </p>
+
+          <label style={lbl} htmlFor="lt-pos">Position / job title</label>
+          <input id="lt-pos" style={fld} maxLength={200} value={form.position} onChange={set('position')} />
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-dept">Department</label>
+              <select id="lt-dept" style={fld} value={form.department} onChange={set('department')}>
+                {HR_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-ct">Contract type</label>
+              <select id="lt-ct" style={fld} value={form.contractType} onChange={set('contractType')}>
+                {contractTypes.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-start">Start date</label>
+              <input id="lt-start" type="date" min={isUpdate ? undefined : today} style={fld} value={form.startDate} onChange={set('startDate')} />
+            </div>
+            {form.contractType === 'Probation' && (
+              <div style={{ flex: 1 }}>
+                <label style={lbl} htmlFor="lt-prob">Probation (months)</label>
+                <input id="lt-prob" type="number" min={1} max={DEFAULT_PROBATION_MONTHS} style={fld} value={form.probationMonths} onChange={set('probationMonths')} />
+              </div>
+            )}
+            {form.contractType !== 'Permanent' && form.contractType !== 'Probation' && (
+              <div style={{ flex: 1 }}>
+                <label style={lbl} htmlFor="lt-end">Contract end date</label>
+                <input id="lt-end" type="date" min={form.startDate || today} style={fld} value={form.contractEnd} onChange={set('contractEnd')} />
+              </div>
+            )}
+          </div>
+
+          <div style={row}>
+            <div style={{ flex: 1.3 }}>
+              <label style={lbl} htmlFor="lt-grade">Job grade</label>
+              <select id="lt-grade" style={fld} value={form.jobGradeCode} onChange={set('jobGradeCode')}>
+                {JOB_GRADES.map(g => <option key={g.code} value={g.code}>{g.code} · {g.title}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>Gross monthly salary</label>
+              <div style={{ ...fld, background: '#F7F9FC', fontWeight: 700 }}>{grade ? fmtMoney(grade.baseSalary) : '—'}</div>
+            </div>
+          </div>
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-rep">Reports to</label>
+              <select id="lt-rep" style={fld} value={form.reportsTo} onChange={set('reportsTo')}>
+                {REPORTS_TO_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1.4 }}>
+              <label style={lbl} htmlFor="lt-place">Place of work</label>
+              <input id="lt-place" style={fld} maxLength={200} value={form.placeOfWork} onChange={set('placeOfWork')} placeholder="e.g. Head office, Lira" />
+            </div>
+          </div>
+
+          <label style={lbl} htmlFor="lt-accept">Applicant must reply by</label>
+          <input id="lt-accept" type="date" min={today} style={fld} value={form.acceptBy} onChange={set('acceptBy')} />
+
+          <label style={lbl} htmlFor="lt-special">Special conditions (optional)</label>
+          <textarea id="lt-special" rows={2} maxLength={1000} style={{ ...fld, resize: 'vertical' }} value={form.specialConditions} onChange={set('specialConditions')} />
+
+          <div style={row}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-sn">Signatory name (optional)</label>
+              <input id="lt-sn" style={fld} maxLength={120} value={form.signatoryName} onChange={set('signatoryName')} placeholder="Leave blank to sign by hand" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lbl} htmlFor="lt-st">Signatory title</label>
+              <input id="lt-st" style={fld} maxLength={80} value={form.signatoryTitle} onChange={set('signatoryTitle')} />
+            </div>
+          </div>
+
+          {err && <div style={{ marginTop: 14, background: '#FEE2E2', color: '#991B1B', borderRadius: 8, padding: '8px 12px', fontSize: 13, fontWeight: 600 }}>{err}</div>}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid #E2E8F0', flexWrap: 'wrap' }}>
+          <button type="button" style={{ ...ms.actionBtn, background: '#F1F5F9', color: '#475569' }} onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412' }} onClick={preview} disabled={busy}>⬇ Download preview</button>
+          <button type="submit" style={{ ...ms.actionBtn, background: '#EA580C', color: '#fff', opacity: busy ? 0.6 : 1 }} disabled={busy}>
+            {busy ? 'Sending…' : isUpdate ? 'Save & email letter' : 'Create & email letter'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 };
 
 // Confirmation form shown by "Approve as Employee".
@@ -478,7 +664,7 @@ const HireModal = ({ app, onCancel, onConfirm, busy }) => {
 };
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
-const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, onSecondRound, interviewBusy, approval, onHire, onWithdrawHire }) => {
+const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, onSecondRound, interviewBusy, approval, onHire, onWithdrawHire, letter, onLetter, onDownloadLetter }) => {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [localStatus, setLocalStatus] = useState(app?.status);
 
@@ -586,6 +772,16 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               ↩ Withdraw approval
             </button>
           )}
+          {approval && !isInternHire(app, approval) && (
+            <button style={{ ...ms.actionBtn, background: letter?.emailStatus === 'sent' ? '#FFF7ED' : '#EA580C', color: letter?.emailStatus === 'sent' ? '#9A3412' : '#fff' }}
+                    onClick={() => onLetter(app)} disabled={interviewBusy === app.id}
+                    title="Create the appointment letter and email it to the applicant (HR can only download it)">
+              📨 {letter ? (letter.emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : 'Create Appointment Letter'}
+            </button>
+          )}
+          {letter && (
+            <button style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412' }} onClick={() => onDownloadLetter(letter)}>⬇ Letter PDF</button>
+          )}
         </div>
 
         {/* Scrollable body */}
@@ -670,6 +866,14 @@ const DetailModal = ({ app, onClose, onStatusChange, statusUpdating, onOnline, o
               <Row label="Access (CEO)" val={`${approval.suggestedRole} · ${approval.suggestedLevel}`} />
               <Row label="Panel notes" val={approval.round2Notes} />
               <Row label="Approved by" val={approval.approvedBy} />
+              {isInternHire(app, approval) && <Row label="Letter" val="Internship Placement Letter — issued by HR" />}
+              {letter && (
+                <>
+                  <Row label="Appointment letter" val={`${letter.refNo || ''}${letter.version > 1 ? ` · revision ${letter.version}` : ''}`} />
+                  <Row label="Letter terms" val={`${letter.position} · ${letter.jobGradeCode} · start ${fmtLetterDate(letter.startDate)}`} />
+                  <Row label="Letter email" val={letter.emailStatus === 'sent' ? `Sent to ${letter.emailTo || app.email}` : letter.emailStatus === 'failed' ? `NOT sent${letter.emailError ? ' — ' + letter.emailError : ''} — use Send Letter` : 'Pending'} />
+                </>
+              )}
             </Sec>
           )}
           <Sec title="Submission">
@@ -1121,6 +1325,8 @@ const Admin = () => {
   const [round2Target, setRound2Target] = useState(null);       // applicant whose Round 2 details are being entered
   const [approvals, setApprovals]     = useState({});         // applicationId → hiringApprovals doc
   const [hireTarget, setHireTarget]   = useState(null);       // applicant being approved as an employee
+  const [letters, setLetters]         = useState({});         // applicationId → appointmentLetters doc
+  const [letterTarget, setLetterTarget] = useState(null);     // applicant whose appointment letter is being created
   const [interviewBusy, setInterviewBusy] = useState(null);     // application id being invited / promoted
   const [interviewAlerts, setInterviewAlerts] = useState([]);   // pop-up result cards
   const prevInterviewRef   = useRef({});                         // id → last seen interviewStatus
@@ -1219,6 +1425,12 @@ const Admin = () => {
       (err) => console.warn('hiringApprovals listen error:', err)
     );
 
+    const unsubLetters = onSnapshot(
+      collection(db, LETTER_COLLECTION),
+      (snap) => setLetters(Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }]))),
+      (err) => console.warn('appointmentLetters listen error:', err)
+    );
+
     const unsubSettings = onSnapshot(
       doc(db, 'settings', 'applicationStatus'),
       async (snap) => {
@@ -1255,7 +1467,7 @@ const Admin = () => {
       }
     );
 
-    return () => { unsubApps(); unsubApprovals(); unsubSettings(); };
+    return () => { unsubApps(); unsubApprovals(); unsubLetters(); unsubSettings(); };
   }, [user]);
 
   // ── Project Requests listener — only when logged in ───────────────────────
@@ -1544,11 +1756,17 @@ const Admin = () => {
     const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
     const app = applications.find(a => a.id === id);
     if (!app || approvals[id]?.stage !== HIRING_STAGES.AWAITING_HR) return;
+    const lt = letters[id];
+    if (lt && (lt.emailedOnce || lt.emailStatus === 'sent')) {
+      alert(`An appointment letter has already been emailed to ${app.fullName}.\n\nWithdrawing the approval now would contradict it. Contact the applicant first.`);
+      return;
+    }
     if (!window.confirm(`Withdraw the hiring approval for ${app.fullName}?\n\nHR has not started onboarding yet, so this simply removes them from the HR queue.`)) return;
     setInterviewBusy(id);
     try {
       const batch = writeBatch(db);
       batch.delete(doc(db, HIRING_COLLECTION, id));
+      if (lt) batch.delete(doc(db, LETTER_COLLECTION, id)); // an unsent draft letter goes with the approval
       batch.update(doc(db, 'applications', id), { hireStatus: null });
       await batch.commit();
     } catch (err) {
@@ -1556,7 +1774,75 @@ const Admin = () => {
     } finally {
       setInterviewBusy(null);
     }
+  }, [applications, approvals, letters]);
+
+  // ── Appointment letter (Admin creates; HR only downloads) ───────────────────────────────
+  const openLetter = useCallback((appOrId) => {
+    const id  = typeof appOrId === 'string' ? appOrId : appOrId?.id;
+    const app = applications.find(a => a.id === id);
+    if (app && approvals[id]) setLetterTarget(app);
   }, [applications, approvals]);
+
+  const downloadLetter = useCallback(async (letter) => {
+    try { await downloadAppointmentLetter(letter); }
+    catch (err) { alert('Could not build the letter PDF: ' + err.message); }
+  }, []);
+
+  // Saves the letter for HR first (so it exists even if the email fails), then emails the PDF.
+  const confirmLetter = useCallback(async (form) => {
+    const app = letterTarget;
+    if (!app) return;
+    const adminEmail = auth.currentUser?.email;
+    if (!adminEmail) { alert('You are not signed in. Please sign in again.'); return; }
+    const existing = letters[app.id];
+    const record = {
+      applicationId: app.id,
+      refNo: existing?.refNo || letterRefNo(app.id, todayISO()),
+      version: (existing?.version || 0) + 1,
+      name: app.fullName, email: app.email,
+      position: form.position, department: form.department, contractType: form.contractType,
+      startDate: form.startDate, contractEnd: form.contractEnd || '', probationMonths: form.probationMonths ?? null,
+      jobGradeCode: form.jobGradeCode, reportsTo: form.reportsTo, placeOfWork: form.placeOfWork,
+      acceptBy: form.acceptBy, specialConditions: form.specialConditions || '',
+      signatoryName: form.signatoryName || '', signatoryTitle: form.signatoryTitle || '',
+      issueDate: todayISO(),
+    };
+    setInterviewBusy(app.id);
+    try {
+      await setDoc(doc(db, LETTER_COLLECTION, app.id), {
+        ...record,
+        ...(existing ? { updatedAt: serverTimestamp(), updatedBy: adminEmail } : { issuedAt: serverTimestamp(), issuedBy: adminEmail }),
+        emailStatus: 'pending',
+      }, { merge: true });
+      setLetterTarget(null);
+
+      let sent = false, msg = '';
+      try {
+        const { base64 } = await appointmentLetterBase64(record);
+        const idToken = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API_URL}/api/appointment/send`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body:    JSON.stringify({ applicationId: app.id, pdfBase64: base64 }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.message || `Server error (${res.status})`);
+        sent = true;
+      } catch (mailErr) {
+        console.warn('[Appointment] email failed:', mailErr);
+        msg = mailErr.message;
+        updateDoc(doc(db, LETTER_COLLECTION, app.id), { emailStatus: 'failed', emailError: String(msg).slice(0, 300) }).catch(() => {});
+      }
+      alert(sent
+        ? `The appointment letter was emailed to ${app.email} (PDF attached). HR can now download the same letter.`
+        : `The letter is saved and HR can download it, but the email could not be sent: ${msg}\n\nUse "Send Letter" to try again.`);
+    } catch (err) {
+      console.error('confirmLetter error:', err);
+      alert('Could not save the appointment letter: ' + (err.code === 'permission-denied' ? 'permission denied — publish the updated firestore.rules.' : err.message));
+    } finally {
+      setInterviewBusy(null);
+    }
+  }, [letterTarget, letters]);
 
   const updateProjectStatus = useCallback(async (id, status) => {
     setProjectStatusUpdating(true);
@@ -1875,7 +2161,7 @@ const Admin = () => {
                           {appTrack?.title || app.program || '—'}
                         </span>
                       </td>
-                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /><HireChip app={app} approval={approvals[app.id]} /></td>
+                      <td style={s.td}><Badge status={app.status} /><InterviewChip app={app} /><HireChip app={app} approval={approvals[app.id]} letter={letters[app.id]} /></td>
                       <td style={{ ...s.td, fontSize: 12, color: '#7A8A9A', whiteSpace: 'nowrap' }}>
                         {app.submittedAt?.toDate ? app.submittedAt.toDate().toLocaleDateString('en-UG') : '—'}
                       </td>
@@ -1927,6 +2213,15 @@ const Admin = () => {
                             <button style={{ ...s.btnView, background: '#FEE2E2', color: '#991B1B' }} onClick={() => withdrawHire(app)} disabled={interviewBusy === app.id}
                                     title="Remove from the HR queue (only before HR starts)">
                               Withdraw
+                            </button>
+                          )}
+                          {approvals[app.id] && !isInternHire(app, approvals[app.id]) && (
+                            <button
+                              style={{ ...s.btnLetter, ...(letters[app.id] && letters[app.id].emailStatus !== 'sent' ? { background: '#FEE2E2', color: '#991B1B' } : null) }}
+                              onClick={() => openLetter(app)} disabled={interviewBusy === app.id}
+                              title="Create the appointment letter and email it to the applicant (HR can only download it)"
+                            >
+                              {letters[app.id] ? (letters[app.id].emailStatus === 'sent' ? 'Edit / Resend Letter' : 'Send Letter') : 'Appointment Letter'}
                             </button>
                           )}
                           <button style={s.btnView} onClick={() => setSelected(app)}>View</button>
@@ -2161,6 +2456,17 @@ const Admin = () => {
           onConfirm={confirmSecondRound}
         />
       )}
+      {letterTarget && (
+        <LetterModal
+          key={letterTarget.id}
+          app={letterTarget}
+          approval={approvals[letterTarget.id]}
+          letter={letters[letterTarget.id]}
+          busy={interviewBusy === letterTarget.id}
+          onCancel={() => setLetterTarget(null)}
+          onConfirm={confirmLetter}
+        />
+      )}
       {hireTarget && (
         <HireModal
           key={hireTarget.id}
@@ -2188,6 +2494,9 @@ const Admin = () => {
         approval={selected ? approvals[selected.id] : null}
         onHire={openHire}
         onWithdrawHire={withdrawHire}
+        letter={selected ? letters[selected.id] : null}
+        onLetter={openLetter}
+        onDownloadLetter={downloadLetter}
       />
       <ProjectDetailModal
         project={selectedProject}
@@ -2252,6 +2561,7 @@ const s = {
   btnDelete:   { background: '#FEE2E2', color: '#B91C1C', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnOnline:   { background: '#E0F2FE', color: '#075985', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnHire:     { background: '#059669', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  btnLetter:   { background: '#FFF7ED', color: '#9A3412', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   btnRound2:   { background: '#1A3C5E', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 };
 

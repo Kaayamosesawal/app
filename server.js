@@ -15,6 +15,7 @@
  *   POST /api/interview/start     – (Applicant) Verify link + email, start / resume the 30-minute timed interview
  *   POST /api/interview/save      – (Applicant) Autosave answers during the interview
  *   POST /api/interview/submit    – (Applicant) Finish; the server grades against the in-code answer key
+ *   POST /api/appointment/send    – (CEO-only) Email the issued Letter of Appointment, PDF attached, to an approved hire
  *   GET  /api/health              – Health check for uptime monitors & Render keep-alive
  *
  * "CEO-only" routes require an `Authorization: Bearer <Firebase ID token>` header.
@@ -178,7 +179,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json({ limit: '16kb' }));
+// Small body limit everywhere, except the one route that carries a PDF attachment.
+const jsonSmall = express.json({ limit: '16kb' });
+const jsonLarge = express.json({ limit: '3mb' });
+app.use((req, res, next) => (req.path === '/api/appointment/send' ? next() : jsonSmall(req, res, next)));
 
 // ─── Resend client ────────────────────────────────────────────────────────────
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -551,6 +555,28 @@ const buildPlainText = (title, name, program, type, department, extra = {}) => {
       'including scope confirmation, timeline alignment, and contract details.',
       '',
       'Thank you for trusting Slirus Global Limited with your project.',
+    ],
+    appointment_letter: [
+      `Dear ${name},`,
+      '',
+      ...(extra.isUpdate ? ['UPDATE: this letter replaces any appointment letter we sent you earlier.', ''] : []),
+      'Following your successful online and in-person interviews, we are delighted to',
+      `offer you the position of ${program}${extra.department ? ' in the ' + extra.department + ' department' : ''} at Slirus Global Limited.`,
+      '',
+      `Start date : ${extra.startDate || ''}`,
+      `Reply by   : ${extra.acceptBy || ''}`,
+      '',
+      `Your Letter of Appointment is attached to this email (${extra.filename || 'PDF'}).`,
+      '',
+      'To accept the offer:',
+      '  1. Read the letter carefully.',
+      '  2. Print it, then sign and date the employee acceptance section.',
+      `  3. Reply to this email with a clear scan or photo of the signed letter by ${extra.acceptBy || 'the date above'}.`,
+      '  4. Bring the original signed copy and the documents listed in the letter on your first day.',
+      '',
+      'If you have any questions, or cannot accept the offer, reply to this email as soon as possible.',
+      '',
+      'Congratulations once again - we look forward to welcoming you to the team.',
     ],
     second_round: [
       `Dear ${name},`,
@@ -969,6 +995,61 @@ const buildEmailContent = (type, name, program, extra = {}) => {
             Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
           </p>`,
       };
+
+    // ── Letter of Appointment (sent ONLY by /api/appointment/send, PDF attached) ──
+    case 'appointment_letter': {
+      const { startDate = '', acceptBy = '', filename = 'Appointment_Letter.pdf', isUpdate = false, department = '', rawPosition = '' } = extra;
+      const row = (label, value) => `
+                <tr>
+                  <td style="padding:5px 0;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;width:110px;vertical-align:top;">${label}</td>
+                  <td style="padding:5px 0;font-size:15px;color:#1e293b;font-weight:700;">${value}</td>
+                </tr>`;
+      return {
+        subject: `${isUpdate ? 'Updated: ' : ''}Letter of Appointment – ${rawPosition || 'Slirus Global Limited'} | Slirus Global Limited`,
+        title:   isUpdate ? 'Your Updated Letter of Appointment' : 'Congratulations — Your Letter of Appointment 🎉',
+        body: `
+          <p>Dear <strong>${name}</strong>,</p>
+          ${isUpdate ? `<p style="margin:0 0 16px;padding:12px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:14px;color:#92400E;">
+            <strong>Please note:</strong> this letter replaces any appointment letter we sent you earlier.
+          </p>` : ''}
+          <p>
+            Following your successful online and in-person interviews, we are delighted to offer you
+            the position of <strong>${program}</strong>${department ? ` in the <strong>${escHtml(department)}</strong> department` : ''}
+            at Slirus Global Limited.
+          </p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"
+                 style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin:20px 0;">
+            <tr><td style="padding:16px 20px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                ${row('Position', program)}
+                ${department ? row('Department', escHtml(department)) : ''}
+                ${row('Start date', escHtml(startDate))}
+                ${row('Reply by', escHtml(acceptBy))}
+              </table>
+            </td></tr>
+          </table>
+          <p>
+            Your <strong>Letter of Appointment</strong> is attached to this email as a PDF
+            (<em>${escHtml(filename)}</em>). It sets out your terms of employment, job grade and remuneration.
+          </p>
+          <p style="margin:0 0 6px;"><strong>To accept the offer:</strong></p>
+          <ol style="margin:0 0 16px;padding-left:20px;color:#475569;">
+            <li>Read the letter carefully.</li>
+            <li>Print it, then sign and date the employee acceptance section.</li>
+            <li>Reply to this email with a clear scan or photo of the signed letter by <strong>${escHtml(acceptBy)}</strong>.</li>
+            <li>Bring the original signed copy and the documents listed in the letter on your first day.</li>
+          </ol>
+          <p>
+            If you have any questions, or you cannot accept the offer, please reply to this email as soon as possible.
+          </p>
+          <p style="margin-top:24px;">
+            Congratulations once again. We look forward to welcoming you to the team.
+          </p>
+          <p style="margin-top:24px;color:#94a3b8;font-size:13px;">
+            Warm regards,<br /><strong style="color:#475569;">Slirus HR Team</strong>
+          </p>`,
+      };
+    }
 
     // ── Online interview invitation (sent ONLY by /api/interview/invite) ──
     case 'interview_invite': {
@@ -1588,6 +1669,85 @@ if (adminDb) {
     }
   }, 30_000).unref?.();
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  LETTER OF APPOINTMENT  (Admin.jsx creates it → emailed here → HrManager.jsx downloads it)
+// ═════════════════════════════════════════════════════════════════════════════
+//  Admin.jsx saves the letter fields to appointmentLetters/{applicationId} and generates the PDF
+//  in the browser (utils/appointmentLetter.js). This route only DELIVERS it:
+//   • CEO-only (verified Firebase ID token) — nobody else can email letters out of Slirus.
+//   • The recipient is read from the application in Firestore, never from the request, so the
+//     route cannot be used to send a PDF to an arbitrary address.
+//   • The applicant must already be "Approved" as a hire, and the letter record must exist.
+//   • The upload must be a real PDF under 2 MB.
+app.post('/api/appointment/send', verifyCeoAuth, requireDb, jsonLarge, async (req, res) => {
+  const { applicationId, pdfBase64 } = req.body ?? {};
+  if (typeof applicationId !== 'string' || !applicationId || applicationId.includes('/')) {
+    return res.status(400).json({ success: false, message: 'Missing required field: applicationId.' });
+  }
+  if (typeof pdfBase64 !== 'string' || !pdfBase64) {
+    return res.status(400).json({ success: false, message: 'Missing required field: pdfBase64.' });
+  }
+
+  const letterRef = adminDb.collection('appointmentLetters').doc(applicationId);
+  try {
+    const [appSnap, letterSnap] = await Promise.all([
+      adminDb.collection('applications').doc(applicationId).get(),
+      letterRef.get(),
+    ]);
+    if (!appSnap.exists) return res.status(404).json({ success: false, message: 'Application not found.' });
+    if (!letterSnap.exists) return res.status(404).json({ success: false, message: 'Create the appointment letter first.' });
+    const a = appSnap.data();
+    const L = letterSnap.data();
+    if (a.hireStatus !== 'Approved') {
+      return res.status(409).json({ success: false, message: 'Only applicants approved as employees can receive an appointment letter.' });
+    }
+    if (!a.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)) {
+      return res.status(400).json({ success: false, message: 'This application has no valid email address.' });
+    }
+
+    const pdf = Buffer.from(pdfBase64, 'base64');
+    if (!pdf.length || pdf.length > 2 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: 'The letter PDF is empty or larger than 2 MB.' });
+    }
+    if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      return res.status(400).json({ success: false, message: 'The attachment is not a valid PDF.' });
+    }
+
+    const safe     = String(L.name || a.fullName || 'applicant').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'applicant';
+    const filename = `Appointment_Letter_${safe}.pdf`;
+    const name     = a.fullName || L.name || 'Applicant';
+    const position = L.position || a.program || 'the advertised position';
+    const extra = {
+      startDate:  formatInterviewDate(L.startDate)  || cleanLine(L.startDate, 40),
+      acceptBy:   formatInterviewDate(L.acceptBy)   || cleanLine(L.acceptBy, 40),
+      department: cleanLine(L.department, 80),
+      rawPosition: cleanLine(position, 120),
+      filename, isUpdate: L.emailedOnce === true, // true only if an earlier letter really reached the applicant
+    };
+    const content = buildEmailContent('appointment_letter', escHtml(name), escHtml(position), extra);
+    const html    = buildEmailHtml(content.title, content.body, 'HR Department', a.email);
+    const text    = buildPlainText(content.title, name, position, 'appointment_letter', 'HR Department', extra);
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS, to: a.email, reply_to: 'hr@slirus.com',
+      subject: content.subject, html, text,
+      attachments: [{ filename, content: pdf }],
+      headers: { 'Precedence': 'transactional', 'X-Entity-Ref-ID': `slirus-appointment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 'X-Mailer': 'Slirus-Email-API/1.0' },
+    });
+    if (error) throw new Error(error.message || 'Resend API error');
+
+    await letterRef.update({
+      emailStatus: 'sent', emailedOnce: true, emailSentAt: FieldValue.serverTimestamp(), emailTo: a.email, emailError: FieldValue.delete(),
+    });
+    console.log(`[Appointment] ✉️  Letter → ${a.email} (application ${applicationId}) by ${req.callerEmail} | messageId: ${data.id}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Appointment] ❌ send failed:', err.message);
+    await letterRef.update({ emailStatus: 'failed', emailError: String(err.message || 'send failed').slice(0, 300) }).catch(() => {});
+    return res.status(500).json({ success: false, message: NODE_ENV === 'production' ? 'Could not email the appointment letter.' : err.message });
+  }
+});
 
 // ─── GET /api/health ──────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

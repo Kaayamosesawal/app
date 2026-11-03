@@ -58,6 +58,10 @@ import {
   HIRING_COLLECTION, HIRING_STAGES, HIRING_STAGE_META, HIRING_STEPS, BACKGROUND_TODO,
   buildEmployeeDraft, buildBackgroundDraft,
 } from '../utils/hiringPipeline';
+// The Letter of Appointment is CREATED by Admin.jsx (CEO/Admin) after the in-person interview.
+// HR can only DOWNLOAD it — the same PDF the applicant received by email. JOB_GRADES also lives in
+// that shared file now, so Admin and HR always quote the same salary.
+import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmployeeDraft } from '../utils/appointmentLetter';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 // NOTE: This is a UX gate only. The real authorization boundary must live in
@@ -81,11 +85,7 @@ const DEPARTMENTS = [
 const NSSF_EMPLOYEE_RATE = 0.05; // 5% of base salary, withheld from the employee
 const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (employer cost)
 
-const JOB_GRADES = [
-  { code: 'SHR-G1', title: 'SHR-Support', level: 1, baseSalary: 150000, welfare: 80000, weeklyAllowance: 30000, bonuses: 0 },
-  { code: 'SHR-G2', title: 'SHR-Junior',  level: 2, baseSalary: 285000, welfare: 80000, weeklyAllowance: 60000, bonuses: 65000 },
-  { code: 'SHR-G3', title: 'SHR-Senior',  level: 3, baseSalary: 325000, welfare: 80000, weeklyAllowance: 90000, bonuses: 100000 },
-];
+// JOB_GRADES (the salary table) is imported from utils/appointmentLetter.js — shared with Admin.jsx.
 
 // Uganda monthly PAYE bands, revised effective 1 July 2026: the tax-free
 // threshold rose from UGX 235,000 to UGX 335,000 (Income Tax (Amendment)
@@ -460,52 +460,9 @@ const buildContractHtml = (employee) => {
   `;
 };
 
-// ─── Standard Letter of Appointment ────────────────────────────────────────
-const buildAppointmentLetterHtml = (employee) => {
-  const grade = gradeByCode(employee.jobGradeCode);
-  const name = employeeFullName(employee);
-  const isProbation = employee.contractType === 'Probation';
-
-  return `
-    <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-      <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(employee.hireDate)}</p>
-    </div>
-    <h2>Letter of Appointment</h2>
-
-    <p class="clause">Dear ${name},</p>
-    <p class="clause"><strong>RE: OFFER OF APPOINTMENT — ${employee.position || '[Job Title]'}</strong></p>
-
-    <p class="clause">We are pleased to confirm your appointment as <strong>${employee.position || '[Job Title]'}</strong> in the <strong>${employee.department}</strong> department of ${COMPANY_INFO.name}, on the following terms:</p>
-
-    <h3>1. Commencement</h3>
-    <p class="clause">Your employment shall commence on <strong>${fmtDate(employee.hireDate)}</strong>. You are required to report to the <strong>${employee.reportsTo || '[Manager/HoD]'}</strong> at our offices at ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'} on your first day at <strong>9:00 AM</strong>.</p>
-
-    <h3>2. Nature of Appointment</h3>
-    <p class="clause">This is a <strong>${employee.contractType || '[Contract Type]'}</strong> appointment${employee.contractEnd ? `, running until <strong>${fmtDate(employee.contractEnd)}</strong>` : ''}.${isProbation ? ` You will serve a probationary period of <span class="blank">${DEFAULT_PROBATION_MONTHS} months</span>, during which your performance will be reviewed before confirmation.` : ''}</p>
-
-    <h3>3. Job Grade &amp; Remuneration</h3>
-    <p class="clause">You are placed on Job Grade <strong>${grade?.code || '—'}</strong> (${grade?.title || '—'}), with a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong>, subject to statutory deductions (PAYE, NSSF), payable monthly by bank transfer to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>.</p>
-
-    <h3>4. Place of Work &amp; Hours</h3>
-    <p class="clause">Your normal place of work shall be ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}. Standard hours of work are <strong>48 hours</strong> per week, from <strong>9:00 AM to 5:00 PM</strong>, with breaktime for breakfast at <strong>11:00 AM</strong> and lunch at <strong>1:00 PM</strong>.</p>
-
-    <h3>5. Documents Required on Reporting</h3>
-    <p class="clause">Please bring the following on your first day: (a) a copy of your National ID / passport; (b) certified copies of academic and professional certificates; (c) two recent passport photographs; (d) bank account details; (e) NSSF number, if already registered; (f) contacts of two referees; (g) LC1 letter of resident place attached.</p>
-
-    <h3>6. General</h3>
-    <p class="clause">Your full terms of employment, including hours of work, leave entitlement, termination notice, and conduct obligations, are set out in the accompanying Contract of Employment, which forms part of this offer.</p>
-
-    <p class="clause">Please indicate your acceptance of this offer by signing and returning a copy of this letter by <span class="blank">&nbsp;</span>. We look forward to welcoming you to the team.</p>
-
-    <div class="sigblock">
-      <div class="sigcol"><div class="sigline">For ${COMPANY_INFO.name} &nbsp;&nbsp; Name: __________________ &nbsp; Title: __________________</div></div>
-      <div class="sigcol"><div class="sigline">Signed by Employee &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
-    </div>
-
-    <div class="footerNote">This is a general-purpose appointment letter template generated from HR system records. Review with a qualified HR/legal advisor before issuing, and attach the corresponding Contract of Employment.</div>
-  `;
-};
+// ─── Letter of Appointment ──────────────────────────────────────────────────
+// Not generated here any more: Admin.jsx creates it (and emails it to the applicant);
+// HR downloads the issued letter via downloadAppointmentLetter().
 
 // ─── Letter of Internship Placement (learning-based, non-salaried) ──────────
 // Replaces the Contract of Employment + Letter of Appointment for interns —
@@ -2048,7 +2005,7 @@ const ContractActionModal = ({ employee, action, onClose, onConfirm }) => {
 };
 
 // ─── Employee Profile Modal (details, history, attendance) ──────────────────
-const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, onDownloadServiceAgreement, onDownloadCertificate, onDownloadPlacementLetter, onFamilyRecord }) => {
+const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onClose, onEdit, onIdCard, onDownloadContract, onDownloadAppointmentLetter, appointmentLetter, onDownloadServiceAgreement, onDownloadCertificate, onDownloadPlacementLetter, onFamilyRecord }) => {
   const grade = gradeByCode(employee.jobGradeCode);
   const status = deriveContractStatus(employee);
   const isContractor = employee.engagementType === 'Independent Contractor';
@@ -2082,7 +2039,14 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
           ) : (
             <>
               <button style={{ ...ms.actionBtn, background: '#ECFDF5', color: '#065F46' }} onClick={() => onDownloadContract(employee)}>📄 Download Contract</button>
-              <button style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412' }} onClick={() => onDownloadAppointmentLetter(employee)}>📄 Download Appointment Letter</button>
+              <button
+                style={{ ...ms.actionBtn, background: '#FFF7ED', color: '#9A3412', opacity: appointmentLetter ? 1 : 0.5, cursor: appointmentLetter ? 'pointer' : 'not-allowed' }}
+                disabled={!appointmentLetter}
+                onClick={() => onDownloadAppointmentLetter(employee)}
+                title={appointmentLetter ? 'Download the appointment letter issued by Admin' : 'Not issued yet — the CEO/Admin creates the appointment letter after the in-person interview'}
+              >
+                {appointmentLetter ? '📄 Download Appointment Letter' : '📄 Appointment Letter — awaiting Admin'}
+              </button>
             </>
           )}
           {isIntern && (
@@ -3306,6 +3270,7 @@ const HrManager = () => {
   const [hires, setHires] = useState([]);
   const [loadingHires, setLoadingHires] = useState(true);
   const [hiresError, setHiresError] = useState(null);
+  const [letters, setLetters] = useState([]);   // appointment letters issued by Admin (download-only for HR)
   const [hireDraft, setHireDraft] = useState(null);
   const [busyEmployeeId, setBusyEmployeeId] = useState(null);
 
@@ -3499,6 +3464,41 @@ const HrManager = () => {
     return unsub;
   }, [isAuthorized]);
 
+  // ── Appointment letters issued by Admin.jsx (read-only here) ──────────────
+  useEffect(() => {
+    if (!isAuthorized) { setLetters([]); return undefined; }
+    const unsub = onSnapshot(
+      collection(db, LETTER_COLLECTION),
+      (snap) => setLetters(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => console.warn('appointmentLetters listen error:', err.code === 'permission-denied' ? 'permission denied — publish the updated firestore.rules.' : err.message)
+    );
+    return unsub;
+  }, [isAuthorized]);
+
+  // An employee's letter: matched by the application it was hired from, falling back to email.
+  const letterIndex = useMemo(() => {
+    const byApp = {}, byEmail = {};
+    letters.forEach(l => {
+      if (l.applicationId) byApp[l.applicationId] = l;
+      if (l.email) byEmail[String(l.email).trim().toLowerCase()] = l;
+    });
+    return { byApp, byEmail };
+  }, [letters]);
+  const findLetter = useCallback((emp) => {
+    if (!emp) return null;
+    return (emp.applicationId && letterIndex.byApp[emp.applicationId])
+      || letterIndex.byEmail[String(emp.email || '').trim().toLowerCase()] || null;
+  }, [letterIndex]);
+  const handleDownloadLetter = useCallback(async (emp) => {
+    const letter = findLetter(emp);
+    if (!letter) {
+      alert('No appointment letter has been issued for this employee yet.\n\nThe CEO/Admin creates it after the in-person interview and emails it to the applicant. Once issued, you can download it here.');
+      return;
+    }
+    try { await downloadAppointmentLetter(letter); }
+    catch (err) { alert('Could not build the letter PDF: ' + err.message); }
+  }, [findLetter]);
+
   const logAudit = useCallback(async (action, target, details = '') => {
     try {
       await addDoc(collection(db, 'auditLogs'), {
@@ -3617,9 +3617,16 @@ const HrManager = () => {
 
   const startOnboarding = useCallback((hire) => {
     setEditingEmployee(null);
-    setHireDraft({ approval: hire, employee: buildEmployeeDraft(hire), background: buildBackgroundDraft(hire) });
+    // If Admin already issued the appointment letter, start from its terms (position, grade, start date,
+    // reporting line, place of work…) so the employee record matches the letter the hire received.
+    const issued = letterIndex.byApp[hire.applicationId || hire.id] || null;
+    setHireDraft({
+      approval: hire,
+      employee: { ...buildEmployeeDraft(hire), ...letterToEmployeeDraft(issued) },
+      background: buildBackgroundDraft(hire),
+    });
     setShowEmployeeForm(true);
-  }, []);
+  }, [letterIndex]);
 
   const handleDeleteEmployee = useCallback(async (employee) => {
     const confirmed = window.confirm(`Permanently delete ${employeeFullName(employee)}'s profile? This cannot be undone.`);
@@ -4044,7 +4051,12 @@ const HrManager = () => {
                             ) : (
                               <>
                                 <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
-                                <button style={s.btnShortlist} onClick={() => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}>Letter</button>
+                                <button
+                                  style={{ ...s.btnShortlist, ...(findLetter(e) ? null : { opacity: 0.5, cursor: 'not-allowed' }) }}
+                                  disabled={!findLetter(e)}
+                                  onClick={() => handleDownloadLetter(e)}
+                                  title={findLetter(e) ? 'Download the appointment letter issued by Admin' : 'Not issued yet — the CEO/Admin creates the appointment letter after the in-person interview'}
+                                >Letter</button>
                               </>
                             )}
                             {isInternContract(e.contractType) && (
@@ -4362,7 +4374,8 @@ const HrManager = () => {
           onIdCard={(e) => { setIdCardTarget(e); }}
           onFamilyRecord={(e) => setFamilyTarget(e)}
           onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
-          onDownloadAppointmentLetter={(e) => openPrintWindow(`Appointment Letter — ${employeeFullName(e)}`, buildAppointmentLetterHtml(e))}
+          onDownloadAppointmentLetter={handleDownloadLetter}
+          appointmentLetter={findLetter(profileTarget)}
           onDownloadPlacementLetter={(e) => openPrintWindow(`Internship Placement Letter — ${employeeFullName(e)}`, buildInternshipPlacementLetterHtml(e))}
           onDownloadServiceAgreement={(e) => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}
           onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Completion — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
