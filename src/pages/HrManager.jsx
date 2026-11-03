@@ -65,6 +65,42 @@ import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmplo
 // Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
 import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
 
+
+// ── Permission diagnostics (used only when a save is refused) ──────────────
+// The Firestore rules treat this UID as the single super-admin. Keep in sync with firestore.rules → isAdmin().
+const RULES_ADMIN_UID = 'NmW09jvv9Wbdvs0h6QEh2HRH8On1';
+const diagnosePermissionDenied = async () => {
+  const lines = [];
+  try {
+    const u = auth.currentUser;
+    if (!u) return 'DIAGNOSTIC: you are not signed in.';
+    const tok = await u.getIdTokenResult(true);
+    lines.push(`DIAGNOSTIC — signed in as ${u.email} (uid ${u.uid}), email verified: ${u.emailVerified ? 'yes' : 'NO'}.`);
+    lines.push(u.uid === RULES_ADMIN_UID
+      ? 'This uid IS the super-admin uid in the rules.'
+      : `This uid is NOT the super-admin uid in the rules (${RULES_ADMIN_UID}) — the rules see you as an ordinary team user.`);
+    let prof = null;
+    try { const s = await getDoc(doc(db, 'teamUsers', u.uid)); prof = s.exists() ? s.data() : null; }
+    catch (e) { lines.push('Could not read your teamUsers profile: ' + e.message); }
+    lines.push(prof
+      ? `teamUsers profile: department="${prof.department}", role="${prof.role}", status="${prof.status}", hr permissions=${JSON.stringify(prof.permissions?.hr || {})}.`
+      : 'teamUsers profile: NOT FOUND for this uid.');
+    // Probe: can this account create (and remove) a bare employees doc?
+    const probeRef = doc(collection(db, 'employees'));
+    try {
+      await setDoc(probeRef, { probe: true, createdAt: serverTimestamp(), createdBy: u.email });
+      lines.push('Probe: creating an employees document is ALLOWED — so the refusal is in the background record or the hiring-approval step.');
+      try { await deleteDoc(probeRef); } catch (e) { lines.push(`(Probe doc employees/${probeRef.id} could not be deleted: delete it manually.)`); }
+    } catch (e) {
+      lines.push('Probe: creating an employees document is DENIED — your account is not recognised as HR/admin by the rules.');
+    }
+    void tok;
+  } catch (e) {
+    lines.push('Diagnostic failed: ' + e.message);
+  }
+  return lines.join('\n');
+};
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 // NOTE: This is a UX gate only. The real authorization boundary must live in
 // Firestore Security Rules (e.g. request.auth.token / teamUsers doc lookup)
@@ -1195,7 +1231,7 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
                 )}
               </div>
 
-            {error && <p ref={errorRef} style={s.loginErr}>{error}</p>}
+            {error && <p ref={errorRef} style={{ ...s.loginErr, whiteSpace: 'pre-wrap' }}>{error}</p>}
           </div>
           <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
             <button type="button" style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Cancel</button>
@@ -3648,6 +3684,12 @@ const HrManager = () => {
       return { success: true };
     } catch (err) {
       console.error('Save employee error:', err);
+      // DIAGNOSTIC: a permission-denied from a batch doesn't say WHICH write was refused, so
+      // report who Firestore thinks you are and whether a plain employees write is allowed.
+      if (err?.code === 'permission-denied' && !isEdit) {
+        const detail = await diagnosePermissionDenied();
+        return { success: false, error: `${err.message}\n\n${detail}` };
+      }
       return { success: false, error: err.message };
     }
   }, [employees, logAudit]);
