@@ -14,17 +14,12 @@
  * imports it from here, so Admin and HR can never quote different salaries.
  */
 
-import { loadLogoDataUrl, drawLetterhead, drawFooter } from './pdfBrand';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, COMPANY_INFO } from './pdfBrand';
 
 export const LETTER_COLLECTION = 'appointmentLetters';
 
-export const COMPANY_INFO = {
-  name: 'Slirus Global Limited',
-  address: 'P.O Box 332485, Lira -Uganda',
-  phone: '+256 776 079 495',
-  email: 'hr@slirus.com',
-  website: 'https://slirus.com',
-};
+// Company details now live in pdfBrand.js (printed in every PDF header); re-exported for existing imports.
+export { COMPANY_INFO };
 
 export const DEFAULT_PROBATION_MONTHS = 6; // statutory maximum for a single probation period
 export const REPORTS_TO_OPTIONS = ['Manager', 'HoD'];

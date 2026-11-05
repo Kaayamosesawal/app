@@ -17,7 +17,7 @@
  * Both share the Slirus Global Limited letterhead/footer from ./pdfBrand.
  */
 
-import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from './pdfBrand';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, drawCompanyContact, hexToRgb } from './pdfBrand';
 
 const BRAND = '#1A3C5E';
 const ACCENT = '#2E6DA4';
@@ -181,6 +181,7 @@ export const generateProjectProposalPDF = async (project) => {
 
   pdf.setFontSize(11); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(180, 202, 224);
   pdf.text('SLIRUS GLOBAL LIMITED', PW / 2, 108, { align: 'center' });
+  drawCompanyContact(pdf, PW / 2, 114.5, { align: 'center', size: 8.5, color: [180, 202, 224], gap: 4.8 });
 
   pdf.setFontSize(28); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(255, 255, 255);
   pdf.text('PROJECT PROPOSAL', PW / 2, 140, { align: 'center' });

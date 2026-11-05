@@ -9,6 +9,26 @@
  */
 
 const LOGO_PATH = '/Slirus.png';
+
+// Company identity printed in the header of every Slirus PDF (single source of truth).
+export const COMPANY_INFO = {
+  name: 'Slirus Global Limited',
+  address: 'P.O Box 332485, Lira -Uganda',
+  phone: '+256 776 079 495',
+  email: 'hr@slirus.com',
+  website: 'https://slirus.com',
+};
+
+/**
+ * Prints the company contact details as two small lines (address · phone, email · website)
+ * starting at (x, y). Returns the y of the last line. Used by the letterhead and by cover pages.
+ */
+export const drawCompanyContact = (pdf, x, y, { align = 'left', size = 7.5, color = [210, 224, 238], gap = 4.2 } = {}) => {
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(size); pdf.setTextColor(...color);
+  pdf.text(`${COMPANY_INFO.address}  ·  ${COMPANY_INFO.phone}`, x, y, { align });
+  pdf.text(`${COMPANY_INFO.email}  ·  ${COMPANY_INFO.website}`, x, y + gap, { align });
+  return y + gap;
+};
 // The logo is only drawn ~15 mm wide, so 256 px is already sharp when printed.
 // Embedding the original (often several MB) is what made letter PDFs huge.
 const LOGO_MAX_PX = 256;
@@ -79,8 +99,9 @@ export const hexToRgb = (hex) => {
 /**
  * Draws the standard Slirus Global Limited letterhead across the top of the
  * current page: a navy header bar, the logo in a white badge (if available),
- * the company name, a document eyebrow line, and up to two right-aligned
- * meta lines (e.g. reference number, date, position).
+ * the company name, a document eyebrow line, the company contact details
+ * (address, phone, e-mail, website), and up to two right-aligned meta lines
+ * (e.g. reference number, date, position).
  *
  * Returns the y-coordinate immediately below the header where the document
  * body can safely start.
@@ -89,7 +110,7 @@ export const drawLetterhead = (pdf, {
   logoDataUrl,
   eyebrow,
   rightLines = [],
-  height = 30,
+  height = 34,
   margin = 20,
 } = {}) => {
   const PW = pdf.internal.pageSize.getWidth();
@@ -112,12 +133,15 @@ export const drawLetterhead = (pdf, {
   }
 
   pdf.setFontSize(13); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(255, 255, 255);
-  pdf.text('SLIRUS GLOBAL LIMITED', textX, height / 2 - 1);
+  pdf.text(COMPANY_INFO.name.toUpperCase(), textX, 11.5);
 
+  let infoY = 17.5;
   if (eyebrow) {
     pdf.setFontSize(8.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(210, 224, 238);
-    pdf.text(eyebrow, textX, height / 2 + 6.5);
+    pdf.text(eyebrow, textX, infoY);
+    infoY += 6;
   }
+  drawCompanyContact(pdf, textX, infoY);
 
   if (rightLines.length) {
     pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(255, 255, 255);
@@ -148,5 +172,8 @@ export const drawFooter = (pdf, { note = 'Slirus Global Limited', confidential =
     pdf.setFontSize(7.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(150, 150, 150);
     pdf.text(label, margin, PH - 10);
     pdf.text(`Page ${p} of ${total}`, PW - margin, PH - 10, { align: 'right' });
+    // Company contact details on every page
+    pdf.setFontSize(6.5); pdf.setTextColor(120, 135, 150);
+    pdf.text(`${COMPANY_INFO.address}  ·  ${COMPANY_INFO.phone}  ·  ${COMPANY_INFO.email}  ·  ${COMPANY_INFO.website}`, PW / 2, PH - 5.5, { align: 'center' });
   }
 };

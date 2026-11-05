@@ -13,8 +13,8 @@
  * The letter is deliberately silent about salary, PAYE, NSSF and job grades: it is not employment.
  */
 
-import { loadLogoDataUrl, drawLetterhead, drawFooter } from './pdfBrand';
-import { COMPANY_INFO, REPORTS_TO_OPTIONS, fmtLetterDate, todayISO } from './appointmentLetter';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, COMPANY_INFO } from './pdfBrand';
+import { REPORTS_TO_OPTIONS, fmtLetterDate, todayISO } from './appointmentLetter';
 
 export { REPORTS_TO_OPTIONS };
 export const PLACEMENT_COLLECTION = 'placementLetters';

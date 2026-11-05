@@ -11,7 +11,7 @@
  * (same folder as pdfBrand.js and projectPdf.js)
  */
 
-import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb } from './pdfBrand';
+import { loadLogoDataUrl, drawLetterhead, drawFooter, hexToRgb, COMPANY_INFO } from './pdfBrand';
 
 // ─── Shared constants ───────────────────────────────────────────────────────
 export const CONTRACT_TYPES = [
@@ -292,7 +292,7 @@ const drawContractPDF = async (pdf, contract, copyLabel, logoDataUrl) => {
   pdf.text('Date: ____________________', M + colW + 10, sigY + 18);
 
   drawFooter(pdf, {
-    note: `Slirus Global Limited · ${copyLabel} · Confidential Professional Agreement`,
+    note: `${COMPANY_INFO.name} · ${copyLabel} · Confidential Professional Agreement`,
     confidential: true,
   });
 };
