@@ -49,7 +49,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { db, auth } from '../firebase/firebase';
 import {
   collection, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
-  onSnapshot, query, where, orderBy, limit, serverTimestamp, Timestamp, writeBatch,
+  onSnapshot, query, where, orderBy, limit, serverTimestamp, Timestamp, writeBatch, getDocFromServer,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
@@ -69,7 +69,7 @@ import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmploye
 // ── Permission diagnostics (used only when a save is refused) ──────────────
 // The Firestore rules treat this UID as the single super-admin. Keep in sync with firestore.rules → isAdmin().
 const RULES_ADMIN_UID = 'NmW09jvv9Wbdvs0h6QEh2HRH8On1';
-const diagnosePermissionDenied = async () => {
+const diagnosePermissionDenied = async (familyPayload = null) => {
   const lines = [];
   try {
     const u = auth.currentUser;
@@ -94,11 +94,74 @@ const diagnosePermissionDenied = async () => {
     } catch (e) {
       lines.push('Probe: creating an employees document is DENIED — your account is not recognised as HR/admin by the rules.');
     }
+    // Probe 2: the REAL background record, written with a throw-away employee in one batch (as the real save does).
+    if (familyPayload) {
+      const pEmp = doc(collection(db, 'employees'));
+      const pFam = doc(db, FAMILY_COLLECTION, pEmp.id);
+      try {
+        const b = writeBatch(db);
+        b.set(pEmp, { probe: true, createdAt: serverTimestamp(), createdBy: u.email });
+        b.set(pFam, {
+          ...familyPayload,
+          consent: { ...familyPayload.consent, recordedBy: u.email },
+          employeeId: pEmp.id, employeeName: 'PROBE', employeeCode: 'PROBE',
+          updatedAt: serverTimestamp(), updatedBy: u.email,
+          createdAt: serverTimestamp(), createdBy: u.email,
+        });
+        await b.commit();
+        lines.push('Probe 2: the background record, written exactly as you filled it, is ALLOWED — so the refusal is the hiring-approval step (stage change).');
+        try { const d = writeBatch(db); d.delete(pFam); d.delete(pEmp); await d.commit(); }
+        catch (e) { lines.push(`(Probe docs employees/${pEmp.id} and employeeFamilyRecords/${pEmp.id} could not be deleted: remove them manually.)`); }
+      } catch (e) {
+        lines.push('Probe 2: the background record, written exactly as you filled it, is DENIED — a field in the background form fails the rules.');
+      }
+    }
     void tok;
   } catch (e) {
     lines.push('Diagnostic failed: ' + e.message);
   }
   return lines.join('\n');
+};
+
+// ── Write safety helpers ────────────────────────────────────────────────────
+// Firestore REJECTS any `undefined` field value ("Unsupported field value: undefined"), which
+// silently killed saves when a CV-derived draft (hire pre-fill) left a key undefined. Strip them.
+const stripUndefined = (v) => {
+  if (Array.isArray(v)) return v.filter(x => x !== undefined).map(stripUndefined);
+  if (v && typeof v === 'object' && v.constructor === Object) {
+    return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, stripUndefined(x)]));
+  }
+  return v; // primitives, Timestamps and serverTimestamp() sentinels pass through untouched
+};
+// When the browser can't reach Firestore, writes queue forever and the Save button spins for ever.
+// Turn that into a visible error instead.
+const TIMEOUT_MSG = 'Could not reach Firestore (no response after 25 seconds). Check your internet connection and any ad-blocker / firewall, then try again.';
+const withTimeout = (promise, ms = 25000, msg = TIMEOUT_MSG) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error(msg), { code: 'timeout' })), ms)),
+]);
+// Who does Firestore think I am? Appended to permission-denied errors so the cause is visible.
+const identityReport = async () => {
+  try {
+    const u = auth.currentUser;
+    if (!u) return 'DIAGNOSTIC: you are not signed in.';
+    await u.getIdTokenResult(true);
+    const lines = [`DIAGNOSTIC — signed in as ${u.email} (uid ${u.uid}), email verified: ${u.emailVerified ? 'yes' : 'NO'}.`];
+    const ceoMail = (u.email || '').toLowerCase() === CEO_EMAIL;
+    if (u.uid === RULES_ADMIN_UID) lines.push('Rules see you as the super admin (uid match).');
+    else if (ceoMail && u.emailVerified) lines.push('Rules see you as the super admin by verified e-mail — this needs the UPDATED firestore.rules to be published.');
+    else if (ceoMail) lines.push(`This is the CEO e-mail but it is NOT verified and the uid differs from the rules uid, so the rules treat you as an ordinary user. Verify the e-mail in Firebase Authentication, or set the admin uid in firestore.rules to ${u.uid}.`);
+    else {
+      try {
+        const snap = await getDoc(doc(db, 'teamUsers', u.uid));
+        const prof = snap.exists() ? snap.data() : null;
+        lines.push(prof
+          ? `teamUsers profile: department="${prof.department}", role="${prof.role}", status="${prof.status}".`
+          : 'No teamUsers profile exists for this uid — the CEO must provision this account.');
+      } catch (e) { lines.push('Could not read your teamUsers profile: ' + e.message); }
+    }
+    return lines.join('\n');
+  } catch (e) { return 'Diagnostic failed: ' + e.message; }
 };
 
 // ─── Config ─────────────────────────────────────────────────────────────────
@@ -2972,7 +3035,7 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
     (async () => {
       try {
         const snap = await Promise.race([
-          getDoc(doc(db, FAMILY_COLLECTION, employee.id)),
+          getDocFromServer(doc(db, FAMILY_COLLECTION, employee.id)),
           new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('The request timed out.'), { code: 'timeout' })), 10000)),
         ]);
         if (!alive) return;
@@ -2985,13 +3048,14 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
         }
       } catch (err) {
         console.error('Family record load error:', err);
-        if (alive) setLoadError(
+        const extra = err.code === 'permission-denied' ? '\n\n' + await identityReport() : '';
+        if (alive) setLoadError((
           err.code === 'permission-denied'
             ? 'Access to saved family records was denied. Make sure the updated Firestore rules (employeeFamilyRecords) are published and that your account has HR access.'
             : err.code === 'timeout'
               ? 'Checking for a saved record timed out — check your connection.'
               : 'Could not check for a saved record: ' + err.message
-        );
+        ) + extra);
       } finally {
         if (alive) setLoading(false);
       }
@@ -3015,7 +3079,8 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
     const outcome = await onSave(employee, buildFamilyPayload(form), !existing);
     setSaving(false);
     if (!outcome.success) { setError(outcome.error || 'Could not save this record.'); return; }
-    setExisting(prev => prev || { saved: true });
+    if (outcome.data) { setForm(mergeFamilyRecord(outcome.data)); setExisting(outcome.data); }
+    else setExisting(prev => prev || { saved: true });
     setJustSaved(true);
   };
 
@@ -3061,7 +3126,7 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
           {loading && <p style={{ ...fr.warn, background: '#EFF6FF', borderColor: '#BFDBFE', color: '#1D4ED8' }}>Checking for an existing record… the fields unlock in a moment.</p>}
           {!loading && loadError && (
             <div style={{ ...fr.warn, background: '#FEF2F2', borderColor: '#FECACA', color: '#991B1B' }}>
-              <div>{loadError}</div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{loadError}</div>
               <div style={{ marginTop: 6 }}>You can still fill in the form and export a PDF, but it can't be saved until this is resolved.</div>
               <button type="button" style={{ ...fr.add, marginTop: 8 }} onClick={() => setReloadKey(k => k + 1)}>↻ Try again</button>
             </div>
@@ -3079,7 +3144,7 @@ const FamilyRecordModal = ({ employee, canEdit, onClose, onSave, onExported }) =
             Parents, next of kin and marital status are required; insurance, health, academic and personal-record details are optional. Consent is required to save.
           </p>
 
-          {error && <p style={s.loginErr}>{error}</p>}
+          {error && <p style={{ ...s.loginErr, whiteSpace: 'pre-wrap' }}>{error}</p>}
           {justSaved && <p style={fr.ok}>✓ Record saved.</p>}
         </div>
 
@@ -3588,6 +3653,7 @@ const HrManager = () => {
   // ── Employee CRUD ──────────────────────────────────────────────────────
   const handleSaveEmployee = useCallback(async (form, photoDataUrl, isEdit, familyPayload = null, approval = null) => {
     try {
+      familyPayload = familyPayload ? stripUndefined(familyPayload) : null;
       const name = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
       if (isEdit) {
         const before = employees.find(e => e.id === form.id);
@@ -3620,13 +3686,13 @@ const HrManager = () => {
             updatedAt: serverTimestamp(), updatedBy: email,
           };
           const batch = writeBatch(db);
-          batch.update(doc(db, 'employees', form.id), empPatch);
+          batch.update(doc(db, 'employees', form.id), stripUndefined(empPatch));
           if (famSnap.exists()) batch.update(famRef, famData);
           else batch.set(famRef, { ...famData, createdAt: serverTimestamp(), createdBy: email });
-          await batch.commit();
+          await withTimeout(batch.commit());
           await logAudit(famSnap.exists() ? 'Updated background record' : 'Created background record', name);
         } else {
-          await updateDoc(doc(db, 'employees', form.id), empPatch);
+          await updateDoc(doc(db, 'employees', form.id), stripUndefined(empPatch));
         }
         if (photoDataUrl) savePhotoLocal(form.id, photoDataUrl);
         await logAudit('Updated employee profile', name);
@@ -3655,7 +3721,7 @@ const HrManager = () => {
           // family record uses existsAfter() to accept this batch.)
           const email = auth.currentUser?.email || 'unknown';
           const batch = writeBatch(db);
-          batch.set(ref, employeeData);
+          batch.set(ref, stripUndefined(employeeData));
           if (familyPayload) batch.set(doc(db, FAMILY_COLLECTION, ref.id), {
             ...familyPayload,
             consent: { ...familyPayload.consent, recordedBy: email },
@@ -3672,9 +3738,9 @@ const HrManager = () => {
               hrCompletedAt: serverTimestamp(), hrCompletedBy: email,
             });
           }
-          await batch.commit();
+          await withTimeout(batch.commit());
         } else {
-          await setDoc(ref, employeeData);
+          await setDoc(ref, stripUndefined(employeeData));
         }
         if (photoDataUrl) savePhotoLocal(ref.id, photoDataUrl);
         await logAudit('Created employee profile', name, employeeCode);
@@ -3687,7 +3753,7 @@ const HrManager = () => {
       // DIAGNOSTIC: a permission-denied from a batch doesn't say WHICH write was refused, so
       // report who Firestore thinks you are and whether a plain employees write is allowed.
       if (err?.code === 'permission-denied' && !isEdit) {
-        const detail = await diagnosePermissionDenied();
+        const detail = await diagnosePermissionDenied(familyPayload);
         return { success: false, error: `${err.message}\n\n${detail}` };
       }
       return { success: false, error: err.message };
@@ -3736,28 +3802,33 @@ const HrManager = () => {
       if (!email) return { success: false, error: 'You are not signed in. Please sign in again.' };
       // Decide create vs update from the server, not from modal state, so the
       // write always matches what the Firestore rules expect.
-      const snap = await getDoc(ref);
+      const clean = stripUndefined(payload);
+      const snap = await withTimeout(getDoc(ref));
       const isNew = !snap.exists();
       const data = {
-        ...payload,
-        consent: { ...payload.consent, recordedBy: email },
+        ...clean,
+        consent: { ...clean.consent, recordedBy: email },
         employeeId: employee.id,
         employeeName: employeeFullName(employee),
         employeeCode: employee.employeeCode || '',
         updatedAt: serverTimestamp(), updatedBy: email,
       };
-      if (isNew) await setDoc(ref, { ...data, createdAt: serverTimestamp(), createdBy: email });
-      else await updateDoc(ref, data);
+      if (isNew) await withTimeout(setDoc(ref, { ...data, createdAt: serverTimestamp(), createdBy: email }));
+      else await withTimeout(updateDoc(ref, data));
+      // Read it back from the SERVER so the form shows what is really stored (and proves the write landed).
+      const saved = await withTimeout(getDocFromServer(ref));
+      if (!saved.exists()) throw Object.assign(new Error('The record was not found after saving.'), { code: 'not-saved' });
       await logAudit(isNew ? 'Created background record' : 'Updated background record', employeeFullName(employee));
-      return { success: true };
+      return { success: true, data: saved.data() };
     } catch (err) {
       console.error('Save background record error:', err.code, err);
-      return {
-        success: false,
-        error: err.code === 'permission-denied'
-          ? 'Firestore refused this write (permission-denied). Publish the updated firestore.rules, and make sure your account has HR access (department HR, or hr write/edit permission) and is not suspended.'
-          : `Could not save (${err.code || 'error'}): ${err.message}`,
-      };
+      if (err.code === 'permission-denied') {
+        return {
+          success: false,
+          error: 'Firestore refused this write (permission-denied). Publish the updated firestore.rules, and make sure your account has HR access.\n\n' + await identityReport(),
+        };
+      }
+      return { success: false, error: err.code === 'timeout' ? err.message : `Could not save (${err.code || 'error'}): ${err.message}` };
     }
   }, [logAudit]);
 

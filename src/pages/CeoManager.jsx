@@ -66,6 +66,18 @@ const FEATURES = [
   { key: 'contracts',  label: 'Contracts & Agreements' },
 ];
 
+// Every portal in the app. The super admin (CEO) can open all of them without
+// any teamUsers profile or permission grant.
+const PORTALS = [
+  { label: 'Admin',                path: '/admin',             icon: '🛡️', blurb: 'Applications, hiring, contracts, letters.' },
+  { label: 'Human Resource',       path: '/hr-manager',        icon: '🧑‍💼', blurb: 'Employees, payroll, leave, recruitment.' },
+  { label: 'Accounts',             path: '/accounts-manager',  icon: '💰', blurb: 'Ledger, invoices, tax and compliance.' },
+  { label: 'Sales',                path: '/sales-manager',     icon: '📈', blurb: 'Leads, clients, campaigns, proposals.' },
+  { label: 'Secretary Workspace',  path: '/secretary-manager', icon: '🗂️', blurb: 'Records, notices, memos, appointments.' },
+  { label: "Worker's Log",         path: '/worker-log',        icon: '📝', blurb: 'Work logs, goals and self-service.' },
+  { label: 'All portals',          path: '/portals',           icon: '🚪', blurb: 'Portal directory.' },
+];
+
 const PERMISSIONS = ['read', 'write', 'edit', 'delete', 'approve'];
 const PERMISSION_LABELS = { read: 'Read', write: 'Write', edit: 'Edit', delete: 'Delete', approve: 'Approve' };
 
@@ -446,6 +458,8 @@ const RoleMatrixModal = ({ targetUser, onClose, onSave }) => {
       </div>
     </div>
   );
+};
+
 // ── Approved hires queue (Admin → HR → CEO) ──────────────────────────────────
 // The CEO is the LAST step: an applicant appears here as soon as the admin has approved them,
 // but "Create account" only unlocks once HR has created the employee profile + background record.
@@ -504,8 +518,6 @@ const HireQueue = ({ hires, onProvision }) => {
       })}
     </div>
   );
-};
-
 };
 
 // ─── Create User Modal ───────────────────────────────────────────────────────
@@ -984,7 +996,7 @@ const CeoManager = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard | users | contracts | audit
+  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard | users | contracts | audit | portals
 
   // Team users
   const [teamUsers, setTeamUsers] = useState([]);
@@ -1213,32 +1225,39 @@ const CeoManager = () => {
       }
       const { uid } = await res.json();
 
-      const teamUserData = {
-        name, email, department, role, level,
-        status: 'active',
-        permissions,
-        createdAt: serverTimestamp(),
-        createdBy: auth.currentUser?.email || 'unknown',
-        ...(hire ? { employeeId: hire.employeeId || null, applicationId: hire.applicationId || hire.id } : {}),
-      };
-      if (hire) {
-        // Login + pipeline hand-off commit together: the hire is "completed" exactly when the account exists.
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'teamUsers', uid), teamUserData);
-        batch.update(doc(db, HIRING_COLLECTION, hire.id), {
-          stage: HIRING_STAGES.COMPLETED,
-          teamUserUid: uid,
-          accountCreatedAt: serverTimestamp(),
-          accountCreatedBy: auth.currentUser?.email || 'unknown',
-        });
-        await batch.commit();
-        // Link the HR employee record to the new login (non-critical).
-        if (hire.employeeId) {
-          updateDoc(doc(db, 'employees', hire.employeeId), { teamUserUid: uid, portalAccess: true })
-            .catch(e => console.warn('Could not link employee to team account:', e));
+      try {
+        const teamUserData = {
+          name, email, department, role, level,
+          status: 'active',
+          permissions,
+          createdAt: serverTimestamp(),
+          createdBy: auth.currentUser?.email || 'unknown',
+          ...(hire ? { employeeId: hire.employeeId || null, applicationId: hire.applicationId || hire.id } : {}),
+        };
+        if (hire) {
+          // Login + pipeline hand-off commit together: the hire is "completed" exactly when the account exists.
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'teamUsers', uid), teamUserData);
+          batch.update(doc(db, HIRING_COLLECTION, hire.id), {
+            stage: HIRING_STAGES.COMPLETED,
+            teamUserUid: uid,
+            accountCreatedAt: serverTimestamp(),
+            accountCreatedBy: auth.currentUser?.email || 'unknown',
+          });
+          await batch.commit();
+          // Link the HR employee record to the new login (non-critical).
+          if (hire.employeeId) {
+            updateDoc(doc(db, 'employees', hire.employeeId), { teamUserUid: uid, portalAccess: true })
+              .catch(e => console.warn('Could not link employee to team account:', e));
+          }
+        } else {
+          await setDoc(doc(db, 'teamUsers', uid), teamUserData);
         }
-      } else {
-        await setDoc(doc(db, 'teamUsers', uid), teamUserData);
+
+      } catch (writeErr) {
+        // Don't leave an orphaned Auth login behind with no profile.
+        authFetch('/api/delete-user', { uid }).catch(e => console.warn('Rollback of Auth user failed:', e.message));
+        throw new Error('Login was created but the profile could not be saved (' + (writeErr.code || writeErr.message) + '). It has been rolled back — please try again.');
       }
 
       // Email the new hire their temporary password + portal link, the
@@ -1523,7 +1542,30 @@ const CeoManager = () => {
           <button style={{ ...s.dashTab, ...(activeTab === 'audit' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('audit')}>
             📜 Audit Log <span style={s.tabCount}>{auditLogs.length}</span>
           </button>
+          <button style={{ ...s.dashTab, ...(activeTab === 'portals' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('portals')}>
+            🚪 All Portals
+          </button>
         </div>
+
+        {/* ── All Portals tab (super-admin unrestricted access) ── */}
+        {activeTab === 'portals' && (
+          <>
+            <h2 style={s.sectionHead}>All Portals — Unrestricted Super Admin Access</h2>
+            <p style={{ ...s.pageSub, margin: '-6px 0 16px' }}>
+              As the super admin you can open every portal with full read / write / edit / delete / approve rights,
+              regardless of department or permission grants.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+              {PORTALS.map(p => (
+                <a key={p.path} href={p.path} style={{ ...gd.card, textAlign: 'left', textDecoration: 'none', borderTop: '3px solid #1A3C5E', display: 'block' }}>
+                  <div style={{ fontSize: 26 }}>{p.icon}</div>
+                  <p style={{ ...gd.cardLabel, margin: '8px 0 4px', color: '#1A3C5E' }}>{p.label}</p>
+                  <p style={gd.cardSub}>{p.blurb}</p>
+                </a>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* ── Global Dashboard tab ── */}
         {activeTab === 'dashboard' && (
