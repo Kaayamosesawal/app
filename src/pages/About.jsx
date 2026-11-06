@@ -11,26 +11,26 @@ const values = [
 const pillars = [
   {
     icon: 'fas fa-laptop-code',
-    name: 'Technology Hub',
+    name: 'Software Hub',
     tagline: 'Digital solutions & software',
     mandate: 'Delivers affordable, reliable, cutting-edge technology that helps businesses succeed in an increasingly competitive landscape.',
-    capabilities: ['Custom software development', 'Scalable digital platforms', 'Ongoing support & maintenance'],
+    capabilities: ['Custom software development', 'Post-dev maintenance'],
     serves: 'Businesses and institutions across Uganda',
   },
   {
-    icon: 'fas fa-coins',
-    name: 'Finance Hub',
-    tagline: 'Transactions & financial inclusion',
-    mandate: 'Builds the transaction and payment frameworks that extend financial access to businesses and communities.',
-    capabilities: ['Multi-channel transaction networks', 'Financial inclusion solutions', 'Transparent, accountable operations'],
-    serves: 'Merchants, agents and communities',
+    icon: 'fas fa-project-diagram',
+    name: ' IT support Hub',
+    tagline: 'Consultancy & services',
+    mandate: 'Operates frameworks that extend reliable support, services, and efficient solutions that help individuals and businesses succeed in digital ether.',
+    capabilities: ['Computer networking & Cybersecurity', 'IT consultancy'],
+    serves: 'Businesses, offices and homes',
   },
   {
     icon: 'fas fa-industry',
-    name: 'Industrial & Apparel Hub',
-    tagline: 'Production, supply & trade',
-    mandate: 'Runs modern apparel supply chains and trade operations that turn product and design into dependable supply.',
-    capabilities: ['Apparel & uniform production', 'Fashion and lifestyle products', 'Agricultural supply & general commerce'],
+    name: 'General Hub',
+    tagline: 'General commerce operations',
+    mandate: 'Participates in any lawful business operations unless industry license is required otherwise as in Health, Financial, and Manufacturing businesses.',
+    capabilities: ['All Trade operations'],
     serves: 'Institutions, retailers and consumers',
   },
 ];
@@ -394,7 +394,7 @@ const About = () => {
           </div>
           <h1>We are <span>Slirus</span> Global</h1>
           <p>
-            A multi-sector global company driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
+            A company looking forward to driving Uganda's digital transformation through technology, financial inclusion, and modern industry built on fresh thinking and professional execution.
           </p>
         </div>
       </div>
@@ -406,13 +406,13 @@ const About = () => {
             <p className="about-eyebrow-small">Our Profile</p>
             <h2 className="about-h2">Built to power Uganda's next economy</h2>
             <p>
-              Slirus Global Limited is a dynamic technology-led GLOBAL specializing in modern, high-performing digital solutions that empower businesses to succeed in an increasingly competitive landscape.
+              Slirus Global Limited is a dynamic technology-led company specializing in modern, high-performing digital solutions that empower businesses to succeed in an increasingly competitive landscape.
             </p>
             <p>
               Founded with a clear mission to deliver affordable, reliable, and cutting-edge technology without compromising on quality we combine technical expertise with fresh perspectives to understand each client's unique needs and transform them into scalable digital realities.
             </p>
             <p>
-              From custom software development to multi-channel transaction networks and modern apparel supply chains, Slirus builds the critical frameworks that empower businesses and communities across Uganda.
+              From custom software development to multi-channel transaction networks, Slirus builds the critical frameworks that empower businesses and communities across Uganda.
             </p>
           </div>
 
@@ -425,7 +425,7 @@ const About = () => {
             <div className="vm-card">
               <div className="vm-card-icon"><i className="fas fa-bullseye"></i></div>
               <h3>Our Mission</h3>
-              <p>To harness technology, drive trade, and transform communities by delivering software and digital solutions, fashion and lifestyle products, agricultural supply, and general commerce that are affordable, reliable, and built on fresh thinking and professional execution.</p>
+              <p>To harness technology, drive trade, and transform communities by delivering software and digital solutions that are affordable, reliable, and built on fresh thinking and professional execution.</p>
             </div>
           </div>
         </div>

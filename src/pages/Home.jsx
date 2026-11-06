@@ -539,7 +539,7 @@ const Home = () => {
             Building Uganda's <span>Digital Future</span>, One Solution at a Time
           </h1>
           <p className="hero-p">
-            Slirus Global Limited delivers custom software, financial services, and industry solutions that help businesses and institutions grow with confidence in a connected world.
+            Slirus Global Limited aims to deliver an inclusive solutions in Information Technology, financial services, and industry solutions that help businesses and institutions grow with confidence in a connected world.
           </p>
           <div className="hero-actions">
             <a href="/services" className="btn-primary">
@@ -577,7 +577,7 @@ const Home = () => {
           </div>
           <div className="about-text-block">
             <p className="section-eyebrow">About Slirus</p>
-            <h2 className="section-h2">A holding company built for Uganda's next chapter</h2>
+            <h2 className="section-h2">A company built for Uganda's next chapter</h2>
             <p>
               Slirus Global Limited is a multi-sector company anchoring Uganda's transition into a fully digitized, financially inclusive, and industrially self-reliant economy delivering cutting-edge solutions across technology, financial services, and fashion.
             </p>

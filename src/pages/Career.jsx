@@ -148,7 +148,7 @@ const InternCard = ({ track, isOpen, statusLoading }) => {
     <div className="intern-card">
       <div className="intern-card-header">
         <div className="intern-badge">
-          <i className="fas fa-star"></i> Paid Program
+          <i className="fas fa-star"></i> Learning-Based Program
         </div>
         <h3 className="intern-title">{track.title}</h3>
         <div className="intern-meta">
@@ -565,14 +565,13 @@ const Career = () => {
             <div className="no-openings">
               <div className="no-openings-icon"><i className="fas fa-door-open"></i></div>
               <span className="no-openings-badge">No Current Openings</span>
-              <h3>Great Things Are Coming — Your Future Could Start Here</h3>
+              <h3>Great Things Are Coming - Your Future Could Start Here</h3>
               <p>
                 We are not hiring at this moment, but Slirus Global Limited is growing fast across
-                technology, fashion, agriculture and trade. Exceptional people are always the heart
-                of what we build, and new roles and learning-based internships open regularly.
+                technology and trade. Exceptional people are always the heart of what we build, and new roles and learning-based internships open regularly.
               </p>
               <p>
-                Keep sharpening your skills, stay curious, and be ready — the next opportunity to
+                Keep sharpening your skills, stay curious, and be ready - the next opportunity to
                 join a driven, ambitious team could be just around the corner.
               </p>
               <div className="no-openings-points">
@@ -581,7 +580,7 @@ const Career = () => {
                 <span className="no-openings-point"><i className="fas fa-seedling"></i> Real room to grow</span>
               </div>
               <p className="no-openings-note">
-                <i className="fas fa-bell"></i> Please check back soon — new positions are posted here as soon as they open.
+                <i className="fas fa-bell"></i> Please check back soon - new positions are posted here as soon as they open.
               </p>
             </div>
           )}
@@ -609,7 +608,7 @@ const Career = () => {
               <p className="section-label" style={{ marginTop: openJobs.length > 0 ? '36px' : 0 }}>
                 <i className="fas fa-user-graduate"></i> Internship Program
               </p>
-              <h2 className="section-title">Paid Internship</h2>
+              <h2 className="section-title">Learning-Based Internship</h2>
 
               {openInternships.map((track) => (
                 <InternCard
