@@ -440,11 +440,16 @@ const Products = () => {
         <p>Stay connected with Slirus Global on WhatsApp and X for product updates, demos, and direct support from our team.</p>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap' }}>
           {/* TODO: replace "#" with the WhatsApp link */}
-          <a href="#" aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">
-            <i className="fab fa-whatsapp" style={{ fontSize: 22 }}></i>
-          </a>
+          <a 
+  href="https://wa.me/256783091635?text=Hello%2C%20I%20would%20like%20to%20get%20in%20touch" 
+  aria-label="WhatsApp" 
+  target="_blank" 
+  rel="noopener noreferrer"
+>
+  <i className="fab fa-whatsapp" style={{ fontSize: 22 }}></i>
+</a>
           {/* TODO: replace "#" with the X link */}
-          <a href="#" aria-label="X" target="_blank" rel="noopener noreferrer">
+          <a href="https://x.com/slirus_global/" aria-label="X" target="_blank" rel="noopener noreferrer">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>

@@ -699,7 +699,7 @@ const Home = () => {
         <h2>Check out Slirus Global</h2>
         <p>Follow Slirus Global on Instagram for updates, projects, and a closer look at how we are building Uganda's digital future.</p>
         {/* TODO: replace "#" with the Slirus Global Instagram link */}
-        <a href="#" aria-label="Instagram" target="_blank" rel="noopener noreferrer">
+        <a href="https://www.instagram.com/slirusglobal/" aria-label="Instagram" target="_blank" rel="noopener noreferrer">
           <i className="fab fa-instagram" style={{ fontSize: 22 }}></i>
         </a>
       </div>

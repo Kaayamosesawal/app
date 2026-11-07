@@ -529,11 +529,11 @@ const About = () => {
         <p>Connect with Slirus Global on LinkedIn and GitHub to explore partnerships, collaborations, and opportunities across software, finance, and other inquiries.</p>
         <div className="about-cta-btns">
           {/* TODO: replace "#" with the LinkedIn link */}
-          <a href="#" className="btn-white" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
+          <a href="https://www.linkedin.com/in/slirus-global-limited-216a17449/" className="btn-white" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
             <i className="fab fa-linkedin-in" style={{ fontSize: 22 }}></i>
           </a>
           {/* TODO: replace "#" with the GitHub link */}
-          <a href="#" className="btn-outline-white" aria-label="GitHub" target="_blank" rel="noopener noreferrer">
+          <a href="https://github.com/slirus-global/" className="btn-outline-white" aria-label="GitHub" target="_blank" rel="noopener noreferrer">
             <i className="fab fa-github" style={{ fontSize: 22 }}></i>
           </a>
         </div>
