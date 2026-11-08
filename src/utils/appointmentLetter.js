@@ -27,8 +27,8 @@ export const REPORTS_TO_OPTIONS = ['Manager', 'HoD'];
 // Official "Slirus Salary Structure" (moved here from HrManager.jsx so both pages share it).
 export const JOB_GRADES = [
   { code: 'SHR-G1', title: 'SHR-Support', level: 1, baseSalary: 150000, welfare: 80000, weeklyAllowance: 30000, bonuses: 0 },
-  { code: 'SHR-G2', title: 'SHR-Junior',  level: 2, baseSalary: 285000, welfare: 80000, weeklyAllowance: 60000, bonuses: 65000 },
-  { code: 'SHR-G3', title: 'SHR-Senior',  level: 3, baseSalary: 325000, welfare: 80000, weeklyAllowance: 90000, bonuses: 100000 },
+  { code: 'SHR-G2', title: 'SHR-Junior',  level: 2, baseSalary: 450000, welfare: 80000, weeklyAllowance: 60000, bonuses: 65000 },
+  { code: 'SHR-G3', title: 'SHR-Senior',  level: 3, baseSalary: 650000, welfare: 80000, weeklyAllowance: 90000, bonuses: 100000 },
 ];
 export const gradeByCode = (code) => JOB_GRADES.find((g) => g.code === code) || null;
 

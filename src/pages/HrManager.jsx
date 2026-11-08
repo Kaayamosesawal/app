@@ -14,13 +14,11 @@
  *  - Automated Lifecycle Management: contract pipeline — Active ➔ Expiring
  *    Soon (auto-flagged, banner alert) ➔ Renewed / Terminated / Resigned /
  *    Expired. Every transition is written to the employee's history.
- *  - Automated Payroll Engine: job-grade base pay + welfare + weekly
- *    allowance (paid 4x/month), less the employee's NSSF contribution (the
- *    company's matching NSSF contribution is tracked separately as an
- *    employer cost; bonuses are tracked per-grade but are not part of the
- *    standard payroll run, per the official Slirus Salary Structure), one-click
- *    monthly payroll run that generates immutable digital pay slips
- *    (duplicate-run safe).
+ *  - Automated Payroll Engine: each job grade is paid its basic salary (JOB_GRADES.baseSalary);
+ *    PAYE (2026 bands) and NSSF (5% employee / 10% employer) are computed on total gross cash
+ *    pay. Business running costs are NOT pay - they sit in Accounts' IT Operations budget.
+ *    One-click monthly run that generates immutable digital pay slips (duplicate-run safe),
+ *    hands the period's PAYE/NSSF liabilities to Accounts, and a branded Payroll Summary PDF.
  *  - Leave Management Workflow: HR logs/reviews requests; single-click
  *    Approve / Reject that automatically adjusts each employee's leave
  *    balance. Balances board included.
@@ -68,7 +66,7 @@ import { downloadEmploymentContract, downloadServiceAgreement } from '../utils/e
 // Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
 import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
 // Pay slips and payroll summaries use the shared Slirus letterhead (utils/pdfBrand.js) via financePdfs.js.
-import { downloadPayslipPdf } from '../utils/financePdfs';
+import { downloadPayslipPdf, downloadPayrollSummaryPdf } from '../utils/financePdfs';
 
 
 // ── Permission diagnostics (used only when a save is refused) ──────────────
@@ -194,23 +192,25 @@ const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (
 // JOB_GRADES (the salary table) is imported from utils/appointmentLetter.js — shared with Admin.jsx.
 
 // Uganda monthly PAYE bands, in force from 1 July 2026 (Income Tax (Amendment) Act 2026):
-//   0 – 335,000        0%
-//   335,001 – 410,000  10%
-//   410,001 – 485,000  25%
-//   485,001 – 10M      30%
-//   above 10M          30% + 10% surcharge = 40%
-// (The previous version of this function still used the pre-July-2026 20%/30% structure,
-// which under-/over-taxed anyone above UGX 410,000.) PAYE is charged on TOTAL monthly
-// cash pay (basic + every cash allowance); the employee's NSSF is NOT deductible for PAYE.
+//   0 - 335,000          nil
+//   335,001 - 410,000    20% of the excess over 335,000
+//   410,001 - 485,000    15,000 + 25% of the excess over 410,000
+//   485,001 - 10M        33,750 + 30% of the excess over 485,000
+//   above 10M            2,888,250 + 40% of the excess over 10M (30% + the 10% surcharge)
+// The 335,001-410,000 band is 20%, not 10%: the 2026 Act lifted the tax-free threshold from 235,000
+// to 335,000, which absorbed the OLD 10% band (235,000-335,000); it did not make the next band 10%.
+// Using 10% (and the matching 7,500 / 26,250 bases) under-withholds PAYE by UGX 7,500 a month for
+// every employee earning more than UGX 410,000 - i.e. SHR-G2 and SHR-G3. PAYE is charged on TOTAL
+// monthly cash pay (basic + every cash allowance); the employee's NSSF is NOT deductible for PAYE.
 // Re-confirm the bands against the URA PAYE schedule before each financial year.
 const computeTax = (gross) => {
   const g = Math.max(0, Number(gross) || 0);
   const bands = [
     { upTo: 335000,   rate: 0,    base: 0 },
-    { upTo: 410000,   rate: 0.10, base: 0 },
-    { upTo: 485000,   rate: 0.25, base: 7500 },
-    { upTo: 10000000, rate: 0.30, base: 26250 },
-    { upTo: Infinity, rate: 0.40, base: 2880750 },
+    { upTo: 410000,   rate: 0.20, base: 0 },
+    { upTo: 485000,   rate: 0.25, base: 15000 },
+    { upTo: 10000000, rate: 0.30, base: 33750 },
+    { upTo: Infinity, rate: 0.40, base: 2888250 },
   ];
   for (let i = 0; i < bands.length; i++) {
     const b = bands[i];
@@ -260,8 +260,9 @@ const gradeBreakdown = (grade) => {
 // because an unconditional monthly cash sum is "wages" for PAYE and NSSF whatever it is called.
 // If a cash allowance IS ever contractually payable, set the flag below: it is then added
 // to gross pay and attracts PAYE and NSSF like any other cash emolument.
-// Basic salary now follows the job grade (SHR-G1 150,000 / SHR-G2 285,000 / SHR-G3 325,000, from
-// JOB_GRADES.baseSalary). All three sit at or below the UGX 335,000 tax-free PAYE band, so PAYE is 0.
+// Basic salary follows the job grade (JOB_GRADES.baseSalary in utils/appointmentLetter.js:
+// SHR-G1 150,000 / SHR-G2 450,000 / SHR-G3 650,000). SHR-G1 is under the UGX 335,000 tax-free band
+// (PAYE 0); SHR-G2 and SHR-G3 are above it, so PAYE is withheld every month.
 const PAYROLL_CASH_ALLOWANCES_ENABLED = false;
 
 // Used by the payroll run, pay slips and the Salary Structure table. gradeBreakdown() above
@@ -3978,6 +3979,19 @@ const HrManager = () => {
     { label: 'Contract End', get: e => e.contractEnd ? fmtDate(e.contractEnd) : 'Open-ended' },
   ]));
 
+  // Branded Payroll Summary (same financePdfs.js document Accounts prints), built from the period's slips.
+  const exportPayrollSummaryPdf = () => {
+    const slips = payslips.filter(p => p.period === payrollPeriod);
+    if (!slips.length) { alert(`No pay slips for ${payrollPeriod} yet - run payroll first.`); return; }
+    const sum = (f) => slips.reduce((t, p) => t + (Number(f(p)) || 0), 0);
+    const totalGross = sum(p => p.grossPay), totalAllowances = sum(p => p.allowances), totalNSSFCompany = sum(p => p.nssfCompany);
+    downloadPayrollSummaryPdf({
+      period: payrollPeriod, employeeCount: slips.length, totalGross, totalAllowances,
+      totalPAYE: sum(p => p.taxAmount), totalNSSFEmployee: sum(p => p.otherDeductions), totalNSSFCompany,
+      totalNetPay: sum(p => p.netPay), totalCostToCompany: totalGross + totalAllowances + totalNSSFCompany,
+    }, slips).catch(err => alert('Could not build the payroll summary PDF: ' + err.message));
+  };
+
   const exportPayslipsCSV = () => downloadCSV(`slirus_payroll_${payrollPeriod}.csv`, toCSV(payslips.filter(p => p.period === payrollPeriod), [
     { label: 'Employee', get: p => p.employeeName },
     { label: 'Grade', get: p => p.jobGradeCode },
@@ -4226,7 +4240,7 @@ const HrManager = () => {
           <>
             <div style={{ marginBottom: 4 }}>
               <h2 style={{ ...s.sectionHead, margin: 0 }}>Slirus Salary Structure</h2>
-              <p style={{ ...s.pageSub, margin: '4px 0 14px' }}>Each grade is paid its own basic salary through payroll (G1 {fmtMoney(150000)}, G2 {fmtMoney(285000)}, G3 {fmtMoney(325000)}). PAYE and NSSF are computed on <strong>total gross cash pay</strong> (no NSSF ceiling). Business running costs are <strong>not</strong> pay: they sit in the shared IT Operations budget in Accounts and are paid to suppliers or reimbursed against receipts. PAYE bands are those in force from 1 July 2026 (tax-free up to UGX 335,000), so PAYE is UGX 0 at every grade's basic salary.</p>
+              <p style={{ ...s.pageSub, margin: '4px 0 14px' }}>Each grade is paid its own basic salary through payroll ({JOB_GRADES.map((g, i) => `${i ? ', ' : ''}${g.code.replace('SHR-', '')} ${fmtMoney(g.baseSalary)}`).join('')}). PAYE and NSSF are computed on <strong>total gross cash pay</strong> (no NSSF ceiling). Business running costs are <strong>not</strong> pay: they sit in the shared IT Operations budget in Accounts and are paid to suppliers or reimbursed against receipts. PAYE bands are those in force from 1 July 2026 (nil up to UGX 335,000, then 20% / 25% / 30% / 40%), so grades whose gross exceeds UGX 335,000 pay PAYE every month.</p>
             </div>
             <div style={s.tableWrap}>
               <table style={s.table}>
@@ -4280,6 +4294,7 @@ const HrManager = () => {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <input type="month" style={s.loginInput} value={payrollPeriod} onChange={e => setPayrollPeriod(e.target.value)} />
                 <button style={s.tab} onClick={exportPayslipsCSV}>⬇ Export CSV</button>
+                <button style={s.tab} onClick={exportPayrollSummaryPdf}>⬇ Payroll Summary PDF</button>
                 {canWrite && (
                   <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#059669' }} onClick={runPayroll} disabled={runningPayroll}>
                     {runningPayroll ? 'Running…' : '⚙ Run Payroll'}

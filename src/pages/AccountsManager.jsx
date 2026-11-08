@@ -60,7 +60,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { db, auth } from '../firebase/firebase';
 import {
-  collection, doc, setDoc, updateDoc, deleteDoc, addDoc,
+  collection, doc, setDoc, updateDoc, deleteDoc, addDoc, getDoc,
   onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -1480,6 +1480,15 @@ const OpsClaimModal = ({ usedFor, onClose, onSave }) => {
   );
 };
 
+// Fixed-id documents (payroll_<period>, remit_<period>, ops_<claimId>) must be written at most once.
+// The Firestore rules make journal entries and ledger rows immutable after creation, so re-running a
+// half-finished posting with setDoc() on an existing id would be an (denied) update. Skipping the write
+// when the document is already there makes a retry safe: it carries on from where it stopped.
+const setOnce = async (collectionName, id, data) => {
+  const ref = doc(db, collectionName, id);
+  if (!(await getDoc(ref)).exists()) await setDoc(ref, data);
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ─── Main Component ───────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2027,12 +2036,12 @@ const AccountsManager = () => {
     if (!isBalanced(lines)) throw new Error('The journal does not balance — nothing was posted.');
     const today = new Date().toISOString().slice(0, 10);
     const email = auth.currentUser?.email || 'unknown';
-    await setDoc(doc(db, 'journalEntries', `payroll_${run.period}`), {
+    await setOnce('journalEntries', `payroll_${run.period}`, {
       date: today, reference: `PAY-${run.period}`, memo: `Payroll ${run.period} — ${run.employeeCount} employee(s): salaries, PAYE and NSSF`,
       entryType: 'general', lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
     });
     // Deductible expense for the CIT engine: gross pay + the employer's NSSF (PAYE is part of gross).
-    await setDoc(doc(db, 'financeTransactions', `payroll_${run.period}`), {
+    await setOnce('financeTransactions', `payroll_${run.period}`, {
       date: today, type: 'Expense', object: ACCOUNTING_OBJECTS[5], category: EXPENSE_CATEGORIES[1],
       description: `Payroll ${run.period} (incl. employer NSSF)`, grossAmount: gross + nssfCo,
       vatTreatment: VAT_TREATMENTS[3], vatAmount: 0, whtWithheld: false, whtAmount: 0, whtCertificateNo: '',
@@ -2051,7 +2060,7 @@ const AccountsManager = () => {
     const L = (code, debit, credit) => ({ accountCode: code, accountName: acctName(code), debit, credit });
     const lines = [L('2100', paye, 0), L('2200', nssf, 0), L(cashAccountCode, 0, paye + nssf)].filter(l => l.debit > 0 || l.credit > 0);
     const email = auth.currentUser?.email || 'unknown';
-    await setDoc(doc(db, 'journalEntries', `remit_${run.period}`), {
+    await setOnce('journalEntries', `remit_${run.period}`, {
       date: new Date().toISOString().slice(0, 10), reference: `REM-${run.period}`,
       memo: `PAYE and NSSF remitted for ${run.period} — ref ${reference}`, entryType: 'general',
       lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
@@ -2087,11 +2096,11 @@ const AccountsManager = () => {
     ];
     const email = auth.currentUser?.email || 'unknown';
     const today = new Date().toISOString().slice(0, 10);
-    await setDoc(doc(db, 'journalEntries', `ops_${claim.id}`), {
+    await setOnce('journalEntries', `ops_${claim.id}`, {
       date: today, reference: claim.ref, memo: `${claim.category} — ${claim.description} (${claim.payee}, receipt ${claim.receiptRef})`,
       entryType: 'cash', lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
     });
-    await setDoc(doc(db, 'financeTransactions', `ops_${claim.id}`), {
+    await setOnce('financeTransactions', `ops_${claim.id}`, {
       date: today, type: 'Expense', object: ACCOUNTING_OBJECTS[0], category: cat.taxCategory,
       description: `${claim.category}: ${claim.description}`, grossAmount: claim.amount,
       vatTreatment: VAT_TREATMENTS[3], vatAmount: 0, whtWithheld: false, whtAmount: 0, whtCertificateNo: '',

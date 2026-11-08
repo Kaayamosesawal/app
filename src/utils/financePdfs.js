@@ -129,7 +129,13 @@ const startDoc = async ({ eyebrow, rightLines = [], landscape = false, footerNot
         pdf.setFont('helvetica', 'italic'); pdf.setFontSize(9); pdf.setTextColor(...GREY);
         ensure(8); pdf.text(safe(emptyText), PW / 2, y + 5, { align: 'center' }); y += 9;
       } else rows.forEach((r) => drawRow(r));
-      foot.forEach((r) => drawRow(r.cells || r, { bold: true, fill: r.fill || LIGHT }));
+      // A foot row is either a plain array of cells or { cells, fill }. NB: a plain array has a built-in
+      // .fill() METHOD, so `r.fill` must only be read from the object form; otherwise setFillColor(...fill)
+      // tries to spread a function and the PDF fails with "Spread syntax requires ...iterable".
+      foot.forEach((r) => {
+        const isCells = Array.isArray(r);
+        drawRow(isCells ? r : r.cells, { bold: true, fill: (!isCells && r.fill) || LIGHT });
+      });
       y += 4;
     },
     // Right-aligned summary lines: [[label, value, { bold, fill }]]
@@ -231,7 +237,7 @@ export const downloadPayrollSummaryPdf = async (d, payslips = []) => {
       { label: 'NSSF 5%', align: 'right', w: 1.3 }, { label: 'Net pay', align: 'right', w: 1.5 },
     ],
     rows: payslips.map((p) => [p.employeeName, p.jobGradeCode, money((Number(p.grossPay) || 0) + (Number(p.allowances) || 0)), money(p.taxAmount), money(p.otherDeductions), money(p.netPay)]),
-    foot: [['Total', '', money(d.totalGross), money(d.totalPAYE), money(d.totalNSSFEmployee), money(d.totalNetPay)]],
+    foot: [['Total', '', money((Number(d.totalGross) || 0) + (Number(d.totalAllowances) || 0)), money(d.totalPAYE), money(d.totalNSSFEmployee), money(d.totalNetPay)]],
   });
   doc.section('Amounts to remit and cost to company');
   doc.totals([
