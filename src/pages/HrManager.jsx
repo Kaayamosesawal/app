@@ -62,6 +62,9 @@ import {
 // HR can only DOWNLOAD it — the same PDF the applicant received by email. JOB_GRADES also lives in
 // that shared file now, so Admin and HR always quote the same salary.
 import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmployeeDraft } from '../utils/appointmentLetter';
+// The Contract of Employment is now a jsPDF document (same letterhead/layout as the appointment letter);
+// the termination-notice table is written as a statement.
+import { downloadEmploymentContract } from '../utils/employmentContract';
 // Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
 import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
 
@@ -313,18 +316,7 @@ const COMPANY_INFO = {
 
 const ID_CARD_VALIDITY_YEARS = 1;
 
-// General reference only — not legal advice. Termination notice periods
-// commonly applied under Uganda's Employment Act, 2006 scale with length of
-// continuous service. Confirm current figures with a qualified labour-law
-// advisor before relying on this for an actual contract.
-const NOTICE_PERIOD_TABLE = [
-  { tenure: 'Less than 6 months', notice: '2 weeks' },
-  { tenure: '6 months – 1 year', notice: '1 month' },
-  { tenure: '1 – 5 years', notice: '2 months' },
-  { tenure: '5 – 10 years', notice: '3 months' },
-  { tenure: 'More than 10 years', notice: '6 months' },
-];
-const DEFAULT_PROBATION_MONTHS = 6; // statutory maximum for a single probation period
+// Termination notice periods and DEFAULT_PROBATION_MONTHS now live in utils/employmentContract.js / appointmentLetter.js.
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmtDate = (ts) => {
@@ -487,79 +479,8 @@ const openPrintWindow = (title, bodyHtml) => {
 // print window (which starts blank, not at the app's route).
 const logoImgTag = () => `<img class="logo" src="${window.location.origin}${COMPANY_INFO.logo}" alt="${COMPANY_INFO.name} logo" onerror="this.style.display='none'" />`;
 
-// ─── Standard Contract of Employment (Uganda Employment Act, 2006 reference) ──
-// This is a general-purpose starting template, not a substitute for legal
-// review. Fields pulled from the employee record are filled in automatically,
-// including place of work and HFB bank account number; blank underscored
-// spaces are left only for details this system doesn't capture (reporting
-// line, special conditions) and for wet-ink signing.
-const buildContractHtml = (employee) => {
-  const grade = gradeByCode(employee.jobGradeCode);
-  const name = employeeFullName(employee);
-  const probationClause = employee.contractType === 'Probation'
-    ? `<p class="clause">The Employee shall serve an initial probationary period of <span class="blank">${DEFAULT_PROBATION_MONTHS} months</span> from the Commencement Date, during which either party may terminate this Contract by giving <span class="blank">2 weeks'</span> written notice. The Employer may, by written agreement with the Employee, extend the probationary period once, provided the total probationary period does not exceed six (6) months, in line with the Employment Act, 2006.</p>`
-    : '';
-
-  return `
-    <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-      <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(employee.contractStart || employee.hireDate)}</p>
-    </div>
-    <h2>Contract of Employment</h2>
-
-    <p class="clause">THIS CONTRACT OF EMPLOYMENT is made between <strong>${COMPANY_INFO.name}</strong> of ${COMPANY_INFO.address} (<strong>"the Employer"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Employee"</strong>), and made in accordance with the Employment Act, 2006 of the Republic of Uganda and its subsidiary regulations.</p>
-
-    <h3>1. Position &amp; Duties</h3>
-    <p class="clause">The Employee is engaged as <strong>${employee.position || '[Job Title]'}</strong> in the <strong>${employee.department}</strong> department, Job Grade <strong>${grade ? `${grade.code} – ${grade.title}` : '[Grade]'}</strong>, reporting to the <strong>${employee.reportsTo || '[Manager/HoD]'}</strong>. The Employee shall perform the duties of this position and any other reasonable duties assigned by the Employer from time to time.</p>
-
-    <h3>2. Commencement &amp; Duration</h3>
-    <p class="clause">This Contract commences on <strong>${fmtDate(employee.contractStart || employee.hireDate)}</strong> and is a <strong>${employee.contractType || '[Contract Type]'}</strong> contract${employee.contractEnd ? `, ending on <strong>${fmtDate(employee.contractEnd)}</strong> unless renewed or lawfully terminated earlier` : ', continuing until lawfully terminated by either party in accordance with Clause 6'}.</p>
-    ${probationClause}
-
-    <h3>3. Place of Work</h3>
-    <p class="clause">The Employee's normal place of work shall be ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}, or such other location as the Employer may reasonably require within the Republic of Uganda.</p>
-
-    <h3>4. Hours of Work</h3>
-    <p class="clause">The Employee shall work <strong>48 hours</strong> per week, from <strong>9:00 AM to 5:00 PM</strong>, with breaktime for breakfast at <strong>11:00 AM</strong> and lunch at <strong>1:00 PM</strong>, and at least one rest day per week, in accordance with the Employment Act, 2006.</p>
-
-    <h3>5. Remuneration</h3>
-    <p class="clause">The Employee shall be paid a gross monthly salary of <strong>${fmtMoney(grade?.baseSalary)}</strong> (Job Grade ${grade?.code || '—'}), payable monthly in arrears by bank transfer to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>, subject to statutory deductions including PAYE and NSSF contributions.</p>
-
-    <h3>6. Leave Entitlement</h3>
-    <p class="clause">The Employee is entitled to twenty-one (21) working days of paid annual leave for each period of twelve (12) months' continuous service, in addition to public holidays. Sick leave, maternity/paternity leave, and compassionate leave shall be granted in accordance with the Employment Act, 2006 and the Employer's leave policy.</p>
-
-    <h3>7. Termination &amp; Notice</h3>
-    <p class="clause">Either party may terminate this Contract by giving written notice according to the Employee's length of continuous service, or payment in lieu of notice:</p>
-    <table class="ref">
-      <thead><tr><th>Length of Continuous Service</th><th>Minimum Notice Period</th></tr></thead>
-      <tbody>${NOTICE_PERIOD_TABLE.map(r => `<tr><td>${r.tenure}</td><td>${r.notice}</td></tr>`).join('')}</tbody>
-    </table>
-    <p class="clause">The Employer may summarily dismiss the Employee without notice for gross misconduct, as defined under the Employment Act, 2006.</p>
-
-    <h3>8. Confidentiality &amp; Code of Conduct</h3>
-    <p class="clause">The Employee shall not, during or after employment, disclose any confidential business, financial, or client information belonging to the Employer, and shall abide by the Employer's code of conduct and policies as amended from time to time.</p>
-
-    <h3>9. Governing Law</h3>
-    <p class="clause">This Contract is governed by the laws of the Republic of Uganda, including the Employment Act, 2006, the Employment (Standard Wage) Order, and the NSSF Act, as amended.</p>
-
-    <h3>10. Special Conditions</h3>
-    <p class="clause" style="white-space:pre-wrap; direction:ltr; text-align:left; unicode-bidi:plaintext;">${(employee.specialConditions && employee.specialConditions.trim())
-        ? employee.specialConditions
-        : '<span class="blank" style="min-width:100%;display:block;height:20px;margin-bottom:6px;">&nbsp;</span><span class="blank" style="min-width:100%;display:block;height:20px;">&nbsp;</span>'
-      }</p>
-
-    <div class="sigblock">
-      <div class="sigcol"><div class="sigline">Signed for and on behalf of the Employer &nbsp;&nbsp; Name: __________________ &nbsp; Date: __________</div></div>
-      <div class="sigcol"><div class="sigline">Signed by the Employee &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
-    </div>
-    <div class="sigblock">
-      <div class="sigcol"><div class="sigline">Witness Name: __________________ &nbsp; Signature: __________</div></div>
-      <div class="sigcol"></div>
-    </div>
-
-    <div class="footerNote">This document is a general-purpose contract template generated from HR system records. It is not a substitute for review by a qualified legal/HR advisor before use, and should be adapted to the specific role and any collective agreements in force.</div>
-  `;
-};
+// ─── Contract of Employment ─────────────────────────────────────────────────
+// Generated as a PDF by downloadEmploymentContract() in utils/employmentContract.js.
 
 // ─── Letter of Appointment ──────────────────────────────────────────────────
 // Not generated here any more: Admin.jsx creates it (and emails it to the applicant);
@@ -619,7 +540,7 @@ const buildInternshipPlacementLetterHtml = (employee) => {
 // ─── Independent Service and Task Execution Agreement ──────────────────────
 // For engagementType === 'Independent Contractor'. Deliberately mirrors the
 // structure, data sourcing, and print/download pipeline of
-// buildContractHtml() (same letterhead, clause numbering style, signature
+// the Contract of Employment (same letterhead, clause numbering style, signature
 // block, footer disclaimer) so the two document types feel like siblings —
 // but every clause is written to support a principal-to-principal service
 // relationship rather than a statutory employment relationship. It never
@@ -3628,6 +3549,12 @@ const HrManager = () => {
     catch (err) { alert('Could not build the letter PDF: ' + err.message); }
   }, [findLetter]);
 
+  // Contract of Employment: built from the employee record as a PDF (same style as the appointment letter).
+  const handleDownloadContract = useCallback(async (emp) => {
+    try { await downloadEmploymentContract(emp); }
+    catch (err) { alert('Could not build the contract PDF: ' + err.message); }
+  }, []);
+
   // Placement letter: the issued PDF (identical to the emailed one) when Admin has created it;
   // otherwise falls back to the HR-generated printable version so nothing is blocked.
   const handleDownloadPlacement = useCallback(async (emp) => {
@@ -4201,7 +4128,7 @@ const HrManager = () => {
                               <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Placement Letter</button>
                             ) : (
                               <>
-                                <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Contract</button>
+                                <button style={s.btnShortlist} onClick={() => handleDownloadContract(e)}>Contract</button>
                                 <button
                                   style={{ ...s.btnShortlist, ...(findLetter(e) ? null : { opacity: 0.5, cursor: 'not-allowed' }) }}
                                   disabled={!findLetter(e)}
@@ -4271,7 +4198,7 @@ const HrManager = () => {
                             ) : isInternContract(e.contractType) ? (
                               <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Document</button>
                             ) : (
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}>Document</button>
+                              <button style={s.btnShortlist} onClick={() => handleDownloadContract(e)}>Document</button>
                             )}
                             {canWrite && e._status !== 'terminated' && e._status !== 'resigned' && (
                               <>
@@ -4524,7 +4451,7 @@ const HrManager = () => {
           onEdit={(e) => { setProfileTarget(null); setEditingEmployee(e); setShowEmployeeForm(true); }}
           onIdCard={(e) => { setIdCardTarget(e); }}
           onFamilyRecord={(e) => setFamilyTarget(e)}
-          onDownloadContract={(e) => openPrintWindow(`Contract of Employment — ${employeeFullName(e)}`, buildContractHtml(e))}
+          onDownloadContract={(e) => handleDownloadContract(e)}
           onDownloadAppointmentLetter={handleDownloadLetter}
           appointmentLetter={findLetter(profileTarget)}
           onDownloadPlacementLetter={(e) => handleDownloadPlacement(e)}
