@@ -47,8 +47,8 @@
  *    balanced journal (Dr Salaries + employer NSSF; Cr PAYE payable, NSSF payable,
  *    Bank) and as a deductible Tax Ledger expense, then tracked to remittance
  *    (PAYE + NSSF due by the 15th of the following month).
- *  - IT Operations Budget: the UGX 440,000 monthly business-expense budget is a shared
- *    company budget, NOT staff pay. Claims need a receipt reference, are approved,
+ *  - IT Operations Budget: the UGX 1,200,000 monthly business-expense budget (six categories,
+ *    UGX 200,000 ceiling each) is a shared company budget, NOT staff pay. Claims need a receipt reference, are approved,
  *    then paid to a supplier or reimbursed against actual spend, and post to the books.
  *
  *  - Harmonised workflow: every money movement lands in BOTH the Tax Ledger (CIT engine) and
@@ -246,15 +246,16 @@ const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'overdue', 'void'];
 // A SHARED company budget (not per employee, not pay). The ceilings are spending limits,
 // not entitlements: unspent money stays with the company. Each category posts to its own
 // expense account and, when paid, to the Tax Ledger as a deductible expense.
+const OPS_CATEGORY_CEILING = 200000; // monthly spending limit for EACH of the six categories
 const OPS_BUDGET = [
-  { key: 'internet',  label: 'Official internet and data expenses',               ceiling: 70000,  accountCode: '5300', taxCategory: 'Rent & Utilities' },
-  { key: 'transport', label: 'Client-site transport and field operations',        ceiling: 100000, accountCode: '5600', taxCategory: 'Transport & Logistics' },
-  { key: 'software',  label: 'Software, cloud and technical subscriptions',       ceiling: 80000,  accountCode: '5700', taxCategory: 'Other Operating Expense' },
-  { key: 'equipment', label: 'IT equipment maintenance and accessories',          ceiling: 100000, accountCode: '5800', taxCategory: 'Other Operating Expense' },
-  { key: 'comms',     label: 'Official communication and technical coordination', ceiling: 40000,  accountCode: '5310', taxCategory: 'Other Operating Expense' },
-  { key: 'supplies',  label: 'Approved operational supplies',                     ceiling: 50000,  accountCode: '5400', taxCategory: 'Office Supplies & Minor Equipment (<1M, immediate write-off)' },
+  { key: 'internet',  label: 'Official internet and data expenses',               ceiling: OPS_CATEGORY_CEILING,  accountCode: '5300', taxCategory: 'Rent & Utilities' },
+  { key: 'transport', label: 'Client-site transport and field operations',        ceiling: OPS_CATEGORY_CEILING, accountCode: '5600', taxCategory: 'Transport & Logistics' },
+  { key: 'software',  label: 'Software, cloud and technical subscriptions',       ceiling: OPS_CATEGORY_CEILING,  accountCode: '5700', taxCategory: 'Other Operating Expense' },
+  { key: 'equipment', label: 'IT equipment maintenance and accessories',          ceiling: OPS_CATEGORY_CEILING, accountCode: '5800', taxCategory: 'Other Operating Expense' },
+  { key: 'comms',     label: 'Official communication and technical coordination', ceiling: OPS_CATEGORY_CEILING,  accountCode: '5310', taxCategory: 'Other Operating Expense' },
+  { key: 'supplies',  label: 'Approved operational supplies',                     ceiling: OPS_CATEGORY_CEILING,  accountCode: '5400', taxCategory: 'Office Supplies & Minor Equipment (<1M, immediate write-off)' },
 ];
-const OPS_BUDGET_TOTAL = OPS_BUDGET.reduce((t, c) => t + c.ceiling, 0); // 440,000
+const OPS_BUDGET_TOTAL = OPS_BUDGET.reduce((t, c) => t + c.ceiling, 0); // 6 × 200,000 = 1,200,000
 const opsCategory = (label) => OPS_BUDGET.find(c => c.label === label) || null;
 const OPS_PAYMENT_ROUTES = ['Paid directly to supplier', 'Employee reimbursement (actual spend)'];
 const CLAIM_STATUS_TONE = { pending: 'amber', approved: 'blue', paid: 'green', rejected: 'gray' };
@@ -1646,14 +1647,16 @@ const postInvoiceRevenue = async (list, invoice) => {
 };
 
 // Contractor voucher paid: Dr Contractor Fees (gross), Cr WHT Payable, Cr Bank (net) + deductible Tax Ledger expense.
-const postVoucherJournal = async (list, v, name, cashCode, reference) => {
+const postVoucherJournal = async (list, v, name, cashCode, reference, postDate) => {
   const gross = Math.round(Number(v.amount) || 0);
   const wht = v.whtWithheld ? Math.round(Number(v.whtAmount) || 0) : 0;
   const lines = keepLines([mkLine(list, ACCT.CONTRACTOR, gross, 0), mkLine(list, ACCT.WHT_PAYABLE, 0, wht), mkLine(list, cashCode, 0, gross - wht)]);
   if (!isBalanced(lines)) throw new Error('The voucher journal does not balance — nothing was posted.');
   await ensureBookAccounts(list, [cashCode, ...lines.map(l => l.accountCode)]);
   const email = auth.currentUser?.email || 'unknown';
-  const date = dateStrOf(v.date);
+  // Both postings use the SAME date — the day the voucher was paid — so the Tax Ledger, the books and the
+  // fiscal year they fall in can never disagree.
+  const date = dateStrOf(postDate || v.paidDate || v.date);
   await setOnce('journalEntries', `voucher_${v.id}`, {
     date, reference: v.ref || `PV-${v.id.slice(0, 6)}`,
     memo: `Contractor voucher — ${name} (${v.voucherType})${v.taskDescription ? ': ' + v.taskDescription : ''}${reference ? ' · ref ' + reference : ''}`,
@@ -2445,22 +2448,23 @@ const AccountsManager = () => {
     const cat = opsCategory(claim.category);
     if (!cat) throw new Error('Unknown budget category on this claim.');
     await ensureAccounts([cat.accountCode]);
+    const claimAmount = Math.round(Number(claim.amount) || 0);
     const lines = [
-      { accountCode: cat.accountCode, accountName: acctName(cat.accountCode), debit: claim.amount, credit: 0 },
-      { accountCode: cashAccountCode, accountName: acctName(cashAccountCode), debit: 0, credit: claim.amount },
+      { accountCode: cat.accountCode, accountName: acctName(cat.accountCode), debit: claimAmount, credit: 0 },
+      { accountCode: cashAccountCode, accountName: acctName(cashAccountCode), debit: 0, credit: claimAmount },
     ];
     const email = auth.currentUser?.email || 'unknown';
     const today = new Date().toISOString().slice(0, 10);
     await setOnce('journalEntries', `ops_${claim.id}`, {
       date: today, reference: claim.ref, memo: `${claim.category} — ${claim.description} (${claim.payee}, receipt ${claim.receiptRef})`,
-      entryType: 'cash', lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
+      entryType: 'cash', lines, status: 'posted', sourceClaimId: claim.id, createdBy: email, createdAt: serverTimestamp(),
     });
     await setOnce('financeTransactions', `ops_${claim.id}`, {
       date: today, type: 'Expense', object: ACCOUNTING_OBJECTS[0], category: cat.taxCategory,
       description: `${claim.category}: ${claim.description}`, grossAmount: claim.amount,
       vatTreatment: VAT_TREATMENTS[3], vatAmount: 0, whtWithheld: false, whtAmount: 0, whtCertificateNo: '',
       counterpartyName: claim.payee, counterpartyTIN: '', paymentMethod: PAYMENT_METHODS[0],
-      ref: claim.ref, receiptRef: claim.receiptRef, sourceClaimId: claim.id, createdAt: serverTimestamp(), createdBy: email,
+      ref: claim.ref, receiptRef: claim.receiptRef, sourceClaimId: claim.id, booksPosted: true, createdAt: serverTimestamp(), createdBy: email,
     });
     await updateDoc(doc(db, 'opsExpenseClaims', claim.id), { status: 'paid', paidAt: serverTimestamp(), paidBy: email, paymentRef: reference || '', cashAccountCode });
     await logAudit('Paid business expense', claim.ref, `${fmtMoney(claim.amount)} · ${claim.payee}`);
@@ -2478,9 +2482,12 @@ const AccountsManager = () => {
   const handlePayVoucher = useCallback(async (v, { cashAccountCode, reference }) => {
     if (voucherStatusOf(v) !== 'approved') throw new Error('Only approved vouchers can be paid.');
     const name = contractorNameOf(employees, v.contractorId);
-    await postVoucherJournal(accountsRef.current, v, name, cashAccountCode, reference);
+    const paidDate = new Date().toISOString().slice(0, 10);
+    // One action posts all three places: Tax Ledger expense + double-entry journal (which feeds the Income
+    // Statement, Balance Sheet and Cash Flow). Fixed document ids make a retry safe if it stops half-way.
+    await postVoucherJournal(accountsRef.current, v, name, cashAccountCode, reference, paidDate);
     await updateDoc(doc(db, 'contractorVouchers', v.id), {
-      status: 'paid', booksPosted: true, paidAt: serverTimestamp(), paidBy: auth.currentUser?.email || 'unknown',
+      status: 'paid', booksPosted: true, paidDate, paidAt: serverTimestamp(), paidBy: auth.currentUser?.email || 'unknown',
       paymentRef: reference || '', cashAccountCode,
     });
     await logAudit('Paid contractor voucher', v.ref || v.id, `${fmtMoney(v.amount)} · ${name}`);
@@ -2547,10 +2554,37 @@ const AccountsManager = () => {
     } catch (err) { alert('Could not post depreciation: ' + err.message); }
   }, [depPending, logAudit]);
 
+  // Three-way check for every PAID voucher: Tax Ledger row ↔ double-entry journal ↔ voucher amount.
+  // `missing` pieces can be re-posted safely by "Sync to books"; `mismatch` ones need a manual look.
+  const voucherIntegrity = useMemo(() => {
+    const ledgerById = new Map(transactions.map(t => [t.id, t]));
+    const journalById = new Map(journalEntries.map(e => [e.id, e]));
+    const out = {};
+    vouchers.filter(v => voucherStatusOf(v) === 'paid').forEach(v => {
+      const row = ledgerById.get(`voucher_${v.id}`);
+      const je = journalById.get(`voucher_${v.id}`);
+      const gross = Math.round(Number(v.amount) || 0);
+      const missing = [], mismatch = [];
+      if (!row) missing.push('Tax Ledger');
+      if (!je) missing.push('Double-Entry Books');
+      if (row && Math.round(Number(row.grossAmount) || 0) !== gross) mismatch.push('Tax Ledger amount');
+      if (je) {
+        if (je.status === 'void') mismatch.push('journal is void');
+        else {
+          if (!isBalanced(je.lines || [])) mismatch.push('journal does not balance');
+          const booked = (je.lines || []).filter(l => l.accountCode === ACCT.CONTRACTOR).reduce((t, l) => t + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
+          if (Math.round(booked) !== gross) mismatch.push('books amount');
+        }
+      }
+      if (missing.length || mismatch.length) out[v.id] = { missing, mismatch };
+    });
+    return out;
+  }, [transactions, journalEntries, vouchers]);
+
   const pendingSync = useMemo(() => {
     const txns = transactions.filter(t => !t.booksPosted && !isSystemTxn(t));
     const inv = invoices.filter(i => ['sent', 'paid', 'overdue'].includes(i.status) && !i.revenuePosted);
-    const vch = vouchers.filter(v => voucherStatusOf(v) === 'paid' && !v.booksPosted);
+    const vch = vouchers.filter(v => voucherStatusOf(v) === 'paid' && (!v.booksPosted || voucherIntegrity[v.id]?.missing.length > 0));
     const div = dividends.filter(d => !d.booksPosted);
     const ast = fixedAssets.filter(a => !a.booksPosted);
     const lns = loans.filter(l => (!l.drawdownPosted && Number(l.principal) > 0)
@@ -2558,7 +2592,7 @@ const AccountsManager = () => {
         || (l.outstandingBalance !== '' && l.outstandingBalance != null && Math.round(Number(l.bookedOutstanding ?? l.principal) || 0) - Math.round(Number(l.outstandingBalance) || 0) >= 1))));
     const dep = depPending;
     return { txns, inv, vch, div, ast, lns, dep, total: txns.length + inv.length + vch.length + div.length + ast.length + lns.length + dep.length };
-  }, [transactions, invoices, vouchers, dividends, fixedAssets, loans, depPending]);
+  }, [transactions, invoices, vouchers, dividends, fixedAssets, loans, depPending, voucherIntegrity]);
 
   const handleSyncBooks = useCallback(async () => {
     const { txns, inv, vch, div, ast, lns, dep, total } = pendingSync;
@@ -2583,7 +2617,7 @@ const AccountsManager = () => {
       await updateDoc(doc(db, 'financeTransactions', t.id), { booksPosted: true, journalId: jid });
     });
     for (const v of vch) await attempt(`Voucher ${v.ref || v.id}`, async () => {
-      await postVoucherJournal(list, v, contractorNameOf(employees, v.contractorId), cashCode, v.paymentRef || '');
+      await postVoucherJournal(list, v, contractorNameOf(employees, v.contractorId), cashCode, v.paymentRef || '', v.paidDate || v.paidAt || v.date);
       await updateDoc(doc(db, 'contractorVouchers', v.id), { booksPosted: true });
     });
     for (const d of div) await attempt(`Dividend ${d.shareholder}`, () => postDividendJournal(list, d, cashCode));
@@ -2613,7 +2647,13 @@ const AccountsManager = () => {
     const depPendingTotal = depPending.reduce((t, d) => t + d.diff, 0);
     const expectedExpense = ledgerExpense - unsyncedExpense + depBooked;
     const paidVouchers = vouchers.filter(v => voucherStatusOf(v) === 'paid');
+    const voucherJournals = journalEntries.filter(e => e.status !== 'void' && e.sourceVoucherId);
+    const voucherLedgerTotal = sum(transactions.filter(t => t.sourceVoucherId), t => t.grossAmount);
+    const voucherBooksExpense = voucherJournals.reduce((t, e) => t + (e.lines || []).filter(l => l.accountCode === ACCT.CONTRACTOR).reduce((x, l) => x + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0), 0);
+    const voucherBooksWht = voucherJournals.reduce((t, e) => t + (e.lines || []).filter(l => l.accountCode === ACCT.WHT_PAYABLE).reduce((x, l) => x + (Number(l.credit) || 0) - (Number(l.debit) || 0), 0), 0);
+    const voucherWhtTotal = sum(paidVouchers.filter(v => v.whtWithheld), v => v.whtAmount);
     return {
+      voucherLedgerTotal, voucherBooksExpense, voucherBooksWht, voucherWhtTotal,
       ledgerIncome, ledgerExpense, unsyncedIncome, unsyncedExpense, accruedUnpaid, expectedRevenue, expectedExpense, depBooked, depPendingTotal,
       revenueDiff: incomeStatement.totalRevenue - expectedRevenue, expenseDiff: incomeStatement.totalExpenses - expectedExpense,
       paidVoucherCount: paidVouchers.length, paidVoucherTotal: sum(paidVouchers, v => v.amount),
@@ -3228,7 +3268,14 @@ const AccountsManager = () => {
                 <div style={{ margin: '10px 0 22px' }}>{agrees(R.expenseDiff) ? <Badge text="✓ Expenses agree" tone="green" /> : <Badge text={`Unexplained difference ${fmtMoney(R.expenseDiff)} — likely a journal entry posted directly in the books`} tone="red" />}</div>
 
                 <h3 style={{ ...s.sectionHead, margin: 0 }}>Included &amp; tax-only items</h3>
-                <Row label={`Paid contractor vouchers in expenses (${R.paidVoucherCount})`} value={R.paidVoucherTotal} />
+                <Row label={`Paid contractor vouchers (${R.paidVoucherCount}) — voucher register`} value={R.paidVoucherTotal} />
+                <Row label="Voucher expense in the Tax Ledger" value={R.voucherLedgerTotal} />
+                <Row label="Voucher expense in the books (5100 Contractor Fees)" value={R.voucherBooksExpense} />
+                <Row label="6% WHT withheld on vouchers — register vs books (2600 WHT Payable)" value={R.voucherWhtTotal} />
+                <Row label="WHT Payable posted to the books for vouchers" value={R.voucherBooksWht} />
+                <div style={{ margin: '10px 0 22px' }}>{(Object.keys(voucherIntegrity).length === 0 && agrees(R.paidVoucherTotal - R.voucherLedgerTotal) && agrees(R.paidVoucherTotal - R.voucherBooksExpense) && agrees(R.voucherWhtTotal - R.voucherBooksWht))
+                  ? <Badge text="✓ Paid vouchers agree across the register, Tax Ledger, books and statements" tone="green" />
+                  : <Badge text={`${Object.keys(voucherIntegrity).length} paid voucher(s) not fully posted or not agreeing — use Sync to books, then re-check`} tone="red" />}</div>
                 <Row label={`Capital allowances FY ${citSummary.label} (CIT sheet)`} value={citSummary.totalDepreciation} />
                 <Row label="Depreciation still to post to the books (all years)" value={R.depPendingTotal} />
                 <p style={{ fontSize: 12, color: '#9AAAB8', marginTop: 12, lineHeight: 1.6 }}>
@@ -3359,8 +3406,9 @@ const AccountsManager = () => {
                           <td style={s.td}>{v.taskDescription}</td>
                           <td style={s.td}>
                             <Badge text={voucherStatusOf(v)} tone={VOUCHER_STATUS_TONE[voucherStatusOf(v)] || 'gray'} />
-                            {v.booksPosted && voucherStatusOf(v) === 'paid' && <div style={{ fontSize: 11, color: '#065F46', marginTop: 3 }}>✓ In books &amp; Tax Ledger</div>}
-                            {!v.booksPosted && voucherStatusOf(v) === 'paid' && <div style={{ fontSize: 11, color: '#92400E', marginTop: 3 }}>⚠ Not in books — use Sync</div>}
+                            {voucherStatusOf(v) === 'paid' && !voucherIntegrity[v.id] && v.booksPosted && <div style={{ fontSize: 11, color: '#065F46', marginTop: 3 }}>✓ In Tax Ledger, books &amp; statements</div>}
+                            {voucherStatusOf(v) === 'paid' && (!v.booksPosted || voucherIntegrity[v.id]?.missing.length > 0) && <div style={{ fontSize: 11, color: '#92400E', marginTop: 3 }}>⚠ Missing from {(voucherIntegrity[v.id]?.missing.length ? voucherIntegrity[v.id].missing : ['Tax Ledger', 'Double-Entry Books']).join(' &amp; ')} — use Sync</div>}
+                            {voucherStatusOf(v) === 'paid' && voucherIntegrity[v.id]?.mismatch.length > 0 && <div style={{ fontSize: 11, color: '#B91C1C', marginTop: 3 }}>✗ Mismatch: {voucherIntegrity[v.id].mismatch.join(', ')}</div>}
                           </td>
                           <td style={s.td}>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
