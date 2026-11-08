@@ -62,9 +62,9 @@ import {
 // HR can only DOWNLOAD it — the same PDF the applicant received by email. JOB_GRADES also lives in
 // that shared file now, so Admin and HR always quote the same salary.
 import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmployeeDraft } from '../utils/appointmentLetter';
-// The Contract of Employment is now a jsPDF document (same letterhead/layout as the appointment letter);
+// The Contract of Employment and the Service Agreement are now jsPDF documents (same letterhead/layout as the appointment letter);
 // the termination-notice table is written as a statement.
-import { downloadEmploymentContract } from '../utils/employmentContract';
+import { downloadEmploymentContract, downloadServiceAgreement } from '../utils/employmentContract';
 // Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
 import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
 
@@ -548,84 +548,8 @@ const buildInternshipPlacementLetterHtml = (employee) => {
 // annual/sick leave, PAYE, NSSF, or overtime; fees are framed as a weekly
 // operational token plus a monthly project completion balance, derived from
 // the same grade record so figures never drift from the salary structure.
-const buildServiceAgreementHtml = (employee) => {
-  const grade = gradeByCode(employee.jobGradeCode);
-  const bd = gradeBreakdown(grade);
-  const name = employeeFullName(employee);
-  const startDate = employee.contractStart || employee.hireDate;
-  const start = toDateObj(startDate);
-  const computedEnd = start ? new Date(start.getFullYear(), start.getMonth() + SERVICE_TERM_MONTHS, start.getDate()) : null;
-  const endDate = employee.contractEnd || (computedEnd ? computedEnd.toISOString().slice(0, 10) : null);
-
-  const weeklyToken = bd?.weeklyAllowance || 0;
-  const monthlyBalance = (bd?.base || 0) + (bd?.welfare || 0);
-  const totalMonthly = (bd?.base || 0) + (bd?.welfare || 0) + (bd?.weeklyAllowanceMonthly || 0);
-
-  return `
-    <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-      <p class="muted">Ref: ${employee.employeeCode || '—'}<br/>Date: ${fmtDate(startDate)}</p>
-    </div>
-    <h2>Independent Service and Task Execution Agreement</h2>
-
-    <p class="clause">THIS INDEPENDENT SERVICE AND TASK EXECUTION AGREEMENT ("Agreement") is made between <strong>Slirus Global Limited</strong> of ${COMPANY_INFO.address} (<strong>"the Company"</strong>) and <strong>${name}</strong> of ${employee.origin ? `<strong>${employee.origin}</strong>` : '<span class="blank">&nbsp;</span>'} (<strong>"the Service Provider"</strong>), collectively "the Parties."</p>
-
-    <h3>1. Nature of Relationship</h3>
-    <p class="clause">The Parties acknowledge that this Agreement creates a principal-to-principal commercial relationship. The Service Provider is an independent contractor engaged to deliver specified outputs and shall not be considered an employee, agent, partner, or representative of the Company for any purpose under Ugandan law. The Service Provider is solely responsible for their own personal tax obligations, social security contributions, and any statutory registrations arising from this Agreement.</p>
-
-    <h3>2. Scope of Services</h3>
-    <p class="clause">The Service Provider shall deliver the following operational outputs and project deliverables, in the capacity of <strong>${employee.position || '[Engagement Title]'}</strong> supporting the <strong>${employee.department}</strong> function, Reference Grade <strong>${grade ? `${grade.code} – ${grade.title}` : '[Grade]'}</strong>: periodic technical field support, digital asset updates, and inventory tracking as assigned per project phase, together with such further task-based deliverables as the Company may specify in writing from time to time. Coordination on task scheduling and deliverable review shall be with the Company's <strong>${employee.reportsTo || '[Project Coordinator]'}</strong>.</p>
-
-    <h3>3. Term and Expiration</h3>
-    <p class="clause">This Agreement shall run for a fixed term of six (6) months from <strong>${fmtDate(startDate)}</strong>, ending on <strong>${endDate ? fmtDate(endDate) : '[End Date]'}</strong>, after which it shall automatically expire unless reviewed, renegotiated, and renewed in writing by both Parties based on ongoing project requirements. This Agreement does not create any expectation of continued engagement beyond its stated term.</p>
-
-    <h3>4. Project Location</h3>
-    <p class="clause">Tasks under this Agreement shall generally be executed at or from ${employee.placeOfWork ? `<strong>${employee.placeOfWork}</strong>` : '<span class="blank">&nbsp;</span>'}, or such other project site as a given task may require, at the Service Provider's own discretion as to method and route of execution.</p>
-
-    <h3>5. Service Fees and Payment Structure</h3>
-    <p class="clause">In consideration for the timely execution of the specified tasks, the Company shall disburse project facilitation fees and milestone service payments, structured as a weekly operational token and a final monthly project completion balance, upon presentation of verified task execution vouchers. Fees are disbursed to account number ${employee.bankAccountNumber ? `<strong>${employee.bankAccountNumber}</strong>` : '<span class="blank">&nbsp;</span>'} at <strong>Housing Finance Bank</strong>. No amount payable under this Agreement constitutes a salary, wage, or payroll payment.</p>
-    <table class="ref">
-      <thead><tr><th>Component</th><th>Basis</th><th>Amount</th></tr></thead>
-      <tbody>
-        <tr><td>Weekly Operational Token</td><td>Paid each Saturday, 4 disbursements/month</td><td>${fmtMoney(weeklyToken)} × 4 = ${fmtMoney(bd?.weeklyAllowanceMonthly)}</td></tr>
-        <tr><td>Monthly Project Completion Balance</td><td>Base facilitation + project resource allowance, last Saturday of the month</td><td>${fmtMoney(bd?.base)} + ${fmtMoney(bd?.welfare)} = ${fmtMoney(monthlyBalance)}</td></tr>
-        <tr style="font-weight:700;"><td colspan="2">Total Monthly Project Budget</td><td>${fmtMoney(totalMonthly)}</td></tr>
-      </tbody>
-    </table>
-
-    <h3>6. Autonomy and Non-Exclusivity</h3>
-    <p class="clause">The Service Provider retains full discretion over the means, manner, and timeline used to achieve the agreed task outputs, provided deliverables meet the quality and deadlines specified per project phase. The Service Provider is not bound by fixed office hours, is not structurally subject to the Company's internal staff conduct rules, and is free to render similar services to other clients, provided this does not create a conflict with active task deliverables owed to the Company under this Agreement.</p>
-
-    <h3>7. Tools, Materials and Vouchers</h3>
-    <p class="clause">Except where the Company supplies specific equipment or digital assets for a task, the Service Provider shall furnish their own tools and resources necessary to execute the deliverables. Each disbursement under Clause 5 is conditioned on the Service Provider presenting a verified task execution voucher confirming completion of the corresponding deliverable.</p>
-
-    <h3>8. Confidentiality</h3>
-    <p class="clause">The Service Provider shall not, during or after the term of this Agreement, disclose any confidential business, financial, project, or client information belonging to the Company obtained in the course of executing tasks under this Agreement.</p>
-
-    <h3>9. Termination</h3>
-    <p class="clause">Either Party may terminate this Agreement prior to its stated expiration by giving <strong>2 weeks'</strong> written notice, or immediately in the event of material breach, including failure to deliver verified task outputs. Termination does not entitle the Service Provider to any facilitation fee or balance beyond deliverables verified up to the effective date of termination.</p>
-
-    <h3>10. Governing Law</h3>
-    <p class="clause">This Agreement is governed by the laws of the Republic of Uganda applicable to commercial service contracts between independent parties, including the Contracts Act, 2010. Nothing in this Agreement shall be construed to create rights or obligations under the Employment Act, 2006.</p>
-
-    <h3>11. Special Conditions</h3>
-    <p class="clause" style="white-space:pre-wrap; direction:ltr; text-align:left; unicode-bidi:plaintext;">${(employee.specialConditions && employee.specialConditions.trim())
-        ? employee.specialConditions
-        : '<span class="blank" style="min-width:100%;display:block;height:20px;margin-bottom:6px;">&nbsp;</span><span class="blank" style="min-width:100%;display:block;height:20px;">&nbsp;</span>'
-      }</p>
-
-    <div class="sigblock">
-      <div class="sigcol"><div class="sigline">Signed for and on behalf of the Company &nbsp;&nbsp; Name: __________________ &nbsp; Date: __________</div></div>
-      <div class="sigcol"><div class="sigline">Signed by the Service Provider &nbsp;&nbsp; Name: ${name} &nbsp; Date: __________</div></div>
-    </div>
-    <div class="sigblock">
-      <div class="sigcol"><div class="sigline">Witness Name: __________________ &nbsp; Signature: __________</div></div>
-      <div class="sigcol"></div>
-    </div>
-
-    <div class="footerNote">This document is a general-purpose independent service agreement template generated from system records. It is not a substitute for review by a qualified legal advisor before use, and should be adapted to the specific project scope and any applicable regulations in force.</div>
-  `;
-};
+// buildServiceAgreementHtml() was replaced by downloadServiceAgreement() in utils/employmentContract.js
+// (PDF; fee table written as a statement; company signatory pre-filled; no witness section).
 
 // ─── Digital Pay Slip (printable) ──────────────────────────────────────────
 const buildPayslipHtml = (payslip) => `
@@ -3555,6 +3479,19 @@ const HrManager = () => {
     catch (err) { alert('Could not build the contract PDF: ' + err.message); }
   }, []);
 
+  // Independent Service and Task Execution Agreement (PDF). Fee figures come from gradeBreakdown() and
+  // the end date from contractEnd or start + SERVICE_TERM_MONTHS, so they match the salary structure.
+  const handleDownloadServiceAgreement = useCallback(async (emp) => {
+    try {
+      const start = toDateObj(emp.contractStart || emp.hireDate);
+      const computedEnd = start ? new Date(start.getFullYear(), start.getMonth() + SERVICE_TERM_MONTHS, start.getDate()) : null;
+      await downloadServiceAgreement(emp, {
+        figures: gradeBreakdown(gradeByCode(emp.jobGradeCode)),
+        endDate: emp.contractEnd || (computedEnd ? computedEnd.toISOString().slice(0, 10) : null),
+      });
+    } catch (err) { alert('Could not build the service agreement PDF: ' + err.message); }
+  }, []);
+
   // Placement letter: the issued PDF (identical to the emailed one) when Admin has created it;
   // otherwise falls back to the HR-generated printable version so nothing is blocked.
   const handleDownloadPlacement = useCallback(async (emp) => {
@@ -4123,7 +4060,7 @@ const HrManager = () => {
                             <button style={s.btnShortlist} onClick={() => setBusinessCardTarget(e)}>Business Card</button>
                             <button style={s.btnShortlist} onClick={() => setFamilyTarget(e)}>Background</button>
                             {e.engagementType === 'Independent Contractor' ? (
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Service Agreement</button>
+                              <button style={s.btnShortlist} onClick={() => handleDownloadServiceAgreement(e)}>Service Agreement</button>
                             ) : isInternContract(e.contractType) ? (
                               <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Placement Letter</button>
                             ) : (
@@ -4194,7 +4131,7 @@ const HrManager = () => {
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             {e.engagementType === 'Independent Contractor' ? (
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}>Document</button>
+                              <button style={s.btnShortlist} onClick={() => handleDownloadServiceAgreement(e)}>Document</button>
                             ) : isInternContract(e.contractType) ? (
                               <button style={s.btnShortlist} onClick={() => handleDownloadPlacement(e)}>Document</button>
                             ) : (
@@ -4455,7 +4392,7 @@ const HrManager = () => {
           onDownloadAppointmentLetter={handleDownloadLetter}
           appointmentLetter={findLetter(profileTarget)}
           onDownloadPlacementLetter={(e) => handleDownloadPlacement(e)}
-          onDownloadServiceAgreement={(e) => openPrintWindow(`Independent Service and Task Execution Agreement — ${employeeFullName(e)}`, buildServiceAgreementHtml(e))}
+          onDownloadServiceAgreement={(e) => handleDownloadServiceAgreement(e)}
           onDownloadCertificate={(e) => openCertificateWindow(`Certificate of Completion — ${employeeFullName(e)}`, buildInternshipCertificateHtml(e))}
         />
       )}
