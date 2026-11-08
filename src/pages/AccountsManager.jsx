@@ -43,6 +43,14 @@
  * Certificate, Loan Note, CIT Computation Sheet) uses the company logo at
  * `/Slirus.png` in the public folder, matching HrManager.jsx.
  *
+ *  - Payroll (from HrManager): each payroll run HR generates is posted here as a
+ *    balanced journal (Dr Salaries + employer NSSF; Cr PAYE payable, NSSF payable,
+ *    Bank) and as a deductible Tax Ledger expense, then tracked to remittance
+ *    (PAYE + NSSF due by the 15th of the following month).
+ *  - IT Operations Budget: the UGX 440,000 monthly business-expense budget is a shared
+ *    company budget, NOT staff pay. Claims need a receipt reference, are approved,
+ *    then paid to a supplier or reimbursed against actual spend, and post to the books.
+ *
  * IMPORTANT — this is a records/compliance-support tool, not a filing
  * system: it does not call the live URA EFRIS API. Every figure it
  * produces should be reviewed by a qualified accountant/tax advisor
@@ -57,6 +65,12 @@ import {
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import Layout from '../components/Layout';
+// Every printable document uses the shared Slirus letterhead/footer (utils/pdfBrand.js) through financePdfs.js.
+import {
+  downloadTablePdf, downloadTaxInvoicePdf, downloadInvoicePdf, downloadReceiptPdf, downloadVoucherPdf,
+  downloadDividendPdf, downloadLoanPdf, downloadCitPdf, downloadBalanceSheetPdf, downloadIncomeStatementPdf,
+  downloadPayrollSummaryPdf, downloadExpenseStatementPdf,
+} from '../utils/financePdfs';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const CEO_EMAIL = (import.meta.env.VITE_CEO_EMAIL || 'kaayamosesawal@gmail.com').toLowerCase();
@@ -158,9 +172,14 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   { code: '4100', name: 'Service Revenue',            type: 'Revenue',   cashFlowCategory: 'operating' },
   { code: '5000', name: 'Cost of Goods Sold',         type: 'Expense',   cashFlowCategory: 'operating' },
   { code: '5100', name: 'Salaries & Contractor Fees', type: 'Expense',   cashFlowCategory: 'operating' },
+  { code: '5110', name: 'Employer NSSF Contribution', type: 'Expense',   cashFlowCategory: 'operating' },
   { code: '5200', name: 'Rent Expense',               type: 'Expense',   cashFlowCategory: 'operating' },
   { code: '5300', name: 'Utilities Expense',          type: 'Expense',   cashFlowCategory: 'operating' },
+  { code: '5310', name: 'Communication Expense',      type: 'Expense',   cashFlowCategory: 'operating' },
   { code: '5400', name: 'Office Supplies',            type: 'Expense',   cashFlowCategory: 'operating' },
+  { code: '5600', name: 'Transport & Field Operations', type: 'Expense', cashFlowCategory: 'operating' },
+  { code: '5700', name: 'Software, Cloud & Subscriptions', type: 'Expense', cashFlowCategory: 'operating' },
+  { code: '5800', name: 'IT Equipment Maintenance & Accessories', type: 'Expense', cashFlowCategory: 'operating' },
   { code: '5900', name: 'Tax Expense',                type: 'Expense',   cashFlowCategory: 'operating' },
 ];
 
@@ -172,6 +191,25 @@ const ENTRY_TYPES = [
 ];
 
 const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'overdue', 'void'];
+
+// ─── IT Operations & Business Expense budget ───────────────────────────────
+// A SHARED company budget (not per employee, not pay). The ceilings are spending limits,
+// not entitlements: unspent money stays with the company. Each category posts to its own
+// expense account and, when paid, to the Tax Ledger as a deductible expense.
+const OPS_BUDGET = [
+  { key: 'internet',  label: 'Official internet and data expenses',               ceiling: 70000,  accountCode: '5300', taxCategory: 'Rent & Utilities' },
+  { key: 'transport', label: 'Client-site transport and field operations',        ceiling: 100000, accountCode: '5600', taxCategory: 'Transport & Logistics' },
+  { key: 'software',  label: 'Software, cloud and technical subscriptions',       ceiling: 80000,  accountCode: '5700', taxCategory: 'Other Operating Expense' },
+  { key: 'equipment', label: 'IT equipment maintenance and accessories',          ceiling: 100000, accountCode: '5800', taxCategory: 'Other Operating Expense' },
+  { key: 'comms',     label: 'Official communication and technical coordination', ceiling: 40000,  accountCode: '5310', taxCategory: 'Other Operating Expense' },
+  { key: 'supplies',  label: 'Approved operational supplies',                     ceiling: 50000,  accountCode: '5400', taxCategory: 'Office Supplies & Minor Equipment (<1M, immediate write-off)' },
+];
+const OPS_BUDGET_TOTAL = OPS_BUDGET.reduce((t, c) => t + c.ceiling, 0); // 440,000
+const opsCategory = (label) => OPS_BUDGET.find(c => c.label === label) || null;
+const OPS_PAYMENT_ROUTES = ['Paid directly to supplier', 'Employee reimbursement (actual spend)'];
+const CLAIM_STATUS_TONE = { pending: 'amber', approved: 'blue', paid: 'green', rejected: 'gray' };
+function toDateObjEarly(v) { if (!v) return null; if (v?.toDate) return v.toDate(); const d = new Date(v); return isNaN(d) ? null : d; }
+const monthOf = (v) => { const d = toDateObjEarly(v); return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : ''; };
 
 const IDLE_LIMIT_MS = 20 * 60 * 1000;
 const IDLE_WARN_MS = 18 * 60 * 1000;
@@ -341,417 +379,13 @@ const computeCITForYear = (transactions, fixedAssets, targetStartYear, startMont
   return result;
 };
 
-// ─── Print / "download as PDF" window (browser Print → Save as PDF) ───────
-// Most documents (ledger/journal/statement exports, the CIT sheet's
-// transaction tables, loan/voucher/dividend notes) read better wide, so
-// landscape is the default. The three document types meant to be handed to
-// someone as a single compact page — the payment Receipt, the Annual
-// Corporate Income Tax Computation, and both invoice prints (Tax Invoice +
-// formal line-item Invoice) — stay portrait, matching how they're actually
-// used (folded, filed, or attached to an email as a one-pager).
-const openPrintWindow = (title, bodyHtml, orientation = 'landscape') => {
-  const isLandscape = orientation === 'landscape';
-  const win = window.open('', '_blank', isLandscape ? 'width=1100,height=850' : 'width=850,height=1100');
-  if (!win) { alert('Please allow pop-ups to download this document.'); return; }
-  win.document.write(`
-    <html>
-      <head>
-        <title>${title}</title>
-        <style>
-          @page { size: A4 ${orientation}; margin: 14mm; }
-          * { box-sizing: border-box; }
-          body { font-family: Georgia, 'Times New Roman', serif; color: #1A1A1A; padding: 48px 56px; line-height: 1.55; font-size: 13.5px; }
-          h1 { font-size: 19px; margin: 0 0 2px; letter-spacing: 0.3px; }
-          h2 { font-size: 14px; text-align: center; text-transform: uppercase; letter-spacing: 1px; margin: 26px 0 18px; border-top: 2px solid #1A3C5E; border-bottom: 2px solid #1A3C5E; padding: 10px 0; }
-          h3 { font-size: 13px; margin: 20px 0 6px; color: #1A3C5E; }
-          .muted { color: #5A7A9A; font-size: 12px; font-family: Arial, Helvetica, sans-serif; }
-          .headRow { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #0D9488; padding-bottom: 14px; margin-bottom: 6px; font-family: Arial, Helvetica, sans-serif; }
-          .logo { height: 52px; width: auto; margin-bottom: 6px; display: block; }
-          .clause { margin: 0 0 12px; text-align: justify; }
-          table.ref { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; }
-          table.ref th, table.ref td { border: 1px solid #D0DCE8; padding: 6px 10px; text-align: left; }
-          table.ref th { background: #F7F9FC; }
-          .blank { display: inline-block; border-bottom: 1px solid #1A1A1A; min-width: 160px; }
-          .sigblock { display: flex; justify-content: space-between; margin-top: 46px; font-family: Arial, Helvetica, sans-serif; }
-          .sigcol { width: 46%; }
-          .sigline { border-top: 1px solid #1A1A1A; margin-top: 46px; padding-top: 4px; font-size: 12px; }
-          .footerNote { margin-top: 34px; font-size: 11px; color: #9AAAB8; font-family: Arial, Helvetica, sans-serif; border-top: 1px solid #E2E8F0; padding-top: 10px; }
-          @media print { .no-print { display: none; } body { padding: 24px 32px; } }
-        </style>
-      </head>
-      <body>
-        ${bodyHtml}
-        <div class="no-print" style="margin-top:30px;">
-          <button onclick="window.print()" style="padding:10px 18px;background:#0D9488;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:Arial,Helvetica,sans-serif;">Print / Save as PDF</button>
-        </div>
-      </body>
-    </html>
-  `);
-  win.document.close();
-};
-
-const logoImgTag = () => `<img class="logo" src="${window.location.origin}${COMPANY_INFO.logo}" alt="${COMPANY_INFO.name} logo" onerror="this.style.display='none'" />`;
-
-// ─── Record exports: table → PDF (via the print window above) ──────────────
-// Every "⬇ Export" button on a record list used to build a CSV file and
-// trigger a browser download. They now render the same rows/columns as a
-// branded HTML table and hand it to openPrintWindow, so the user gets a
-// "Print / Save as PDF" document instead of a .csv file — same columns,
-// same data, just a PDF export rather than a CSV one.
-const escapeHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const buildTablePdfHtml = (title, rows, columns) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-    <p class="muted">Generated: ${fmtDate(new Date())}</p>
-  </div>
-  <h2>${escapeHtml(title)}</h2>
-  <table class="ref">
-    <thead><tr>${columns.map(c => `<th>${escapeHtml(c.label)}</th>`).join('')}</tr></thead>
-    <tbody>
-      ${rows.length
-        ? rows.map(r => `<tr>${columns.map(c => `<td>${escapeHtml(c.get(r))}</td>`).join('')}</tr>`).join('')
-        : `<tr><td colspan="${columns.length}" style="text-align:center;color:#9AAAB8;">No records</td></tr>`}
-    </tbody>
-  </table>
-`;
-const exportTablePDF = (title, rows, columns) => openPrintWindow(title, buildTablePdfHtml(title, rows, columns));
-
-// ─── Document builders ──────────────────────────────────────────────────────
-
-// Tax Invoice / Sales Record — EFRIS fields are left as manual-entry
-// placeholders since this module doesn't call the live URA EFRIS API; fill
-// the FDN / anti-fake code / QR after fiscalizing through the URA portal.
-const buildInvoiceHtml = (txn) => {
-  const vatOn = txn.vatTreatment === VAT_TREATMENTS[0];
-  return `
-    <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-      <p class="muted">Invoice Ref: ${txn.ref || '—'}<br/>Date: ${fmtDate(txn.date)}<br/>Business Object: ${txn.object || '—'}</p>
-    </div>
-    <h2>Tax Invoice / Sales Record</h2>
-    <p class="clause"><strong>Billed To:</strong> ${txn.counterpartyName || '<span class="blank">&nbsp;</span>'} ${txn.counterpartyTIN ? `(TIN: ${txn.counterpartyTIN})` : ''}</p>
-    <table class="ref">
-      <thead><tr><th>Description</th><th>Category</th><th style="text-align:right">Amount</th></tr></thead>
-      <tbody>
-        <tr><td>${txn.description || '—'}</td><td>${txn.category || '—'}</td><td style="text-align:right">${fmtMoney(txn.grossAmount)}</td></tr>
-        <tr><td colspan="2">VAT Treatment: ${txn.vatTreatment || '—'}</td><td style="text-align:right">${vatOn ? fmtMoney(txn.vatAmount) : '—'}</td></tr>
-        <tr style="font-weight:700;"><td colspan="2">Total ${vatOn ? '(VAT-Inclusive)' : ''}</td><td style="text-align:right">${fmtMoney((Number(txn.grossAmount) || 0) + (vatOn ? Number(txn.vatAmount) || 0 : 0))}</td></tr>
-      </tbody>
-    </table>
-    <h3>Withholding Tax</h3>
-    <p class="clause">${txn.whtWithheld
-      ? `The payer withheld 6% Withholding Tax of <strong>${fmtMoney(txn.whtAmount)}</strong> at source${txn.whtCertificateNo ? `, certificate no. <strong>${txn.whtCertificateNo}</strong>` : ''}. This amount is claimed as a credit against ${COMPANY_INFO.name}'s annual Corporate Income Tax.`
-      : 'No Withholding Tax was deducted at source on this transaction (payer is not a designated government/corporate withholding agent). The full amount is declared as gross revenue for Corporate Income Tax purposes.'}</p>
-    <h3>EFRIS Fiscalization</h3>
-    <p class="clause">FDN: <span class="blank">&nbsp;</span> &nbsp;&nbsp; Anti-Fake Code: <span class="blank">&nbsp;</span> &nbsp;&nbsp; QR Ref: <span class="blank">&nbsp;</span></p>
-    <p class="clause" style="font-size:11px;color:#9AAAB8;">To be completed after fiscalizing this sale through the URA EFRIS portal/device.</p>
-    <div class="footerNote">Generated by the Slirus Accounts &amp; Tax Compliance Center. This record supports internal bookkeeping and EFRIS entry — it is not itself a fiscalized URA document.</div>
-  `;
-};
-
-// Internal Payment Voucher for Independent Contractors — mirrors the
-// Saturday-weekly-token / month-end-balance structure and NIN/signature
-// paper trail discussed for the informal-but-compliant disbursement model.
-const buildVoucherHtml = (voucher, contractorName) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Voucher Ref: ${voucher.ref || '—'}<br/>Date: ${fmtDate(voucher.date)}</p>
-  </div>
-  <h2>Internal Payment Voucher</h2>
-  <p class="clause"><strong>Service Provider:</strong> ${contractorName || '<span class="blank">&nbsp;</span>'} &nbsp;&nbsp; <strong>National ID (NIN):</strong> ${voucher.nin || '<span class="blank">&nbsp;</span>'}</p>
-  <table class="ref">
-    <tbody>
-      <tr><td>Payment Type</td><td>${voucher.voucherType || '—'}</td></tr>
-      <tr><td>Task / Deliverable Description</td><td>${voucher.taskDescription || '—'}</td></tr>
-      <tr><td>Payment Method</td><td>${voucher.paymentMethod || '—'}</td></tr>
-      <tr style="font-weight:700;"><td>Amount Paid</td><td>${fmtMoney(voucher.amount)}</td></tr>
-      ${voucher.whtWithheld ? `<tr><td>Withholding Tax (6%) Deducted</td><td>${fmtMoney(voucher.whtAmount)}</td></tr>
-      <tr style="font-weight:700;"><td>Net Amount Disbursed</td><td>${fmtMoney((Number(voucher.amount) || 0) - (Number(voucher.whtAmount) || 0))}</td></tr>` : ''}
-    </tbody>
-  </table>
-  <p class="clause">I acknowledge receipt of the above amount in full settlement for the task/deliverable described, under the Independent Service and Task Execution Agreement between myself and ${COMPANY_INFO.name}.</p>
-  <div class="sigblock">
-    <div class="sigcol"><div class="sigline">Service Provider Signature / Thumbprint &nbsp;&nbsp; Date: __________</div></div>
-    <div class="sigcol"><div class="sigline">Paid by (Company Representative) &nbsp;&nbsp; Date: __________</div></div>
-  </div>
-  <div class="footerNote">This voucher is an internal record supporting Slirus's Field Operations &amp; Project Labor expense ledger. Retain for at least 5 years alongside the corresponding Independent Service Agreement.</div>
-`;
-
-// Dividend Distribution & Withholding Tax Certificate
-const buildDividendHtml = (dividend) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Ref: ${dividend.ref || '—'}<br/>Date: ${fmtDate(dividend.date)}</p>
-  </div>
-  <h2>Dividend Distribution &amp; Withholding Tax Certificate</h2>
-  <p class="clause">Pursuant to a resolution of the Director/Shareholder of ${COMPANY_INFO.name} dated <strong>${fmtDate(dividend.date)}</strong>${dividend.resolutionRef ? ` (Resolution Ref: <strong>${dividend.resolutionRef}</strong>)` : ''}, a dividend is declared and paid to <strong>${dividend.shareholder || '<span class="blank">&nbsp;</span>'}</strong> as follows:</p>
-  <table class="ref">
-    <tbody>
-      <tr><td>Gross Dividend Declared</td><td style="text-align:right">${fmtMoney(dividend.amount)}</td></tr>
-      <tr><td>Withholding Tax (15%, final tax)</td><td style="text-align:right">-${fmtMoney(dividend.whtAmount)}</td></tr>
-      <tr style="font-weight:700;font-size:14px;"><td>Net Amount Paid to Shareholder</td><td style="text-align:right">${fmtMoney((Number(dividend.amount) || 0) - (Number(dividend.whtAmount) || 0))}</td></tr>
-    </tbody>
-  </table>
-  <p class="clause" style="font-size:11px;color:#9AAAB8;">The 15% Withholding Tax above is remitted by ${COMPANY_INFO.name} to the URA as final tax on this dividend income and does not require further declaration by the recipient individual for this amount.</p>
-  <div class="sigblock">
-    <div class="sigcol"><div class="sigline">For ${COMPANY_INFO.name} &nbsp;&nbsp; Name: __________________ &nbsp; Date: __________</div></div>
-    <div class="sigcol"><div class="sigline">Received by Shareholder &nbsp;&nbsp; Name: ${dividend.shareholder || ''} &nbsp; Date: __________</div></div>
-  </div>
-  <div class="footerNote">Retain alongside the board resolution for at least 5 years for URA audit purposes.</div>
-`;
-
-// Loan Facility & Debenture Summary Note
-const buildLoanHtml = (loan) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Ref: ${loan.ref || '—'}<br/>Date: ${fmtDate(loan.disbursedDate)}</p>
-  </div>
-  <h2>Loan Facility &amp; Security Summary Note</h2>
-  <table class="ref">
-    <tbody>
-      <tr><td>Lender</td><td>${loan.lender || '—'}</td></tr>
-      <tr><td>Principal Amount</td><td>${fmtMoney(loan.principal)} (non-taxable — a liability, not income)</td></tr>
-      <tr><td>Annual Interest Rate</td><td>${loan.interestRate ? `${loan.interestRate}%` : '—'}</td></tr>
-      <tr><td>Disbursement Date</td><td>${fmtDate(loan.disbursedDate)}</td></tr>
-      <tr><td>Term (months)</td><td>${loan.termMonths || '—'}</td></tr>
-      <tr><td>Status</td><td>${loan.status || '—'}</td></tr>
-      <tr><td>Outstanding Balance</td><td>${fmtMoney(loan.outstandingBalance)}</td></tr>
-      <tr><td>Interest Paid to Date (tax-deductible)</td><td>${fmtMoney(loan.interestPaidTotal)}</td></tr>
-      <tr><td>Security / Debenture Registered with URSB</td><td>${loan.debentureRegistered ? `Yes — Ref: ${loan.debentureRegNo || '—'}` : 'No / Unsecured'}</td></tr>
-    </tbody>
-  </table>
-  <p class="clause" style="font-size:11px;color:#9AAAB8;">Loan principal is a balance-sheet liability, not taxable income. Interest paid is an allowable deduction against Corporate Income Tax. Any debenture or mortgage securing this facility should be registered with the URSB Security Interest Registry, generally within 21–42 days of creation.</p>
-  <div class="footerNote">Notes: ${loan.notes || '—'}</div>
-`;
-
-// Annual Corporate Income Tax Computation Sheet — the actual output of the
-// CIT engine above, formatted for accountant review / URA filing support.
-// This is the single working document: every Tax Ledger transaction for the
-// fiscal year (so every income/expense total is traceable, not just quoted),
-// every fixed asset's capital allowance for the year, and — bringing the two
-// together — a clearly labelled Net Profit figure (income less expenses
-// less capital allowances) followed by the final Corporate Income Tax
-// payable, so a reader gets "total profit" and "tax to be paid" from one
-// document without cross-referencing anything else.
-const buildCITHtml = (summary, assetsForYear = []) => {
-  const txns = summary.transactions || [];
-  const incomeTxns = txns.filter(t => t.type === 'Income');
-  const expenseTxns = txns.filter(t => t.type === 'Expense');
-  const sumAmt = (list) => list.reduce((s, t) => s + (Number(t.grossAmount) || 0), 0);
-
-  const txnRow = (t) => `
-    <tr>
-      <td>${escapeHtml(t.ref)}</td>
-      <td>${fmtDate(t.date)}</td>
-      <td>${escapeHtml(t.type)}</td>
-      <td>${escapeHtml(t.object)}</td>
-      <td>${escapeHtml(t.description)}</td>
-      <td style="text-align:right">${fmtMoney(t.grossAmount)}</td>
-    </tr>`;
-
-  const assetsWithAllowance = assetsForYear.filter(a => a._dep?.acquired);
-  const totalCapitalAllowances = assetsWithAllowance.reduce((s, a) => s + (a._dep.depreciation || 0), 0);
-
-  return `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Fiscal Year: ${summary.label}<br/>Generated: ${fmtDateTime(new Date())}</p>
-  </div>
-  <h2>Annual Corporate Income Tax Computation</h2>
-
-  <h3>1. Income &amp; Expense Transactions — Tax Ledger, FY ${summary.label}</h3>
-  <table class="ref">
-    <thead><tr><th>Ref</th><th>Date</th><th>Type</th><th>Business Object</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>
-      ${txns.length ? txns.map(txnRow).join('') : `<tr><td colspan="6" style="text-align:center;color:#9AAAB8;">No transactions recorded for this fiscal year</td></tr>`}
-    </tbody>
-    <tbody>
-      <tr style="font-weight:700;background:#F7F9FC;"><td colspan="5">Total Gross Income (${incomeTxns.length} transactions)</td><td style="text-align:right">${fmtMoney(sumAmt(incomeTxns))}</td></tr>
-      <tr style="font-weight:700;background:#F7F9FC;"><td colspan="5">Total Allowable Operating Expenses (${expenseTxns.length} transactions)</td><td style="text-align:right">${fmtMoney(sumAmt(expenseTxns))}</td></tr>
-    </tbody>
-  </table>
-
-  <h3>2. Capital Allowances — Fixed Asset Register, FY ${summary.label}</h3>
-  <table class="ref">
-    <thead><tr><th>Ref</th><th>Asset</th><th>Class</th><th style="text-align:right">Opening Book Value</th><th style="text-align:right">Allowance This Year</th><th style="text-align:right">Closing Book Value</th></tr></thead>
-    <tbody>
-      ${assetsWithAllowance.length ? assetsWithAllowance.map(a => `
-        <tr>
-          <td>${escapeHtml(a.ref)}</td>
-          <td>${escapeHtml(a.name)}</td>
-          <td>${escapeHtml(assetClassByCode(a.assetClass).label)}</td>
-          <td style="text-align:right">${fmtMoney(a._dep.opening)}</td>
-          <td style="text-align:right">${fmtMoney(a._dep.depreciation)}</td>
-          <td style="text-align:right">${fmtMoney(a._dep.closing)}</td>
-        </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#9AAAB8;">No depreciable assets held this fiscal year</td></tr>`}
-    </tbody>
-    <tbody>
-      <tr style="font-weight:700;background:#F7F9FC;"><td colspan="4">Total Capital Allowances (Wear &amp; Tear, this year)</td><td style="text-align:right">${fmtMoney(totalCapitalAllowances)}</td><td></td></tr>
-    </tbody>
-  </table>
-
-  <h3>3. Net Profit for the Financial Year</h3>
-  <table class="ref">
-    <tbody>
-      <tr><td>Total Gross Income</td><td style="text-align:right">${fmtMoney(summary.totalIncome)}</td></tr>
-      <tr><td>Less: Total Allowable Operating Expenses</td><td style="text-align:right">-${fmtMoney(summary.totalExpenses)}</td></tr>
-      <tr><td>Less: Capital Allowances (Wear &amp; Tear)</td><td style="text-align:right">-${fmtMoney(summary.totalDepreciation)}</td></tr>
-      <tr style="font-weight:700;font-size:14px;background:#F0FDF4;"><td>Net Profit for the Financial Year (After Capital Allowances)</td><td style="text-align:right">${fmtMoney(summary.netBeforeLoss)}</td></tr>
-    </tbody>
-  </table>
-
-  <h3>4. Loss Relief &amp; Chargeable Income</h3>
-  <table class="ref">
-    <tbody>
-      <tr><td>Loss Brought Forward (opening pool)</td><td style="text-align:right">${fmtMoney(summary.lossCarriedIn)}</td></tr>
-      <tr><td>Loss Utilised This Year</td><td style="text-align:right">-${fmtMoney(summary.lossUtilised)}</td></tr>
-      <tr style="font-weight:700;"><td>Chargeable Income</td><td style="text-align:right">${fmtMoney(summary.chargeable)}</td></tr>
-      <tr><td>Loss Carried Forward to Next Year</td><td style="text-align:right">${fmtMoney(summary.lossCarriedOut)}</td></tr>
-    </tbody>
-  </table>
-
-  <h3>5. Corporate Income Tax Payable</h3>
-  <table class="ref">
-    <tbody>
-      <tr><td>Corporate Income Tax @ 30% of Chargeable Income</td><td style="text-align:right">${fmtMoney(summary.citGross)}</td></tr>
-      <tr><td>Less: Withholding Tax Credits Already Collected</td><td style="text-align:right">-${fmtMoney(summary.totalWhtCredits)}</td></tr>
-      <tr style="font-weight:700;font-size:14px;background:#FEF2F2;"><td>Net Corporate Income Tax Payable</td><td style="text-align:right">${fmtMoney(summary.citPayable)}</td></tr>
-      <tr><td>Output VAT Collected This Year (reference)</td><td style="text-align:right">${fmtMoney(summary.totalVatCollected)}</td></tr>
-    </tbody>
-  </table>
-
-  <div style="display:flex;gap:16px;margin:18px 0 6px;font-family:Arial,Helvetica,sans-serif;">
-    <div style="flex:1;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:14px 18px;">
-      <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;color:#15803D;font-weight:700;">Total Net Profit — FY ${summary.label}</div>
-      <div style="font-size:21px;font-weight:700;color:#065F46;margin-top:4px;">${fmtMoney(summary.netBeforeLoss)}</div>
-    </div>
-    <div style="flex:1;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:14px 18px;">
-      <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;color:#B91C1C;font-weight:700;">Net Tax to Be Paid — FY ${summary.label}</div>
-      <div style="font-size:21px;font-weight:700;color:#7F1D1D;margin-top:4px;">${fmtMoney(summary.citPayable)}</div>
-    </div>
-  </div>
-
-  <div class="footerNote">This computation is generated from internally recorded transactions and the fixed asset register. It is a working paper to support your annual URA filing — have it reviewed by a qualified accountant before submission, especially for depreciation proration on mid-year asset acquisitions.</div>
-`;
-};
-
-// ─── Financial statement PDFs — mirror the on-screen Balance Sheet /
-// Income Statement tabs exactly: same section headings, same rows, same
-// bold Total row per section, same final figures. A generic "Code / Account
-// / Balance" table (what these used to export) drops the section structure
-// and the totals the screen shows, so these build the sectioned layout
-// directly from the same balanceSheet / incomeStatement objects the UI uses.
-const statementSectionHtml = (heading, rows, totalLabel, totalValue) => `
-  <h3>${escapeHtml(heading)}</h3>
-  <table class="ref">
-    <thead><tr><th>Code</th><th>Account</th><th style="text-align:right">Balance</th></tr></thead>
-    <tbody>
-      ${rows.length
-        ? rows.map(a => `<tr><td>${escapeHtml(a.code)}</td><td>${escapeHtml(a.name)}</td><td style="text-align:right">${fmtMoney(a.balance)}</td></tr>`).join('')
-        : `<tr><td colspan="3" style="text-align:center;color:#9AAAB8;">No accounts in this section</td></tr>`}
-    </tbody>
-    <tbody>
-      <tr style="font-weight:700;background:#F7F9FC;"><td colspan="2">${escapeHtml(totalLabel)}</td><td style="text-align:right">${fmtMoney(totalValue)}</td></tr>
-    </tbody>
-  </table>
-`;
-
-const buildBalanceSheetHtml = (balanceSheet, incomeStatement) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">As at: ${fmtDate(new Date())}</p>
-  </div>
-  <h2>Balance Sheet</h2>
-
-  ${statementSectionHtml('Assets', balanceSheet.assets, 'Total Assets', balanceSheet.totalAssets)}
-  ${statementSectionHtml('Liabilities', balanceSheet.liabilities, 'Total Liabilities', balanceSheet.totalLiabilities)}
-
-  <h3>Equity</h3>
-  <table class="ref">
-    <thead><tr><th>Code</th><th>Account</th><th style="text-align:right">Balance</th></tr></thead>
-    <tbody>
-      ${balanceSheet.equity.length
-        ? balanceSheet.equity.map(a => `<tr><td>${escapeHtml(a.code)}</td><td>${escapeHtml(a.name)}</td><td style="text-align:right">${fmtMoney(a.balance)}</td></tr>`).join('')
-        : `<tr><td colspan="3" style="text-align:center;color:#9AAAB8;">No accounts in this section</td></tr>`}
-      <tr style="font-style:italic;color:#5A7A9A;"><td colspan="2">Current-Period Earnings</td><td style="text-align:right">${fmtMoney(incomeStatement.netIncome)}</td></tr>
-    </tbody>
-    <tbody>
-      <tr style="font-weight:700;background:#F7F9FC;"><td colspan="2">Total Equity</td><td style="text-align:right">${fmtMoney(balanceSheet.totalEquity)}</td></tr>
-    </tbody>
-  </table>
-
-  <div class="footerNote">
-    ${Math.abs(balanceSheet.balances) < 1
-      ? '✓ Balance sheet balances (Assets = Liabilities + Equity).'
-      : `⚠ Out of balance by ${fmtMoney(Math.abs(balanceSheet.balances))} — check for unposted or misclassified entries.`}
-  </div>
-`;
-
-const buildIncomeStatementHtml = (incomeStatement) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Generated: ${fmtDateTime(new Date())}</p>
-  </div>
-  <h2>Income Statement</h2>
-
-  ${statementSectionHtml('Revenue', incomeStatement.revenue, 'Total Revenue', incomeStatement.totalRevenue)}
-  ${statementSectionHtml('Expenses', incomeStatement.expenses, 'Total Expenses', incomeStatement.totalExpenses)}
-
-  <table class="ref">
-    <tbody>
-      <tr style="font-weight:700;font-size:15px;background:${incomeStatement.netIncome >= 0 ? '#F0FDF4' : '#FEF2F2'};">
-        <td>Net Income</td>
-        <td style="text-align:right;color:${incomeStatement.netIncome >= 0 ? '#059669' : '#B91C1C'};">${fmtMoney(incomeStatement.netIncome)}</td>
-      </tr>
-    </tbody>
-  </table>
-`;
-
-// Formal, multi-line Billing & Invoicing document — distinct from the
-// single-line Tax Invoice above (buildInvoiceHtml), which is generated
-// straight off a Tax Ledger entry. This one is generated from the
-// Invoicing tab's line-item invoices.
-const buildFormalInvoiceHtml = (invoice) => {
-  const itemRows = (invoice.items || []).map(i => `
-    <tr><td>${i.description}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">${fmtMoney(i.rate)}</td><td style="text-align:right">${fmtMoney(i.amount)}</td></tr>
-  `).join('');
-  return `
-    <div class="headRow">
-      <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-      <p class="muted">Invoice: ${invoice.invoiceNo}<br/>Issue date: ${fmtDate(invoice.issueDate)}<br/>Due date: ${fmtDate(invoice.dueDate)}</p>
-    </div>
-    <h2>Invoice</h2>
-    <p class="clause"><strong>Bill To:</strong> ${invoice.customerName}${invoice.customerEmail ? ` · ${invoice.customerEmail}` : ''}</p>
-    <table class="ref">
-      <thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-      <tbody>${itemRows}</tbody>
-    </table>
-    <div style="max-width:280px;margin-left:auto;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Subtotal</span><span>${fmtMoney(invoice.subtotal)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Tax (${invoice.taxRate || 0}%)</span><span>${fmtMoney(invoice.taxAmount)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid #1A1A1A;font-weight:700;font-size:15px;"><span>Total Due</span><span>${fmtMoney(invoice.total)}</span></div>
-    </div>
-    <div class="footerNote">Business Object: ${invoice.businessObject || '—'} · VAT Treatment: ${invoice.vatTreatment || '—'}</div>
-  `;
-};
-
-const buildReceiptHtml = (receipt) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email}</p></div>
-    <p class="muted">Receipt: ${receipt.receiptNo}<br/>Date: ${fmtDate(receipt.date)}</p>
-  </div>
-  <h2>Payment Receipt</h2>
-  <table class="ref">
-    <tbody>
-      <tr><td>Received From</td><td style="text-align:right">${receipt.customerName}</td></tr>
-      <tr><td>Against Invoice</td><td style="text-align:right">${receipt.invoiceNo}</td></tr>
-      <tr><td>Payment Method</td><td style="text-align:right">${receipt.method}</td></tr>
-      ${receipt.whtWithheld ? `<tr><td>Withholding Tax (6%) Deducted at Source</td><td style="text-align:right">${fmtMoney(receipt.whtAmount)}</td></tr>` : ''}
-      <tr style="font-weight:700;font-size:14px;"><td>Cash Amount Received</td><td style="text-align:right">${fmtMoney(receipt.amount)}</td></tr>
-    </tbody>
-  </table>
-  <div class="footerNote">Auto-posted to both the Double-Entry Books and the Tax Ledger for Corporate Income Tax purposes.</div>
-`;
+// ─── PDF output ─────────────────────────────────────────────────────────────
+// All documents (invoices, receipts, vouchers, certificates, loan notes, the CIT sheet,
+// statements, payroll and expense statements, table exports) are real PDFs built in
+// utils/financePdfs.js on top of utils/pdfBrand.js — same letterhead, logo badge,
+// contact lines and footer as every other Slirus document.
+const runPdf = (fn) => fn().catch((err) => { console.error('PDF error:', err); alert('Could not build the PDF: ' + err.message); });
+const exportTablePDF = (title, rows, columns) => runPdf(() => downloadTablePdf(title, rows, columns));
 
 // ─── Login / Access Denied ───────────────────────────────────────────────────
 const LoginScreen = () => {
@@ -1707,6 +1341,146 @@ const ConfirmPaymentModal = ({ invoice, accounts = [], cashAccounts, receivableA
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ─── Cash-account modal (payroll posting, PAYE/NSSF remittance, paying a claim) ──
+// ═══════════════════════════════════════════════════════════════════════════
+const CashAccountModal = ({ title, subtitle, accent = '#0D9488', cashAccounts, summaryLines = [], confirmLabel, referenceLabel, referenceRequired = false, onClose, onConfirm }) => {
+  const [cashAccountCode, setCashAccountCode] = useState(cashAccounts[0]?.code || '');
+  const [reference, setReference] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleConfirm = async () => {
+    if (!cashAccountCode) { setError('Choose the cash/bank account. If the list is empty, create the chart of accounts first (Double-Entry Books → Chart of Accounts).'); return; }
+    if (referenceRequired && !reference.trim()) { setError(`${referenceLabel} is required for the audit trail.`); return; }
+    setSaving(true); setError('');
+    try { await onConfirm({ cashAccountCode, reference: reference.trim() }); onClose(); }
+    catch (err) { setError(err.message || 'Could not complete this action.'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: `4px solid ${accent}` }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>{title}</h3>
+            {subtitle && <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{subtitle}</p>}
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+        <div style={ms.body}>
+          {summaryLines.map(([label, value]) => (
+            <div key={label} style={cu.credRow}><span style={cu.credLabel}>{label}</span><span style={cu.credVal}>{value}</span></div>
+          ))}
+          <label style={{ ...cu.label, marginTop: 14 }}>Cash / Bank Account</label>
+          <select style={cu.select} value={cashAccountCode} onChange={e => setCashAccountCode(e.target.value)}>
+            {cashAccounts.length === 0 && <option value="">No accounts available</option>}
+            {cashAccounts.map(a => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
+          </select>
+          {referenceLabel && (
+            <>
+              <label style={{ ...cu.label, marginTop: 12 }}>{referenceLabel}{referenceRequired ? '' : ' (optional)'}</label>
+              <input style={s.loginInput} value={reference} onChange={e => setReference(e.target.value)} />
+            </>
+          )}
+          {error && <p style={s.loginErr}>{error}</p>}
+        </div>
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+          <button style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Cancel</button>
+          <button style={{ ...ms.actionBtn, background: accent, color: '#fff' }} onClick={handleConfirm} disabled={saving}>{saving ? 'Working…' : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── IT Operations expense claim modal ─────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+const OpsClaimModal = ({ usedFor, onClose, onSave }) => {
+  const [form, setForm] = useState({
+    date: new Date().toISOString().slice(0, 10), category: OPS_BUDGET[0].label, payee: '', description: '',
+    amount: '', receiptRef: '', route: OPS_PAYMENT_ROUTES[0], overrideReason: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const update = (f, v) => setForm(prev => ({ ...prev, [f]: v }));
+
+  const cat = opsCategory(form.category);
+  const amount = Number(form.amount) || 0;
+  const used = usedFor(form.category, monthOf(form.date));
+  const over = cat ? used + amount > cat.ceiling : false;
+
+  const handleSave = async () => {
+    if (!form.payee.trim()) { setError('Enter the supplier or the employee being reimbursed.'); return; }
+    if (!form.description.trim()) { setError('Describe the business purpose (what it was for and which job/client).'); return; }
+    if (amount <= 0) { setError('Enter a valid amount.'); return; }
+    if (!form.receiptRef.trim()) { setError('A receipt / invoice reference is required — no receipt, no reimbursement.'); return; }
+    if (over && !form.overrideReason.trim()) { setError('This exceeds the monthly ceiling for the category. Give management\'s reason to proceed.'); return; }
+    setSaving(true); setError('');
+    try { await onSave({ ...form, amount, overCeiling: over }); onClose(); }
+    catch (err) { setError(err.message || 'Could not save this claim.'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #0D9488' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>New Business Expense</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>Actual company spend only — not pay. Needs a receipt and approval before it is paid.</p>
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+        <div style={ms.body}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={cu.label}>Budget category</label>
+              <select style={cu.select} value={form.category} onChange={e => update('category', e.target.value)} disabled={saving}>
+                {OPS_BUDGET.map(c => <option key={c.key} value={c.label}>{c.label} — ceiling {fmtMoney(c.ceiling)}</option>)}
+              </select>
+            </div>
+            <div><label style={cu.label}>Date of expense</label><input type="date" style={s.loginInput} value={form.date} onChange={e => update('date', e.target.value)} disabled={saving} /></div>
+            <div><label style={cu.label}>Amount (UGX)</label><input type="number" min="0" style={s.loginInput} value={form.amount} onChange={e => update('amount', e.target.value)} disabled={saving} /></div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={cu.label}>How it is paid</label>
+              <select style={cu.select} value={form.route} onChange={e => update('route', e.target.value)} disabled={saving}>
+                {OPS_PAYMENT_ROUTES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div><label style={cu.label}>{form.route === OPS_PAYMENT_ROUTES[0] ? 'Supplier' : 'Employee reimbursed'}</label><input style={s.loginInput} value={form.payee} onChange={e => update('payee', e.target.value)} disabled={saving} /></div>
+            <div><label style={cu.label}>Receipt / invoice ref.</label><input style={s.loginInput} value={form.receiptRef} onChange={e => update('receiptRef', e.target.value)} disabled={saving} /></div>
+            <div style={{ gridColumn: '1 / -1' }}><label style={cu.label}>Business purpose</label><input style={s.loginInput} placeholder="e.g. Boda fare — router install at client X, 12 Nov" value={form.description} onChange={e => update('description', e.target.value)} disabled={saving} /></div>
+          </div>
+          {cat && (
+            <p style={{ fontSize: 12, color: over ? '#92400E' : '#5A7A9A', background: over ? '#FEF3C7' : '#F7F9FC', borderRadius: 6, padding: '8px 10px', marginTop: 12 }}>
+              {monthOf(form.date)} · {cat.label}: {fmtMoney(used)} already claimed of {fmtMoney(cat.ceiling)}{over ? ` — this claim would exceed the ceiling by ${fmtMoney(used + amount - cat.ceiling)}.` : '.'}
+            </p>
+          )}
+          {over && (
+            <div style={{ marginTop: 10 }}>
+              <label style={cu.label}>Management reason for exceeding the ceiling</label>
+              <input style={s.loginInput} value={form.overrideReason} onChange={e => update('overrideReason', e.target.value)} disabled={saving} />
+            </div>
+          )}
+          {form.category === OPS_BUDGET[3].label && amount >= 1000000 && (
+            <p style={{ fontSize: 11.5, color: '#92400E', background: '#FEF3C7', borderRadius: 6, padding: '8px 10px', marginTop: 10 }}>
+              ⚠️ At UGX 1,000,000 or more, equipment should be logged in Fixed Assets so it gets a capital-allowance schedule.
+            </p>
+          )}
+          {error && <p style={s.loginErr}>{error}</p>}
+        </div>
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+          <button style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Cancel</button>
+          <button style={{ ...ms.actionBtn, background: '#0D9488', color: '#fff' }} onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : '➕ Submit Expense'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ─── Main Component ───────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
 const AccountsManager = () => {
@@ -1789,6 +1563,21 @@ const AccountsManager = () => {
 
   // Financial Statements
   const [statementsSubTab, setStatementsSubTab] = useState('balance'); // balance | income | cashflow
+
+  // Payroll (runs created by HrManager; slips are read for the summary PDF only)
+  const [payrollRuns, setPayrollRuns] = useState([]);
+  const [payrollSlips, setPayrollSlips] = useState([]);
+  const [loadingPayroll, setLoadingPayroll] = useState(true);
+  const [payrollError, setPayrollError] = useState(null);
+  const [payrollTarget, setPayrollTarget] = useState(null); // { run, mode: 'post' | 'remit' }
+
+  // IT Operations budget claims
+  const [claims, setClaims] = useState([]);
+  const [loadingClaims, setLoadingClaims] = useState(true);
+  const [claimsError, setClaimsError] = useState(null);
+  const [showClaimForm, setShowClaimForm] = useState(false);
+  const [payClaimTarget, setPayClaimTarget] = useState(null);
+  const [opsPeriod, setOpsPeriod] = useState(new Date().toISOString().slice(0, 7));
 
   // Fiscal year selection (drives the CIT engine + Dashboard)
   const fiscalOptions = useMemo(() => listFiscalYearOptions(), []);
@@ -1922,6 +1711,28 @@ const AccountsManager = () => {
       (snap) => { setReceipts(snap.docs.map(d => ({ id: d.id, ...d.data() }))); },
       (err) => setInvoicesError('Could not load receipts: ' + err.message));
     return () => { unsub1(); unsub2(); };
+  }, [isAuthorized]);
+
+  useEffect(() => {
+    if (!isAuthorized) { setPayrollRuns([]); setPayrollSlips([]); return; }
+    setLoadingPayroll(true);
+    const unsub1 = onSnapshot(collection(db, 'payrollDisbursements'),
+      (snap) => { setPayrollError(null); setPayrollRuns(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoadingPayroll(false); },
+      (err) => { setPayrollError('Could not load payroll runs: ' + err.message + ' (Finance needs read access to payrollDisbursements in firestore.rules.)'); setLoadingPayroll(false); });
+    // Slips are only needed to list employees on the summary PDF — a denial here is not fatal.
+    const unsub2 = onSnapshot(collection(db, 'payslips'),
+      (snap) => setPayrollSlips(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setPayrollSlips([]));
+    return () => { unsub1(); unsub2(); };
+  }, [isAuthorized]);
+
+  useEffect(() => {
+    if (!isAuthorized) { setClaims([]); return; }
+    setLoadingClaims(true);
+    const unsub = onSnapshot(collection(db, 'opsExpenseClaims'),
+      (snap) => { setClaimsError(null); setClaims(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoadingClaims(false); },
+      (err) => { setClaimsError('Could not load expense claims: ' + err.message); setLoadingClaims(false); });
+    return unsub;
   }, [isAuthorized]);
 
   const logAudit = useCallback(async (action, target, details = '') => {
@@ -2082,6 +1893,16 @@ const AccountsManager = () => {
     await logAudit('Seeded chart of accounts', 'accounts', `${DEFAULT_CHART_OF_ACCOUNTS.length} accounts`);
   }, [logAudit]);
 
+  // Adds any default account the book doesn't have yet (e.g. the payroll / operations accounts)
+  // without touching accounts that already exist.
+  const addMissingDefaultAccounts = useCallback(async () => {
+    const missing = DEFAULT_CHART_OF_ACCOUNTS.filter(d => !accounts.some(a => a.code === d.code));
+    if (missing.length === 0) { alert('Your chart of accounts already has every default account.'); return; }
+    if (!window.confirm(`Add ${missing.length} missing account(s)?\n\n${missing.map(m => `${m.code} · ${m.name}`).join('\n')}`)) return;
+    for (const a of missing) await setDoc(doc(db, 'accounts', a.code), a);
+    await logAudit('Added default accounts', 'accounts', missing.map(m => m.code).join(', '));
+  }, [accounts, logAudit]);
+
   const handleAddAccount = useCallback(async (account) => {
     await setDoc(doc(db, 'accounts', account.code), account);
     await logAudit('Created account', account.code, account.name);
@@ -2176,6 +1997,132 @@ const AccountsManager = () => {
 
     await logAudit('Confirmed payment', invoice.invoiceNo, `${fmtMoney(amount)} via ${method} · Receipt ${receiptNo}`);
   }, [accounts, receivableAccount, logAudit]);
+
+  // ── Payroll posting & remittance ───────────────────────────────────────
+  // Journal ids are fixed (payroll_<period>, remit_<period>), so retrying a half-finished
+  // posting rewrites the same documents instead of duplicating them.
+  const acctName = useCallback((code) => (accounts.find(a => a.code === code) || DEFAULT_CHART_OF_ACCOUNTS.find(a => a.code === code))?.name || code, [accounts]);
+  const ensureAccounts = useCallback(async (codes) => {
+    for (const code of codes) {
+      if (accounts.some(a => a.code === code)) continue;
+      const def = DEFAULT_CHART_OF_ACCOUNTS.find(a => a.code === code);
+      if (def) await setDoc(doc(db, 'accounts', code), def);
+    }
+  }, [accounts]);
+
+  const handlePostPayroll = useCallback(async (run, { cashAccountCode }) => {
+    if (run.postedToLedger) throw new Error('This payroll run is already posted.');
+    const gross = (Number(run.totalGross) || 0) + (Number(run.totalAllowances) || 0);
+    const paye = Number(run.totalPAYE) || 0;
+    const nssfEmp = Number(run.totalNSSFEmployee) || 0;
+    const nssfCo = Number(run.totalNSSFCompany) || 0;
+    const net = Number(run.totalNetPay) || 0;
+    if (Math.abs(gross - paye - nssfEmp - net) > 1) throw new Error('The run does not add up (gross − PAYE − NSSF ≠ net). Ask HR to check the pay slips before posting.');
+    await ensureAccounts(['5100', '5110', '2100', '2200']);
+    const L = (code, debit, credit) => ({ accountCode: code, accountName: acctName(code), debit, credit });
+    const lines = [
+      L('5100', gross, 0), L('5110', nssfCo, 0),
+      L('2100', 0, paye), L('2200', 0, nssfEmp + nssfCo), L(cashAccountCode, 0, net),
+    ].filter(l => l.debit > 0 || l.credit > 0);
+    if (!isBalanced(lines)) throw new Error('The journal does not balance — nothing was posted.');
+    const today = new Date().toISOString().slice(0, 10);
+    const email = auth.currentUser?.email || 'unknown';
+    await setDoc(doc(db, 'journalEntries', `payroll_${run.period}`), {
+      date: today, reference: `PAY-${run.period}`, memo: `Payroll ${run.period} — ${run.employeeCount} employee(s): salaries, PAYE and NSSF`,
+      entryType: 'general', lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
+    });
+    // Deductible expense for the CIT engine: gross pay + the employer's NSSF (PAYE is part of gross).
+    await setDoc(doc(db, 'financeTransactions', `payroll_${run.period}`), {
+      date: today, type: 'Expense', object: ACCOUNTING_OBJECTS[5], category: EXPENSE_CATEGORIES[1],
+      description: `Payroll ${run.period} (incl. employer NSSF)`, grossAmount: gross + nssfCo,
+      vatTreatment: VAT_TREATMENTS[3], vatAmount: 0, whtWithheld: false, whtAmount: 0, whtCertificateNo: '',
+      counterpartyName: 'Staff payroll', counterpartyTIN: '', paymentMethod: 'Bank Transfer',
+      ref: `PAY-${run.period}`, sourcePayrollPeriod: run.period, createdAt: serverTimestamp(), createdBy: email,
+    });
+    await updateDoc(doc(db, 'payrollDisbursements', run.id), { postedToLedger: true, postedAt: serverTimestamp(), postedBy: email, cashAccountCode });
+    await logAudit('Posted payroll to ledger', run.period, `Cost to company ${fmtMoney(gross + nssfCo)}`);
+  }, [acctName, ensureAccounts, logAudit]);
+
+  const handleRemitPayroll = useCallback(async (run, { cashAccountCode, reference }) => {
+    if (!run.postedToLedger) throw new Error('Post the payroll to the ledger first.');
+    if (run.remitted) throw new Error('This run has already been remitted.');
+    const paye = Number(run.totalPAYE) || 0;
+    const nssf = (Number(run.totalNSSFEmployee) || 0) + (Number(run.totalNSSFCompany) || 0);
+    const L = (code, debit, credit) => ({ accountCode: code, accountName: acctName(code), debit, credit });
+    const lines = [L('2100', paye, 0), L('2200', nssf, 0), L(cashAccountCode, 0, paye + nssf)].filter(l => l.debit > 0 || l.credit > 0);
+    const email = auth.currentUser?.email || 'unknown';
+    await setDoc(doc(db, 'journalEntries', `remit_${run.period}`), {
+      date: new Date().toISOString().slice(0, 10), reference: `REM-${run.period}`,
+      memo: `PAYE and NSSF remitted for ${run.period} — ref ${reference}`, entryType: 'general',
+      lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
+    });
+    await updateDoc(doc(db, 'payrollDisbursements', run.id), { remitted: true, remittedAt: serverTimestamp(), remittedBy: email, remittanceRef: reference, remittedAmount: paye + nssf });
+    await logAudit('Recorded PAYE/NSSF remittance', run.period, `${fmtMoney(paye + nssf)} · ${reference}`);
+  }, [acctName, logAudit]);
+
+  // ── IT Operations budget claims ────────────────────────────────────────
+  const handleSaveClaim = useCallback(async (form) => {
+    await addDoc(collection(db, 'opsExpenseClaims'), {
+      ...form, period: monthOf(form.date), ref: generateRef('OPS'), status: 'pending',
+      createdAt: serverTimestamp(), createdBy: auth.currentUser?.email || 'unknown',
+    });
+    await logAudit('Submitted business expense', form.category, `${fmtMoney(form.amount)} · ${form.payee} · receipt ${form.receiptRef}`);
+  }, [logAudit]);
+
+  const handleClaimDecision = useCallback(async (claim, decision) => {
+    try {
+      await updateDoc(doc(db, 'opsExpenseClaims', claim.id), { status: decision, decidedAt: serverTimestamp(), decidedBy: auth.currentUser?.email || 'unknown' });
+      await logAudit(decision === 'approved' ? 'Approved business expense' : 'Rejected business expense', claim.ref, fmtMoney(claim.amount));
+    } catch (err) { alert('Could not update the expense: ' + err.message); }
+  }, [logAudit]);
+
+  const handlePayClaim = useCallback(async (claim, { cashAccountCode, reference }) => {
+    if (claim.status !== 'approved') throw new Error('Only approved expenses can be paid.');
+    const cat = opsCategory(claim.category);
+    if (!cat) throw new Error('Unknown budget category on this claim.');
+    await ensureAccounts([cat.accountCode]);
+    const lines = [
+      { accountCode: cat.accountCode, accountName: acctName(cat.accountCode), debit: claim.amount, credit: 0 },
+      { accountCode: cashAccountCode, accountName: acctName(cashAccountCode), debit: 0, credit: claim.amount },
+    ];
+    const email = auth.currentUser?.email || 'unknown';
+    const today = new Date().toISOString().slice(0, 10);
+    await setDoc(doc(db, 'journalEntries', `ops_${claim.id}`), {
+      date: today, reference: claim.ref, memo: `${claim.category} — ${claim.description} (${claim.payee}, receipt ${claim.receiptRef})`,
+      entryType: 'cash', lines, status: 'posted', createdBy: email, createdAt: serverTimestamp(),
+    });
+    await setDoc(doc(db, 'financeTransactions', `ops_${claim.id}`), {
+      date: today, type: 'Expense', object: ACCOUNTING_OBJECTS[0], category: cat.taxCategory,
+      description: `${claim.category}: ${claim.description}`, grossAmount: claim.amount,
+      vatTreatment: VAT_TREATMENTS[3], vatAmount: 0, whtWithheld: false, whtAmount: 0, whtCertificateNo: '',
+      counterpartyName: claim.payee, counterpartyTIN: '', paymentMethod: PAYMENT_METHODS[0],
+      ref: claim.ref, receiptRef: claim.receiptRef, sourceClaimId: claim.id, createdAt: serverTimestamp(), createdBy: email,
+    });
+    await updateDoc(doc(db, 'opsExpenseClaims', claim.id), { status: 'paid', paidAt: serverTimestamp(), paidBy: email, paymentRef: reference || '', cashAccountCode });
+    await logAudit('Paid business expense', claim.ref, `${fmtMoney(claim.amount)} · ${claim.payee}`);
+  }, [acctName, ensureAccounts, logAudit]);
+
+  // ── Derived: payroll & operations budget ───────────────────────────────
+  const payrollRunsSorted = useMemo(() => [...payrollRuns].sort((a, b) => String(b.period).localeCompare(String(a.period))), [payrollRuns]);
+  const payrollToPost = useMemo(() => payrollRuns.filter(r => !r.postedToLedger).length, [payrollRuns]);
+  const payrollUnremitted = useMemo(() => payrollRuns.filter(r => r.postedToLedger && !r.remitted)
+    .reduce((t, r) => t + (Number(r.totalPAYE) || 0) + (Number(r.totalNSSFEmployee) || 0) + (Number(r.totalNSSFCompany) || 0), 0), [payrollRuns]);
+  const payrollOverdue = useMemo(() => payrollRuns.filter(r => !r.remitted && r.remittanceDueDate && new Date(`${r.remittanceDueDate}T23:59:59`) < new Date()), [payrollRuns]);
+
+  const claimsInPeriod = useMemo(() => claims.filter(c => c.period === opsPeriod), [claims, opsPeriod]);
+  const sumAmt = (list) => list.reduce((t, c) => t + (Number(c.amount) || 0), 0);
+  const opsLines = useMemo(() => OPS_BUDGET.map(c => {
+    const mine = claimsInPeriod.filter(x => x.category === c.label);
+    return {
+      key: c.key, category: c.label, ceiling: c.ceiling,
+      spent: sumAmt(mine.filter(x => x.status === 'paid')),
+      committed: sumAmt(mine.filter(x => x.status === 'approved')),
+      pending: sumAmt(mine.filter(x => x.status === 'pending')),
+    };
+  }), [claimsInPeriod]);
+  const opsSpent = opsLines.reduce((t, l) => t + l.spent, 0);
+  const opsCommitted = opsLines.reduce((t, l) => t + l.committed, 0);
+  const usedFor = useCallback((category, period) => sumAmt(claims.filter(c => c.period === period && c.category === category && c.status !== 'rejected')), [claims]);
 
   // ── Derived data ────────────────────────────────────────────────────────
   const contractors = useMemo(() =>
@@ -2294,8 +2241,8 @@ const AccountsManager = () => {
     { label: 'Status', get: i => i.status },
   ]);
 
-  const exportBalanceSheetPDF = () => openPrintWindow('Balance Sheet', buildBalanceSheetHtml(balanceSheet, incomeStatement));
-  const exportIncomeStatementPDF = () => openPrintWindow('Income Statement', buildIncomeStatementHtml(incomeStatement));
+  const exportBalanceSheetPDF = () => runPdf(() => downloadBalanceSheetPdf(balanceSheet, incomeStatement));
+  const exportIncomeStatementPDF = () => runPdf(() => downloadIncomeStatementPdf(incomeStatement));
 
   if (authLoading || (user && !profileLoaded)) {
     return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A7A9A' }}>Loading…</div>;
@@ -2327,6 +2274,13 @@ const AccountsManager = () => {
         {vouchersError && activeTab === 'contractors' && <div style={s.errorBanner}>⚠️ {vouchersError}</div>}
         {dividendsError && activeTab === 'dividends' && <div style={s.errorBanner}>⚠️ {dividendsError}</div>}
         {eventsError && activeTab === 'compliance' && <div style={s.errorBanner}>⚠️ {eventsError}</div>}
+        {payrollError && activeTab === 'payroll' && <div style={s.errorBanner}>⚠️ {payrollError}</div>}
+        {claimsError && activeTab === 'opsbudget' && <div style={s.errorBanner}>⚠️ {claimsError}</div>}
+        {payrollOverdue.length > 0 && activeTab !== 'payroll' && (
+          <div style={{ ...s.errorBanner, background: '#FEE2E2', borderColor: '#EF4444', color: '#991B1B', cursor: 'pointer' }} onClick={() => setActiveTab('payroll')}>
+            ⛔ PAYE/NSSF for {payrollOverdue.map(r => r.period).join(', ')} is past its 15th-of-month due date and not recorded as remitted — late payment attracts penalties and interest. Click to review.
+          </div>
+        )}
 
         <div style={s.dashSwitcher}>
           <button style={{ ...s.dashTab, ...(activeTab === 'dashboard' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('dashboard')}>📊 Dashboard</button>
@@ -2337,6 +2291,8 @@ const AccountsManager = () => {
           <button style={{ ...s.dashTab, ...(activeTab === 'assets' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('assets')}>🏢 Fixed Assets <span style={s.tabCount}>{fixedAssets.length}</span></button>
           <button style={{ ...s.dashTab, ...(activeTab === 'loans' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('loans')}>🏦 Loans <span style={s.tabCount}>{loans.length}</span></button>
           <button style={{ ...s.dashTab, ...(activeTab === 'contractors' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('contractors')}>🧾 Contractors &amp; Vouchers</button>
+          <button style={{ ...s.dashTab, ...(activeTab === 'payroll' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('payroll')}>💵 Payroll {payrollToPost > 0 && <span style={{ ...s.tabCount, background: '#FEF3C7', color: '#92400E' }}>{payrollToPost}</span>}</button>
+          <button style={{ ...s.dashTab, ...(activeTab === 'opsbudget' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('opsbudget')}>🧰 IT Operations Budget</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'dividends' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('dividends')}>💰 Dividends</button>
           <button style={{ ...s.dashTab, ...(activeTab === 'compliance' ? s.dashTabActive : {}) }} onClick={() => setActiveTab('compliance')}>🗓️ Compliance Calendar {dueSoonEvents.length > 0 && <span style={{ ...s.tabCount, background: '#FEF3C7', color: '#92400E' }}>{dueSoonEvents.length}</span>}</button>
         </div>
@@ -2350,7 +2306,7 @@ const AccountsManager = () => {
                 <select style={{ ...cu.select, width: 'auto' }} value={selectedFiscalYear} onChange={e => setSelectedFiscalYear(Number(e.target.value))}>
                   {fiscalOptions.map(o => <option key={o.startYear} value={o.startYear}>FY {o.label}</option>)}
                 </select>
-                <button style={s.tab} onClick={() => openPrintWindow(`CIT Computation — FY ${citSummary.label}`, buildCITHtml(citSummary, assetsWithDepreciation), 'portrait')}>⬇ Download CIT Sheet</button>
+                <button style={s.tab} onClick={() => runPdf(() => downloadCitPdf(citSummary, assetsWithDepreciation, (c) => assetClassByCode(c).label))}>⬇ Download CIT Sheet</button>
               </div>
             </div>
 
@@ -2391,6 +2347,8 @@ const AccountsManager = () => {
               <StatCard label="Outstanding Loan Balance" value={fmtMoney(outstandingLoanTotal)} accent="#B45309" sub="Active facilities" />
               <StatCard label="Dividends Paid (all time)" value={fmtMoney(totalDividendsPaid)} accent="#0D9488" sub="15% WHT remitted per payout" />
               <StatCard label="Independent Contractors" value={contractors.length} accent="#4338CA" sub="Service-agreement staff" />
+              <StatCard label="PAYE + NSSF Still to Remit" value={fmtMoney(payrollUnremitted)} accent={payrollOverdue.length ? '#DC2626' : '#7C3AED'} sub={payrollOverdue.length ? `${payrollOverdue.length} run(s) overdue` : 'Due the 15th of next month'} />
+              <StatCard label="IT Ops Budget Used (month)" value={fmtMoney(opsSpent)} accent="#0D9488" sub={`of ${fmtMoney(OPS_BUDGET_TOTAL)} shared ceiling`} />
               <StatCard label="Output VAT Collected (FY)" value={fmtMoney(citSummary.totalVatCollected)} accent="#1D4ED8" sub="Standard-rated income" />
             </div>
 
@@ -2450,7 +2408,7 @@ const AccountsManager = () => {
                         <td style={s.td}>{t.whtWithheld ? fmtMoney(t.whtAmount) : '—'}</td>
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {t.type === 'Income' && <button style={s.btnShortlist} onClick={() => openPrintWindow(`Invoice ${t.ref}`, buildInvoiceHtml(t), 'portrait')}>Invoice</button>}
+                            {t.type === 'Income' && <button style={s.btnShortlist} onClick={() => runPdf(() => downloadTaxInvoicePdf(t, VAT_TREATMENTS[0], VAT_RATE))}>Invoice</button>}
                             {canWrite && <button style={s.btnView} onClick={() => { setEditingTxn(t); setShowTxnForm(true); }}>Edit</button>}
                             {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteTxn(t)}>Delete</button>}
                           </div>
@@ -2525,6 +2483,7 @@ const AccountsManager = () => {
                   <h2 style={{ ...s.sectionHead, margin: 0 }}>Chart of Accounts</h2>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {accounts.length === 0 && canWrite && <button style={s.tab} onClick={seedChartOfAccounts}>🌱 Seed Default Chart</button>}
+                    {accounts.length > 0 && canWrite && <button style={s.tab} onClick={addMissingDefaultAccounts}>➕ Add Missing Defaults</button>}
                     {canWrite && <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#0D9488' }} onClick={() => setShowAccountForm(true)}>➕ New Account</button>}
                   </div>
                 </div>
@@ -2582,7 +2541,7 @@ const AccountsManager = () => {
                         <td style={s.td}><Badge text={inv.status} tone={invoiceStatusTone(inv.status)} /></td>
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <button style={s.btnView} onClick={() => openPrintWindow(`Invoice ${inv.invoiceNo}`, buildFormalInvoiceHtml(inv), 'portrait')}>🖨 Print</button>
+                            <button style={s.btnView} onClick={() => runPdf(() => downloadInvoicePdf(inv))}>🖨 Print</button>
                             {canWrite && inv.status === 'draft' && <button style={s.btnShortlist} onClick={() => handleSendInvoice(inv)}>Send</button>}
                             {canApprove && ['sent', 'overdue'].includes(inv.status) && <button style={s.btnShortlist} onClick={() => setPaymentTarget(inv)}>Confirm Payment</button>}
                             {canEdit && !['void', 'paid'].includes(inv.status) && <button style={s.btnReject} onClick={() => handleVoidInvoice(inv)}>Void</button>}
@@ -2610,7 +2569,7 @@ const AccountsManager = () => {
                         <td style={s.td}>{r.method}</td>
                         <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(r.amount)}</td>
                         <td style={s.td}>{fmtDate(r.date)}</td>
-                        <td style={s.td}><button style={s.btnView} onClick={() => openPrintWindow(`Receipt ${r.receiptNo}`, buildReceiptHtml(r), 'portrait')}>🖨 Print</button></td>
+                        <td style={s.td}><button style={s.btnView} onClick={() => runPdf(() => downloadReceiptPdf(r))}>🖨 Print</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -2764,7 +2723,7 @@ const AccountsManager = () => {
                         <td style={s.td}>{l.status}</td>
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <button style={s.btnShortlist} onClick={() => openPrintWindow(`Loan Note — ${l.lender}`, buildLoanHtml(l))}>Note</button>
+                            <button style={s.btnShortlist} onClick={() => runPdf(() => downloadLoanPdf(l))}>Note</button>
                             {canWrite && <button style={s.btnView} onClick={() => { setEditingLoan(l); setShowLoanForm(true); }}>Edit</button>}
                             {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteLoan(l)}>Delete</button>}
                           </div>
@@ -2811,7 +2770,7 @@ const AccountsManager = () => {
                           <td style={s.td}>{v.taskDescription}</td>
                           <td style={s.td}>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              <button style={s.btnShortlist} onClick={() => openPrintWindow(`Payment Voucher ${v.ref}`, buildVoucherHtml(v, name))}>Voucher</button>
+                              <button style={s.btnShortlist} onClick={() => runPdf(() => downloadVoucherPdf(v, name))}>Voucher</button>
                               {canWrite && <button style={s.btnView} onClick={() => { setEditingVoucher(v); setShowVoucherForm(true); }}>Edit</button>}
                               {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteVoucher(v)}>Delete</button>}
                             </div>
@@ -2822,6 +2781,136 @@ const AccountsManager = () => {
                   </tbody>
                 </table>
               )}
+            </div>
+          </>
+        )}
+
+        {/* ── Payroll (runs generated in HR Manager) ── */}
+        {activeTab === 'payroll' && (
+          <>
+            <div style={{ marginBottom: 14 }}>
+              <h2 style={{ ...s.sectionHead, margin: 0 }}>Payroll — posting &amp; PAYE / NSSF remittance</h2>
+              <p style={{ ...s.pageSub, margin: '4px 0 0' }}>HR generates the pay slips; Finance posts each run to the books and records the remittance. PAYE and NSSF (5% employee + 10% employer, on total gross pay) are due to URA and NSSF by the 15th of the following month.</p>
+            </div>
+            <div style={s.tableWrap}>
+              {loadingPayroll ? <div style={s.tableMsg}>Loading payroll runs…</div> : payrollRunsSorted.length === 0 ? <div style={s.tableMsg}>No payroll runs yet — HR creates them with “Run Payroll” in the HR Control Center.</div> : (
+                <table style={s.table}>
+                  <thead><tr style={s.thead}>
+                    <th style={s.th}>Period</th><th style={s.th}>Staff</th><th style={{ ...s.th, textAlign: 'right' }}>Gross pay</th><th style={{ ...s.th, textAlign: 'right' }}>PAYE</th>
+                    <th style={{ ...s.th, textAlign: 'right' }}>NSSF (5%+10%)</th><th style={{ ...s.th, textAlign: 'right' }}>Net pay</th><th style={{ ...s.th, textAlign: 'right' }}>Cost to company</th>
+                    <th style={s.th}>Remit by</th><th style={s.th}>Status</th><th style={s.th}>Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {payrollRunsSorted.map(r => {
+                      const nssf = (Number(r.totalNSSFEmployee) || 0) + (Number(r.totalNSSFCompany) || 0);
+                      const overdue = !r.remitted && r.remittanceDueDate && new Date(`${r.remittanceDueDate}T23:59:59`) < new Date();
+                      return (
+                        <tr key={r.id} style={s.tr}>
+                          <td style={{ ...s.td, fontWeight: 700 }}>{r.period}</td>
+                          <td style={s.td}>{r.employeeCount}</td>
+                          <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney((Number(r.totalGross) || 0) + (Number(r.totalAllowances) || 0))}</td>
+                          <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(r.totalPAYE)}</td>
+                          <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(nssf)}</td>
+                          <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(r.totalNetPay)}</td>
+                          <td style={{ ...s.td, textAlign: 'right', fontWeight: 700 }}>{fmtMoney(r.totalCostToCompany)}</td>
+                          <td style={{ ...s.td, color: overdue ? '#DC2626' : '#5A7A9A', fontWeight: overdue ? 700 : 400 }}>{r.remittanceDueDate ? fmtDate(r.remittanceDueDate) : '—'}</td>
+                          <td style={s.td}>
+                            {r.remitted ? <Badge text="Remitted" tone="green" /> : r.postedToLedger ? <Badge text={overdue ? 'Remittance overdue' : 'Posted — remit'} tone={overdue ? 'red' : 'blue'} /> : <Badge text="Awaiting posting" tone="amber" />}
+                          </td>
+                          <td style={s.td}>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              <button style={s.btnView} onClick={() => runPdf(() => downloadPayrollSummaryPdf(r, payrollSlips.filter(p => p.period === r.period)))}>🖨 Summary</button>
+                              {canApprove && !r.postedToLedger && <button style={s.btnShortlist} onClick={() => setPayrollTarget({ run: r, mode: 'post' })}>Post to Ledger</button>}
+                              {canApprove && r.postedToLedger && !r.remitted && <button style={s.btnShortlist} onClick={() => setPayrollTarget({ run: r, mode: 'remit' })}>Record Remittance</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: '#9AAAB8', marginTop: 14, lineHeight: 1.6 }}>
+              Posting books: Dr Salaries (gross) + Employer NSSF; Cr PAYE Payable, NSSF Payable, Bank (net pay) — and adds one deductible expense to the Tax Ledger for the Corporate Income Tax computation. Do not also key the same salaries into the Tax Ledger by hand. Recording the remittance clears the PAYE and NSSF liabilities. Keep the URA payment slip (PRN) and the NSSF receipt.
+            </p>
+          </>
+        )}
+
+        {/* ── IT Operations & Business Expense budget ── */}
+        {activeTab === 'opsbudget' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <h2 style={{ ...s.sectionHead, margin: 0 }}>IT Operations &amp; Business Expense Budget</h2>
+                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>One shared company budget of {fmtMoney(OPS_BUDGET_TOTAL)} a month for running the IT business. It is not staff pay and not a per-person entitlement — money is paid to suppliers or reimbursed against actual receipts.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input type="month" style={{ ...s.loginInput, width: 'auto' }} value={opsPeriod} onChange={e => setOpsPeriod(e.target.value)} />
+                <button style={s.tab} onClick={() => runPdf(() => downloadExpenseStatementPdf({ period: opsPeriod, budgetLines: opsLines, claims: claimsInPeriod.filter(c => c.status === 'paid'), ceiling: OPS_BUDGET_TOTAL, spent: opsSpent }))}>⬇ Statement PDF</button>
+                {canWrite && <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#0D9488' }} onClick={() => setShowClaimForm(true)}>➕ New Expense</button>}
+              </div>
+            </div>
+
+            <div style={s.trackGrid}>
+              <StatCard label="Monthly Ceiling" value={fmtMoney(OPS_BUDGET_TOTAL)} accent="#1A3C5E" sub="Spending limit, not an entitlement" />
+              <StatCard label="Paid This Month" value={fmtMoney(opsSpent)} accent="#10B981" />
+              <StatCard label="Approved, Not Yet Paid" value={fmtMoney(opsCommitted)} accent="#2E6DA4" />
+              <StatCard label="Headroom" value={fmtMoney(OPS_BUDGET_TOTAL - opsSpent - opsCommitted)} accent="#0D9488" sub="Unspent stays with the company" />
+            </div>
+
+            <h2 style={{ ...s.sectionHead, margin: '24px 0 12px' }}>Budget by category — {opsPeriod}</h2>
+            <div style={s.tableWrap}>
+              <table style={s.table}>
+                <thead><tr style={s.thead}><th style={s.th}>Category</th><th style={{ ...s.th, textAlign: 'right' }}>Ceiling</th><th style={{ ...s.th, textAlign: 'right' }}>Paid</th><th style={{ ...s.th, textAlign: 'right' }}>Approved</th><th style={{ ...s.th, textAlign: 'right' }}>Pending</th><th style={{ ...s.th, textAlign: 'right' }}>Remaining</th></tr></thead>
+                <tbody>
+                  {opsLines.map(l => {
+                    const remaining = l.ceiling - l.spent - l.committed;
+                    return (
+                      <tr key={l.key} style={s.tr}>
+                        <td style={s.td}>{l.category}</td>
+                        <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(l.ceiling)}</td>
+                        <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(l.spent)}</td>
+                        <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(l.committed)}</td>
+                        <td style={{ ...s.td, textAlign: 'right', color: '#92400E' }}>{fmtMoney(l.pending)}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: remaining < 0 ? '#DC2626' : '#065F46' }}>{fmtMoney(remaining)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <h2 style={{ ...s.sectionHead, margin: '24px 0 12px' }}>Expenses</h2>
+            <div style={s.tableWrap}>
+              {loadingClaims ? <div style={s.tableMsg}>Loading expenses…</div> : claimsInPeriod.length === 0 ? <div style={s.tableMsg}>No expenses recorded for {opsPeriod}.</div> : (
+                <table style={s.table}>
+                  <thead><tr style={s.thead}><th style={s.th}>Date</th><th style={s.th}>Category</th><th style={s.th}>Purpose</th><th style={s.th}>Paid to</th><th style={s.th}>Receipt</th><th style={{ ...s.th, textAlign: 'right' }}>Amount</th><th style={s.th}>Status</th><th style={s.th}>Actions</th></tr></thead>
+                  <tbody>
+                    {[...claimsInPeriod].sort((a, b) => (toDateObj(b.date) || 0) - (toDateObj(a.date) || 0)).map(c => (
+                      <tr key={c.id} style={s.tr}>
+                        <td style={s.td}>{fmtDate(c.date)}<div style={{ fontSize: 11, color: '#9AAAB8' }}>{c.ref}</div></td>
+                        <td style={{ ...s.td, fontSize: 12.5 }}>{c.category}{c.overCeiling && <div style={{ fontSize: 11, color: '#92400E' }}>Over ceiling: {c.overrideReason}</div>}</td>
+                        <td style={s.td}>{c.description}</td>
+                        <td style={s.td}>{c.payee}<div style={{ fontSize: 11, color: '#9AAAB8' }}>{c.route}</div></td>
+                        <td style={{ ...s.td, fontFamily: 'monospace', fontSize: 12.5 }}>{c.receiptRef}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 700 }}>{fmtMoney(c.amount)}</td>
+                        <td style={s.td}><Badge text={c.status} tone={CLAIM_STATUS_TONE[c.status] || 'gray'} /></td>
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {canApprove && c.status === 'pending' && <button style={s.btnShortlist} onClick={() => handleClaimDecision(c, 'approved')}>Approve</button>}
+                            {canApprove && c.status === 'pending' && <button style={s.btnReject} onClick={() => handleClaimDecision(c, 'rejected')}>Reject</button>}
+                            {canApprove && c.status === 'approved' && <button style={s.btnShortlist} onClick={() => setPayClaimTarget(c)}>Pay</button>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div style={{ background: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: 10, padding: '12px 16px', marginTop: 16, fontSize: 12.5, color: '#115E59', lineHeight: 1.7 }}>
+              <strong>Rules that keep this tax-safe:</strong> spend only on genuine company purposes · pay suppliers directly wherever possible (internet, software, equipment) · reimburse employees only the <em>actual</em> amount spent, against a receipt · never top up staff with the unspent balance · keep every receipt, client assignment record and subscription invoice. Paying a fixed sum to people regardless of spend is wages and would attract PAYE and NSSF.
             </div>
           </>
         )}
@@ -2847,7 +2936,7 @@ const AccountsManager = () => {
                         <td style={{ ...s.td, fontWeight: 700 }}>{fmtMoney((Number(d.amount) || 0) - (Number(d.whtAmount) || 0))}</td>
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <button style={s.btnShortlist} onClick={() => openPrintWindow(`Dividend Certificate ${d.ref}`, buildDividendHtml(d))}>Certificate</button>
+                            <button style={s.btnShortlist} onClick={() => runPdf(() => downloadDividendPdf(d))}>Certificate</button>
                             {canWrite && <button style={s.btnView} onClick={() => { setEditingDividend(d); setShowDividendForm(true); }}>Edit</button>}
                             {canDelete && <button style={s.btnDelete} onClick={() => handleDeleteDividend(d)}>Delete</button>}
                           </div>
@@ -2914,6 +3003,42 @@ const AccountsManager = () => {
       {showAccountForm && <AccountModal onClose={() => setShowAccountForm(false)} onSave={handleAddAccount} />}
       {showJournalForm && <JournalEntryModal accounts={accounts} entryTypeDefault={journalFilter === 'all' ? 'general' : journalFilter} onClose={() => setShowJournalForm(false)} onSave={handlePostEntry} />}
       {showInvoiceForm && <InvoiceModal onClose={() => setShowInvoiceForm(false)} onSave={handleCreateInvoice} />}
+      {showClaimForm && <OpsClaimModal usedFor={usedFor} onClose={() => setShowClaimForm(false)} onSave={handleSaveClaim} />}
+      {payClaimTarget && (
+        <CashAccountModal
+          title="Pay Business Expense" subtitle={`${payClaimTarget.ref} · ${payClaimTarget.payee}`}
+          cashAccounts={cashAccounts.length ? cashAccounts : accounts.filter(a => a.type === 'Asset')}
+          summaryLines={[['Category', payClaimTarget.category], ['Receipt', payClaimTarget.receiptRef], ['Amount', fmtMoney(payClaimTarget.amount)]]}
+          confirmLabel="✓ Pay & Post" referenceLabel="Payment reference (MoMo / bank ref)"
+          onClose={() => setPayClaimTarget(null)} onConfirm={(p) => handlePayClaim(payClaimTarget, p)}
+        />
+      )}
+      {payrollTarget && payrollTarget.mode === 'post' && (
+        <CashAccountModal
+          title={`Post Payroll ${payrollTarget.run.period}`} subtitle="Journal + Tax Ledger expense, posted once" accent="#059669"
+          cashAccounts={cashAccounts.length ? cashAccounts : accounts.filter(a => a.type === 'Asset')}
+          summaryLines={[
+            ['Salary expense (gross)', fmtMoney((Number(payrollTarget.run.totalGross) || 0) + (Number(payrollTarget.run.totalAllowances) || 0))],
+            ['Employer NSSF (10%)', fmtMoney(payrollTarget.run.totalNSSFCompany)],
+            ['PAYE payable', fmtMoney(payrollTarget.run.totalPAYE)],
+            ['NSSF payable (5% + 10%)', fmtMoney((Number(payrollTarget.run.totalNSSFEmployee) || 0) + (Number(payrollTarget.run.totalNSSFCompany) || 0))],
+            ['Net salaries paid from bank', fmtMoney(payrollTarget.run.totalNetPay)],
+          ]}
+          confirmLabel="✓ Post to Books" onClose={() => setPayrollTarget(null)} onConfirm={(p) => handlePostPayroll(payrollTarget.run, p)}
+        />
+      )}
+      {payrollTarget && payrollTarget.mode === 'remit' && (
+        <CashAccountModal
+          title={`Record Remittance ${payrollTarget.run.period}`} subtitle="Clears the PAYE and NSSF liabilities" accent="#7C3AED"
+          cashAccounts={cashAccounts.length ? cashAccounts : accounts.filter(a => a.type === 'Asset')}
+          summaryLines={[
+            ['PAYE paid to URA', fmtMoney(payrollTarget.run.totalPAYE)],
+            ['NSSF paid (5% + 10%)', fmtMoney((Number(payrollTarget.run.totalNSSFEmployee) || 0) + (Number(payrollTarget.run.totalNSSFCompany) || 0))],
+          ]}
+          confirmLabel="✓ Record Remittance" referenceLabel="URA PRN / NSSF receipt no." referenceRequired
+          onClose={() => setPayrollTarget(null)} onConfirm={(p) => handleRemitPayroll(payrollTarget.run, p)}
+        />
+      )}
       {paymentTarget && (
         <ConfirmPaymentModal
           invoice={paymentTarget}

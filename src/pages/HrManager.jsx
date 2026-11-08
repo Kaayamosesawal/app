@@ -67,6 +67,8 @@ import { JOB_GRADES, LETTER_COLLECTION, downloadAppointmentLetter, letterToEmplo
 import { downloadEmploymentContract, downloadServiceAgreement } from '../utils/employmentContract';
 // Interns get a Placement Letter instead (created by Admin.jsx, emailed as a PDF; HR can only download it).
 import { PLACEMENT_COLLECTION, downloadPlacementLetter, placementLetterToEmployeeDraft } from '../utils/placementLetter';
+// Pay slips and payroll summaries use the shared Slirus letterhead (utils/pdfBrand.js) via financePdfs.js.
+import { downloadPayslipPdf } from '../utils/financePdfs';
 
 
 // ── Permission diagnostics (used only when a save is refused) ──────────────
@@ -191,22 +193,24 @@ const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (
 
 // JOB_GRADES (the salary table) is imported from utils/appointmentLetter.js — shared with Admin.jsx.
 
-// Uganda monthly PAYE bands, revised effective 1 July 2026: the tax-free
-// threshold rose from UGX 235,000 to UGX 335,000 (Income Tax (Amendment)
-// Act 2026). At current base salaries (all ≤ 335,000) every grade below
-// falls entirely in the 0% band, so no employee currently pays PAYE — only
-// the NSSF employee contribution is withheld. This function exists so that
-// if a grade's base salary is ever raised above the threshold (e.g. a new
-// senior/management grade), PAYE is applied automatically instead of being
-// silently skipped. Confirm figures against URA guidance before relying on
-// this for statutory filing.
+// Uganda monthly PAYE bands, in force from 1 July 2026 (Income Tax (Amendment) Act 2026):
+//   0 – 335,000        0%
+//   335,001 – 410,000  10%
+//   410,001 – 485,000  25%
+//   485,001 – 10M      30%
+//   above 10M          30% + 10% surcharge = 40%
+// (The previous version of this function still used the pre-July-2026 20%/30% structure,
+// which under-/over-taxed anyone above UGX 410,000.) PAYE is charged on TOTAL monthly
+// cash pay (basic + every cash allowance); the employee's NSSF is NOT deductible for PAYE.
+// Re-confirm the bands against the URA PAYE schedule before each financial year.
 const computeTax = (gross) => {
   const g = Math.max(0, Number(gross) || 0);
   const bands = [
-    { upTo: 335000,     rate: 0,    base: 0 },
-    { upTo: 410000,     rate: 0.10, base: 0 },
-    { upTo: 10000000,   rate: 0.20, base: 7500 },
-    { upTo: Infinity,   rate: 0.30, base: 1925500 },
+    { upTo: 335000,   rate: 0,    base: 0 },
+    { upTo: 410000,   rate: 0.10, base: 0 },
+    { upTo: 485000,   rate: 0.25, base: 7500 },
+    { upTo: 10000000, rate: 0.30, base: 26250 },
+    { upTo: Infinity, rate: 0.40, base: 2880750 },
   ];
   for (let i = 0; i < bands.length; i++) {
     const b = bands[i];
@@ -246,6 +250,49 @@ const gradeBreakdown = (grade) => {
     base, welfare, weeklyAllowance, weeklyAllowanceMonthly, totalAllowance, bonuses,
     payeTax, nssfEmployee, nssfCompany, rawSalary, netSalary,
   };
+};
+
+// ── Payroll policy (separates pay from business expenses) ──────────────────
+// Employees are paid ONE thing through payroll: basic salary. Business running costs
+// (internet, client-site transport, software, equipment, communication, supplies) are
+// funded from the shared IT Operations budget (see Accounts → IT Operations Budget) and
+// are paid to suppliers or reimbursed against receipts. They are never put on the payslip,
+// because an unconditional monthly cash sum is "wages" for PAYE and NSSF whatever it is called.
+// If a cash allowance IS ever contractually payable, set the flag below: it is then added
+// to gross pay and attracts PAYE and NSSF like any other cash emolument.
+// Basic salary now follows the job grade (SHR-G1 150,000 / SHR-G2 285,000 / SHR-G3 325,000, from
+// JOB_GRADES.baseSalary). All three sit at or below the UGX 335,000 tax-free PAYE band, so PAYE is 0.
+const PAYROLL_CASH_ALLOWANCES_ENABLED = false;
+
+// Used by the payroll run, pay slips and the Salary Structure table. gradeBreakdown() above
+// is left untouched because the contractor Service Agreement still reads its fee figures.
+//   Gross pay      = basic + (cash allowances, only if enabled)          ← PAYE and NSSF base
+//   NSSF employee  = 5% of gross pay (no ceiling)  |  NSSF employer = 10% of gross pay
+//   PAYE           = computeTax(gross pay)
+//   Net pay        = gross − PAYE − NSSF employee
+//   Cost to company= gross + NSSF employer
+const payrollBreakdown = (grade) => {
+  if (!grade) return null;
+  const base = Number(grade.baseSalary) || 0;
+  const cashAllowances = PAYROLL_CASH_ALLOWANCES_ENABLED
+    ? (Number(grade.welfare) || 0) + (Number(grade.weeklyAllowance) || 0) * 4
+    : 0;
+  const gross = base + cashAllowances;
+  const payeTax = computeTax(gross);
+  const nssfEmployee = Math.round(gross * NSSF_EMPLOYEE_RATE);
+  const nssfCompany = Math.round(gross * NSSF_COMPANY_RATE);
+  return {
+    base, cashAllowances, gross, payeTax, nssfEmployee, nssfCompany,
+    netSalary: gross - payeTax - nssfEmployee,
+    costToCompany: gross + nssfCompany,
+  };
+};
+
+// PAYE and NSSF are due to URA / NSSF by the 15th of the month after the pay period.
+const remittanceDueDate = (period) => {
+  const [y, m] = String(period).split('-').map(Number);
+  if (!y || !m) return '';
+  return new Date(Date.UTC(y, m, 15)).toISOString().slice(0, 10);
 };
 
 // Learning-based interns are NOT salaried staff: they are excluded from payroll
@@ -551,25 +598,8 @@ const buildInternshipPlacementLetterHtml = (employee) => {
 // buildServiceAgreementHtml() was replaced by downloadServiceAgreement() in utils/employmentContract.js
 // (PDF; fee table written as a statement; company signatory pre-filled; no witness section).
 
-// ─── Digital Pay Slip (printable) ──────────────────────────────────────────
-const buildPayslipHtml = (payslip) => `
-  <div class="headRow">
-    <div>${logoImgTag()}<h1>${COMPANY_INFO.name}</h1><p class="muted">${COMPANY_INFO.address}<br/>${COMPANY_INFO.phone} · ${COMPANY_INFO.email} · ${COMPANY_INFO.website}</p></div>
-    <p class="muted">Period: ${payslip.period}<br/>Generated: ${fmtDateTime(payslip.generatedAt)}</p>
-  </div>
-  <h2>Digital Pay Slip</h2>
-  <p class="clause"><strong>Employee:</strong> ${payslip.employeeName} &nbsp;&nbsp; <strong>Job Grade:</strong> ${payslip.jobGradeCode}</p>
-  <table class="ref">
-    <tbody>
-      <tr><td>Gross Pay</td><td style="text-align:right">${fmtMoney(payslip.grossPay)}</td></tr>
-      <tr><td>Allowances</td><td style="text-align:right">${fmtMoney(payslip.allowances)}</td></tr>
-      <tr><td>PAYE Tax</td><td style="text-align:right">-${fmtMoney(payslip.taxAmount)}</td></tr>
-      <tr><td>NSSF (Employee, 5%)</td><td style="text-align:right">-${fmtMoney(payslip.otherDeductions)}</td></tr>
-      <tr style="font-weight:700;font-size:14px;"><td>Net Pay</td><td style="text-align:right">${fmtMoney(payslip.netPay)}</td></tr>
-    </tbody>
-  </table>
-  <p class="clause" style="font-size:11px;color:#9AAAB8;">Generated by ${payslip.generatedBy || 'HR System'}. This pay slip is issued electronically and is valid without signature.</p>
-`;
+// ─── Digital Pay Slip ─────────────────────────────────────────────────────
+// Generated as a branded PDF by downloadPayslipPdf() in utils/financePdfs.js.
 
 // ─── Certificate of Completion — Learning-Based Internship (landscape, decorative) ─────────────────────
 // Deliberately a separate popup window (not openPrintWindow) because a
@@ -3079,35 +3109,41 @@ const LeaveRequestModal = ({ employees, onClose, onSubmit }) => {
 };
 
 // ─── Payslip Modal ────────────────────────────────────────────────────────────
-const PayslipModal = ({ payslip, onClose }) => (
-  <div style={ms.overlay} onClick={onClose}>
-    <div style={{ ...ms.modal, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-      <div style={{ ...ms.header, borderTop: '4px solid #059669' }}>
-        <div>
-          <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Digital Pay Slip</h3>
-          <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{payslip.employeeName} · {payslip.period}</p>
+const PayslipModal = ({ payslip, onClose }) => {
+  const basic = Number(payslip.grossPay) || 0;
+  const allowances = Number(payslip.allowances) || 0;
+  return (
+    <div style={ms.overlay} onClick={onClose}>
+      <div style={{ ...ms.modal, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...ms.header, borderTop: '4px solid #059669' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#1A3C5E', fontSize: 17 }}>Digital Pay Slip</h3>
+            <p style={{ margin: '4px 0 0', color: '#5A7A9A', fontSize: 13 }}>{payslip.employeeName} · {payslip.period}</p>
+          </div>
+          <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
         </div>
-        <button style={ms.closeBtn} onClick={onClose} title="Close">✕</button>
-      </div>
-      <div style={ms.body}>
-        <div style={cu.credRow}><span style={cu.credLabel}>Job Grade</span><span style={cu.credVal}>{payslip.jobGradeCode}</span></div>
-        <div style={cu.credRow}><span style={cu.credLabel}>Gross Pay</span><span style={cu.credVal}>{fmtMoney(payslip.grossPay)}</span></div>
-        <div style={cu.credRow}><span style={cu.credLabel}>Allowances</span><span style={cu.credVal}>{fmtMoney(payslip.allowances)}</span></div>
-        <div style={cu.credRow}><span style={cu.credLabel}>PAYE Tax</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.taxAmount)}</span></div>
-        <div style={cu.credRow}><span style={cu.credLabel}>NSSF (Employee, 5%)</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.otherDeductions)}</span></div>
-        <div style={{ ...cu.credRow, borderBottom: 'none', paddingTop: 14 }}>
-          <span style={cu.credLabel}>Net Pay</span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>{fmtMoney(payslip.netPay)}</span>
+        <div style={ms.body}>
+          <div style={cu.credRow}><span style={cu.credLabel}>Job Grade</span><span style={cu.credVal}>{payslip.jobGradeCode}</span></div>
+          <div style={cu.credRow}><span style={cu.credLabel}>Basic Salary</span><span style={cu.credVal}>{fmtMoney(basic)}</span></div>
+          {allowances > 0 && <div style={cu.credRow}><span style={cu.credLabel}>Cash Allowances (taxable)</span><span style={cu.credVal}>{fmtMoney(allowances)}</span></div>}
+          <div style={cu.credRow}><span style={cu.credLabel}>Gross Pay (PAYE &amp; NSSF base)</span><span style={cu.credVal}>{fmtMoney(basic + allowances)}</span></div>
+          <div style={cu.credRow}><span style={cu.credLabel}>PAYE Tax</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.taxAmount)}</span></div>
+          <div style={cu.credRow}><span style={cu.credLabel}>NSSF (Employee, 5%)</span><span style={{ ...cu.credVal, color: '#B91C1C' }}>-{fmtMoney(payslip.otherDeductions)}</span></div>
+          <div style={{ ...cu.credRow, borderBottom: 'none', paddingTop: 14 }}>
+            <span style={cu.credLabel}>Net Pay</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>{fmtMoney(payslip.netPay)}</span>
+          </div>
+          <p style={{ fontSize: 11.5, color: '#7A8A9A', marginTop: 6 }}>Employer NSSF (10%, paid by the company on top): {fmtMoney(payslip.nssfCompany)}</p>
+          <p style={{ fontSize: 11, color: '#9AAAB8', marginTop: 8 }}>Generated {fmtDateTime(payslip.generatedAt)} by {payslip.generatedBy}</p>
         </div>
-        <p style={{ fontSize: 11, color: '#9AAAB8', marginTop: 14 }}>Generated {fmtDateTime(payslip.generatedAt)} by {payslip.generatedBy}</p>
-      </div>
-      <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
-        <button style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
-        <button style={{ ...ms.actionBtn, background: '#059669', color: '#fff' }} onClick={() => openPrintWindow(`Pay Slip — ${payslip.employeeName} — ${payslip.period}`, buildPayslipHtml(payslip))}>⬇ Download PDF</button>
+        <div style={{ ...ms.actionBar, borderTop: '1px solid #E2E8F0', borderBottom: 'none', justifyContent: 'flex-end' }}>
+          <button style={{ ...ms.actionBtn, background: '#F0F4F8', color: '#5A7A9A' }} onClick={onClose}>Close</button>
+          <button style={{ ...ms.actionBtn, background: '#059669', color: '#fff' }} onClick={() => downloadPayslipPdf(payslip).catch(err => alert('Could not build the pay slip PDF: ' + err.message))}>⬇ Download PDF</button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─── Performance Review Modal ────────────────────────────────────────────────
 const PerformanceReviewModal = ({ employees, onClose, onSubmit }) => {
@@ -3763,54 +3799,82 @@ const HrManager = () => {
   }, [employees, logAudit]);
 
   // ── Payroll engine ─────────────────────────────────────────────────────
+  // Rules that keep this URA/NSSF-safe:
+  //  • Only genuine employees are paid here. Independent Contractors (paid by voucher in
+  //    Accounts) and learning-based interns never get a pay slip — putting a contractor on
+  //    PAYE payroll is itself a classification problem.
+  //  • PAYE and NSSF are computed on gross cash pay, not on basic alone (payrollBreakdown).
+  //  • Re-running a month never duplicates: an employee who already has a slip for the
+  //    period is skipped, and every slip has a fixed id (period_employeeId).
+  //  • Totals for Accounts are rebuilt from ALL of the period's slips, so the ledger
+  //    figures always equal the slips, even after a partial or repeated run.
   const runPayroll = useCallback(async () => {
-    // Learning-based interns are unsalaried, so they never receive pay slips.
-    const activeEmployees = employees.filter(e => (e.status || 'active') === 'active' && !isInternContract(e.contractType));
-    if (activeEmployees.length === 0) { alert('No active salaried employees to run payroll for (learning-based interns are excluded).'); return; }
-    const already = payslips.some(p => p.period === payrollPeriod);
-    if (already && !window.confirm(`Pay slips already exist for ${payrollPeriod}. Run again and add more?`)) return;
+    const [py, pm] = payrollPeriod.split('-').map(Number);
+    const periodEnd = new Date(py, pm, 0, 23, 59, 59);
+    const skipped = [];
+    const eligible = employees.filter(e => {
+      if ((e.status || 'active') !== 'active') return false;
+      if (isInternContract(e.contractType)) return false;
+      if (e.engagementType === 'Independent Contractor') return false;
+      if (['expired', 'terminated', 'resigned'].includes(deriveContractStatus(e))) return false;
+      const hired = toDateObj(e.hireDate);
+      if (hired && hired > periodEnd) return false;
+      if (!gradeByCode(e.jobGradeCode)) { skipped.push(`${employeeFullName(e)} (no valid job grade)`); return false; }
+      return true;
+    });
+    if (eligible.length === 0) { alert('No eligible salaried employees for this period (contractors, interns, ended contracts and people hired after the period are excluded).' + (skipped.length ? `\n\nSkipped: ${skipped.join(', ')}` : '')); return; }
+    const existing = payslips.filter(p => p.period === payrollPeriod);
+    const doneIds = new Set(existing.map(p => p.employeeId));
+    const toPay = eligible.filter(e => !doneIds.has(e.id));
+    if (toPay.length === 0) { alert(`Every eligible employee already has a pay slip for ${payrollPeriod}. Nothing new to generate.`); return; }
+
+    const disbRef = doc(db, 'payrollDisbursements', `payroll_${payrollPeriod}`);
     setRunningPayroll(true);
     try {
-      // Totals across the whole run — this is what gets handed to Accounts
-      // so the company's real payroll cost (including the employer's 10%
-      // NSSF contribution, not just net take-home pay) is registered as a
-      // proper ledger expense, and PAYE/NSSF withheld are tracked as the
-      // statutory liabilities they are until actually remitted to
-      // URA/NSSF — the whole point being that nothing about paying people
-      // stays "off the books" or unaccounted for.
-      let totalGross = 0, totalAllowances = 0, totalPAYE = 0, totalNSSFEmployee = 0, totalNSSFCompany = 0, totalNetPay = 0;
-      for (const emp of activeEmployees) {
-        const grade = gradeByCode(emp.jobGradeCode);
-        const bd = gradeBreakdown(grade) || { base: 0, welfare: 0, weeklyAllowance: 0, weeklyAllowanceMonthly: 0, totalAllowance: 0, bonuses: 0, payeTax: 0, nssfEmployee: 0, nssfCompany: 0, netSalary: 0 };
-        const gross = bd.base;
-        const allowances = bd.totalAllowance; // Welfare + (Weekly Allowance × 4); bonuses are separate, not part of the standard run
-        const payeTax = bd.payeTax; // 0 while base salary ≤ UGX 335,000 (2026 tax-free threshold)
-        const nssfEmployee = bd.nssfEmployee; // withheld from the employee (5% of base)
-        const netPay = gross + allowances - payeTax - nssfEmployee;
-        await addDoc(collection(db, 'payslips'), {
+      const prior = await getDoc(disbRef);
+      if (prior.exists() && prior.data().postedToLedger) {
+        alert(`Payroll for ${payrollPeriod} has already been posted to the accounts. Do not add pay slips to a posted period — ask Finance to reverse the posting first.`);
+        return;
+      }
+      if (!window.confirm(`Generate ${toPay.length} pay slip(s) for ${payrollPeriod}?${doneIds.size ? `\n${doneIds.size} employee(s) already have a slip and will be left as they are.` : ''}`)) return;
+
+      const created = [];
+      for (const emp of toPay) {
+        const bd = payrollBreakdown(gradeByCode(emp.jobGradeCode));
+        const slip = {
           employeeId: emp.id, employeeName: employeeFullName(emp), jobGradeCode: emp.jobGradeCode,
-          period: payrollPeriod, grossPay: gross, allowances, taxAmount: payeTax, otherDeductions: nssfEmployee, netPay,
+          period: payrollPeriod, grossPay: bd.base, allowances: bd.cashAllowances, taxableGross: bd.gross,
+          taxAmount: bd.payeTax, otherDeductions: bd.nssfEmployee, netPay: bd.netSalary,
           nssfCompany: bd.nssfCompany,
           generatedAt: serverTimestamp(), generatedBy: auth.currentUser?.email || 'unknown',
-        });
-        totalGross += gross; totalAllowances += allowances; totalPAYE += payeTax;
-        totalNSSFEmployee += nssfEmployee; totalNSSFCompany += bd.nssfCompany; totalNetPay += netPay;
+        };
+        await setDoc(doc(db, 'payslips', `${payrollPeriod}_${emp.id}`), slip);
+        created.push(slip);
       }
-      await logAudit('Ran payroll', payrollPeriod, `${activeEmployees.length} pay slip(s) generated`);
 
-      // Hand off to Accounts: one disbursement record per payroll run,
-      // left `postedToLedger: false` until a Finance user in
-      // AccountsManager picks which cash/bank account actually paid net
-      // salaries out, then posts the matching journal entry. HR doesn't
-      // need to know the Chart of Accounts — it just declares what was
-      // paid, to whom (in aggregate), and for what period.
-      await addDoc(collection(db, 'payrollDisbursements'), {
-        period: payrollPeriod, employeeCount: activeEmployees.length,
+      // Totals from every slip of the period (existing + new).
+      const all = [...existing, ...created];
+      const sum = (f) => all.reduce((t, p) => t + (Number(f(p)) || 0), 0);
+      const totalGross = sum(p => p.grossPay);
+      const totalAllowances = sum(p => p.allowances);
+      const totalPAYE = sum(p => p.taxAmount);
+      const totalNSSFEmployee = sum(p => p.otherDeductions);
+      const totalNSSFCompany = sum(p => p.nssfCompany);
+      const totalNetPay = sum(p => p.netPay);
+      await logAudit('Ran payroll', payrollPeriod, `${created.length} pay slip(s) generated`);
+
+      // Hand-off to Accounts: ONE record per period (fixed id). Finance picks the bank account
+      // that paid salaries and posts the journal (Dr salaries + employer NSSF; Cr PAYE payable,
+      // NSSF payable, bank) and later records the PAYE/NSSF remittance. HR needs no chart of accounts.
+      await setDoc(disbRef, {
+        period: payrollPeriod, employeeCount: all.length,
         totalGross, totalAllowances, totalPAYE, totalNSSFEmployee, totalNSSFCompany, totalNetPay,
         totalCostToCompany: totalGross + totalAllowances + totalNSSFCompany,
-        source: 'payroll', postedToLedger: false,
+        remittanceDueDate: remittanceDueDate(payrollPeriod),
+        source: 'payroll', postedToLedger: false, remitted: false,
         generatedAt: serverTimestamp(), generatedBy: auth.currentUser?.email || 'unknown',
       });
+      if (skipped.length) alert(`Payroll generated. Skipped (fix and run again): ${skipped.join(', ')}`);
     } catch (err) {
       alert('Payroll run failed: ' + err.message);
     } finally {
@@ -3920,7 +3984,8 @@ const HrManager = () => {
     { label: 'Gross Pay', get: p => p.grossPay },
     { label: 'Allowances', get: p => p.allowances },
     { label: 'PAYE Tax', get: p => p.taxAmount },
-    { label: 'NSSF (Employee)', get: p => p.otherDeductions },
+    { label: 'NSSF (Employee 5%)', get: p => p.otherDeductions },
+    { label: 'NSSF (Employer 10%)', get: p => p.nssfCompany },
     { label: 'Net Pay', get: p => p.netPay },
   ]));
 
@@ -4161,42 +4226,38 @@ const HrManager = () => {
           <>
             <div style={{ marginBottom: 4 }}>
               <h2 style={{ ...s.sectionHead, margin: 0 }}>Slirus Salary Structure</h2>
-              <p style={{ ...s.pageSub, margin: '4px 0 14px' }}>Official job-grade pay structure. Raw Salary is the total monthly cost to the company per grade; Net Salary is the employee's take-home pay. PAYE uses Uganda's revised bands (effective 1 July 2026, tax-free up to UGX 335,000) — every current grade falls under that threshold, so PAYE is UGX 0 for now.</p>
+              <p style={{ ...s.pageSub, margin: '4px 0 14px' }}>Each grade is paid its own basic salary through payroll (G1 {fmtMoney(150000)}, G2 {fmtMoney(285000)}, G3 {fmtMoney(325000)}). PAYE and NSSF are computed on <strong>total gross cash pay</strong> (no NSSF ceiling). Business running costs are <strong>not</strong> pay: they sit in the shared IT Operations budget in Accounts and are paid to suppliers or reimbursed against receipts. PAYE bands are those in force from 1 July 2026 (tax-free up to UGX 335,000), so PAYE is UGX 0 at every grade's basic salary.</p>
             </div>
             <div style={s.tableWrap}>
               <table style={s.table}>
                 <thead>
                   <tr style={s.thead}>
                     <th style={s.th}>Category</th>
-                    <th style={s.th}>Raw Salary</th>
-                    <th style={s.th}>Base Salary</th>
+                    <th style={s.th}>Basic Salary</th>
+                    <th style={s.th}>Cash Allowances</th>
+                    <th style={s.th}>Gross Pay</th>
                     <th style={s.th}>PAYE</th>
-                    <th style={s.th}>NSSF (Employee)</th>
-                    <th style={s.th}>NSSF (Company)</th>
-                    <th style={s.th}>Welfare</th>
-                    <th style={s.th}>Weekly Allowance (×4/mo)</th>
-                    <th style={s.th}>Total Allowance</th>
-                    <th style={s.th}>Bonuses</th>
+                    <th style={s.th}>NSSF (Employee 5%)</th>
                     <th style={s.th}>Net Salary</th>
+                    <th style={s.th}>NSSF (Company 10%)</th>
+                    <th style={s.th}>Cost to Company</th>
                     <th style={s.th}>Headcount</th>
                   </tr>
                 </thead>
                 <tbody>
                   {JOB_GRADES.map(g => {
-                    const bd = gradeBreakdown(g);
+                    const bd = payrollBreakdown(g);
                     return (
                       <tr key={g.code} style={s.tr}>
                         <td style={s.td}><strong>{g.title}</strong><div style={{ fontSize: 11, color: '#9AAAB8' }}>{g.code}</div></td>
-                        <td style={s.td}>{fmtMoney(bd.rawSalary)}</td>
                         <td style={s.td}>{fmtMoney(bd.base)}</td>
+                        <td style={s.td}>{bd.cashAllowances ? fmtMoney(bd.cashAllowances) : '—'}</td>
+                        <td style={s.td}>{fmtMoney(bd.gross)}</td>
                         <td style={s.td}>{bd.payeTax ? fmtMoney(bd.payeTax) : '—'}</td>
                         <td style={s.td}>{fmtMoney(bd.nssfEmployee)}</td>
-                        <td style={s.td}>{fmtMoney(bd.nssfCompany)}</td>
-                        <td style={s.td}>{fmtMoney(bd.welfare)}</td>
-                        <td style={s.td}>{fmtMoney(bd.weeklyAllowance)} × 4 = {fmtMoney(bd.weeklyAllowanceMonthly)}</td>
-                        <td style={s.td}>{fmtMoney(bd.totalAllowance)}</td>
-                        <td style={s.td}>{bd.bonuses ? fmtMoney(bd.bonuses) : '—'}</td>
                         <td style={{ ...s.td, fontWeight: 700, color: '#059669' }}>{fmtMoney(bd.netSalary)}</td>
+                        <td style={s.td}>{fmtMoney(bd.nssfCompany)}</td>
+                        <td style={s.td}>{fmtMoney(bd.costToCompany)}</td>
                         <td style={s.td}>{gradeDistribution[g.code] || 0}</td>
                       </tr>
                     );
@@ -4204,13 +4265,16 @@ const HrManager = () => {
                 </tbody>
               </table>
             </div>
+            <div style={{ background: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: 10, padding: '12px 16px', margin: '14px 0 0', fontSize: 13, color: '#115E59', lineHeight: 1.6 }}>
+              <strong>Pay and expenses are kept apart.</strong> The UGX 440,000 IT operations budget is a shared company budget (internet, client-site transport, software, equipment maintenance, communication, supplies). It never appears on a pay slip and is not an entitlement. Finance manages it under <em>Accounts → IT Operations Budget</em>.
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '28px 0 14px', flexWrap: 'wrap', gap: 10 }}>
               <div>
                 <h2 style={{ ...s.sectionHead, margin: 0 }}>Automated Payroll Engine</h2>
-                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>Base salary + welfare + (weekly allowance × 4) − PAYE − NSSF (employee, 5%) = net pay, per employee. Bonuses are tracked separately and are not part of the standard payroll run.</p>
+                <p style={{ ...s.pageSub, margin: '4px 0 0' }}>Gross pay − PAYE − NSSF (employee, 5%) = net pay, per employee. Contractors and learning-based interns are excluded. Re-running a month only adds employees who have no slip yet.</p>
                 <p style={{ fontSize: 12, color: '#9AAAB8', margin: '4px 0 0' }}>
-                  Running payroll also queues the period's total cost (incl. employer NSSF) for Accounts to post as a company expense — see Accounts &gt; Contractors & Payroll.
+                  Running payroll queues the period for Accounts, which posts the salary expense, PAYE and NSSF liabilities and tracks the 15th-of-next-month remittance — see Accounts &gt; Payroll.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
