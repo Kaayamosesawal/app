@@ -384,6 +384,10 @@ const computeCITForYear = (transactions, fixedAssets, targetStartYear, startMont
 // statements, payroll and expense statements, table exports) are real PDFs built in
 // utils/financePdfs.js on top of utils/pdfBrand.js — same letterhead, logo badge,
 // contact lines and footer as every other Slirus document.
+// Salary bank account (Housing Finance Bank): captured by HR on the employee record and copied onto each
+// pay slip when payroll runs. Finance pays net salaries from the Bank account to these HFB accounts.
+const HFB_BANK_NAME = 'Housing Finance Bank (HFB)';
+const hasBankAccount = (v) => /^\d{6,20}$/.test(String(v || '').replace(/[\s-]+/g, ''));
 const runPdf = (fn) => fn().catch((err) => { console.error('PDF error:', err); alert('Could not build the PDF: ' + err.message); });
 const exportTablePDF = (title, rows, columns) => runPdf(() => downloadTablePdf(title, rows, columns));
 
@@ -2019,6 +2023,20 @@ const AccountsManager = () => {
     }
   }, [accounts]);
 
+  // Net salaries per employee to their HFB account (from the slips HR generated), for the bank transfer.
+  const exportPayrollBankSchedule = (run) => {
+    const slips = payrollSlips.filter(p => p.period === run.period);
+    if (!slips.length) { alert(`No pay slips found for ${run.period}.`); return; }
+    const missing = slips.filter(p => !hasBankAccount(p.bankAccountNumber)).map(p => p.employeeName);
+    if (missing.length && !window.confirm(`${missing.length} employee(s) have no HFB account on their slip: ${missing.join(', ')}.\n\nAsk HR to add the account to the employee record. Download the schedule anyway?`)) return;
+    downloadCSV(`slirus_hfb_salary_payments_${run.period}.csv`, toCSV(slips, [
+      { label: 'Account Name', get: p => p.bankAccountName || p.employeeName },
+      { label: 'Account Number', get: p => p.bankAccountNumber || '' },
+      { label: 'Amount (UGX)', get: p => Math.round(Number(p.netPay) || 0) },
+      { label: 'Narration', get: p => `Salary ${run.period}` },
+    ]));
+  };
+
   const handlePostPayroll = useCallback(async (run, { cashAccountCode }) => {
     if (run.postedToLedger) throw new Error('This payroll run is already posted.');
     const gross = (Number(run.totalGross) || 0) + (Number(run.totalAllowances) || 0);
@@ -2829,6 +2847,7 @@ const AccountsManager = () => {
                           <td style={s.td}>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                               <button style={s.btnView} onClick={() => runPdf(() => downloadPayrollSummaryPdf(r, payrollSlips.filter(p => p.period === r.period)))}>🖨 Summary</button>
+                              <button style={s.btnView} onClick={() => exportPayrollBankSchedule(r)}>🏦 HFB Schedule</button>
                               {canApprove && !r.postedToLedger && <button style={s.btnShortlist} onClick={() => setPayrollTarget({ run: r, mode: 'post' })}>Post to Ledger</button>}
                               {canApprove && r.postedToLedger && !r.remitted && <button style={s.btnShortlist} onClick={() => setPayrollTarget({ run: r, mode: 'remit' })}>Record Remittance</button>}
                             </div>
@@ -3032,6 +3051,11 @@ const AccountsManager = () => {
             ['PAYE payable', fmtMoney(payrollTarget.run.totalPAYE)],
             ['NSSF payable (5% + 10%)', fmtMoney((Number(payrollTarget.run.totalNSSFEmployee) || 0) + (Number(payrollTarget.run.totalNSSFCompany) || 0))],
             ['Net salaries paid from bank', fmtMoney(payrollTarget.run.totalNetPay)],
+            ['Paid into', (() => {
+              const slips = payrollSlips.filter(p => p.period === payrollTarget.run.period);
+              const missing = slips.filter(p => !hasBankAccount(p.bankAccountNumber)).length;
+              return `${HFB_BANK_NAME} · ${slips.length - missing} of ${slips.length} accounts on file${missing ? ` (${missing} missing)` : ''}`;
+            })()],
           ]}
           confirmLabel="✓ Post to Books" onClose={() => setPayrollTarget(null)} onConfirm={(p) => handlePostPayroll(payrollTarget.run, p)}
         />

@@ -189,6 +189,14 @@ const DEPARTMENTS = [
 const NSSF_EMPLOYEE_RATE = 0.05; // 5% of base salary, withheld from the employee
 const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (employer cost)
 
+// ── Salary bank account (Housing Finance Bank - HFB) ──────────────────────────
+// Salaries are paid by bank transfer to each employee's HFB account. The account is captured on the
+// employee record (bankName / bankAccountNumber / bankAccountName) and SNAPSHOTTED onto every pay slip
+// when payroll runs, so an old slip always shows the account that month's salary was paid into.
+const HFB_BANK_NAME = 'Housing Finance Bank (HFB)';
+const cleanBankAccount = (v) => String(v || '').replace(/[\s-]+/g, '');
+const isValidBankAccount = (v) => /^\d{6,20}$/.test(cleanBankAccount(v));
+
 // JOB_GRADES (the salary table) is imported from utils/appointmentLetter.js — shared with Admin.jsx.
 
 // Uganda monthly PAYE bands, in force from 1 July 2026 (Income Tax (Amendment) Act 2026):
@@ -868,7 +876,7 @@ const EMPTY_EMPLOYEE = {
   firstName: '', lastName: '', email: '', phone: '', gender: GENDERS[0], dob: '',
   department: DEPARTMENTS[0], position: '', jobGradeCode: JOB_GRADES[0].code,
   engagementType: ENGAGEMENT_TYPES[0], contractType: CONTRACT_TYPES[0], hireDate: '', contractStart: '', contractEnd: '',
-  placeOfWork: '', bankAccountNumber: '', specialConditions: '',
+  placeOfWork: '', bankAccountNumber: '', bankAccountName: '', specialConditions: '',
   origin: '', reportsTo: REPORTS_TO_OPTIONS[0],
   // Learning-based internship details (only used when contractType is an intern type)
   internStatus: INTERN_STATUSES[0], internInstitution: '', internProgramme: '', internFocusArea: '',
@@ -968,6 +976,9 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
     if (isInternContract(form.contractType) && (!(form.internInstitution || '').trim() || !(form.internProgramme || '').trim() || !form.internFocusArea)) {
       setError('For a learning-based intern, please fill in the institution, programme of study, and focus area.'); return;
     }
+    if ((form.bankAccountNumber || '').trim() && !isValidBankAccount(form.bankAccountNumber)) {
+      setError('The HFB account number must be digits only (6 to 20 digits). Spaces and dashes are removed automatically.'); return;
+    }
     setAttempted(true);
     const withFamily = captureFamily && !familyLoading && !familyLoadError;
     if (withFamily) {
@@ -977,7 +988,10 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
       }
     }
     setSaving(true); setError('');
-    const cleanedForm = { ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '' };
+    const cleanedForm = {
+      ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '',
+      bankAccountNumber: cleanBankAccount(form.bankAccountNumber), bankAccountName: (form.bankAccountName || '').trim(),
+    };
     const outcome = await onSave(cleanedForm, photoDataUrl, isEdit, withFamily ? buildFamilyPayload(familyForm) : null, prefill?.approval || null);
     setSaving(false);
     if (!outcome.success) setError(outcome.error || 'Could not save the employee record.');
@@ -1082,7 +1096,8 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
               <div><label style={cu.label}>Contract end (blank = open-ended)</label><input type="date" style={s.loginInput} value={form.contractEnd} onChange={e => update('contractEnd', e.target.value)} disabled={saving} /></div>
 
               <div><label style={cu.label}>Place of work</label><input style={s.loginInput} placeholder="e.g. Head Office, Kampala" value={form.placeOfWork} onChange={e => update('placeOfWork', e.target.value)} disabled={saving} /></div>
-              <div><label style={cu.label}>HFB account number</label><input style={s.loginInput} placeholder="Housing Finance Bank account no." value={form.bankAccountNumber} onChange={e => update('bankAccountNumber', e.target.value)} disabled={saving} /></div>
+              <div><label style={cu.label}>HFB account number (salary is paid here)</label><input style={s.loginInput} inputMode="numeric" placeholder="Housing Finance Bank account no." value={form.bankAccountNumber} onChange={e => update('bankAccountNumber', e.target.value)} disabled={saving} /></div>
+              <div><label style={cu.label}>HFB account name (as on the account)</label><input style={s.loginInput} placeholder={`${form.firstName || ''} ${form.lastName || ''}`.trim() || 'Name on the HFB account'} value={form.bankAccountName} onChange={e => update('bankAccountName', e.target.value)} disabled={saving} /></div>
 
               <div><label style={cu.label}>Origin (home village/district)</label><input style={s.loginInput} placeholder="e.g. Mbarara, Uganda" value={form.origin} onChange={e => update('origin', e.target.value)} disabled={saving} /></div>
               <div>
@@ -2042,6 +2057,8 @@ const EmployeeProfileModal = ({ employee, attendanceRows, loadingAttendance, onC
             <div style={cu.credRow}><span style={cu.credLabel}>Contract Ends</span><span style={cu.credVal}>{employee.contractEnd ? fmtDate(employee.contractEnd) : 'Open-ended'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Email</span><span style={cu.credVal}>{employee.email || '—'}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Phone</span><span style={cu.credVal}>{employee.phone || '—'}</span></div>
+            <div style={cu.credRow}><span style={cu.credLabel}>Salary Bank</span><span style={cu.credVal}>{employee.bankAccountNumber ? (employee.bankName || HFB_BANK_NAME) : 'Not on file'}</span></div>
+            <div style={cu.credRow}><span style={cu.credLabel}>HFB Account No.</span><span style={cu.credVal}>{employee.bankAccountNumber || '—'}{employee.bankAccountName ? ` · ${employee.bankAccountName}` : ''}</span></div>
             <div style={cu.credRow}><span style={cu.credLabel}>Leave Balance (Annual)</span><span style={cu.credVal}>{(employee.leaveBalance?.Annual ?? DEFAULT_LEAVE_BALANCES.Annual)} days</span></div>
             {isIntern && (
               <>
@@ -3134,6 +3151,9 @@ const PayslipModal = ({ payslip, onClose }) => {
             <span style={cu.credLabel}>Net Pay</span>
             <span style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>{fmtMoney(payslip.netPay)}</span>
           </div>
+          <div style={{ ...cu.credRow, marginTop: 10 }}><span style={cu.credLabel}>Paid to</span><span style={cu.credVal}>{payslip.bankName || HFB_BANK_NAME}</span></div>
+          <div style={cu.credRow}><span style={cu.credLabel}>Account name</span><span style={cu.credVal}>{payslip.bankAccountName || payslip.employeeName}</span></div>
+          <div style={cu.credRow}><span style={cu.credLabel}>Account number</span><span style={{ ...cu.credVal, color: payslip.bankAccountNumber ? undefined : '#B45309' }}>{payslip.bankAccountNumber || 'Not on file - add it to the employee record'}</span></div>
           <p style={{ fontSize: 11.5, color: '#7A8A9A', marginTop: 6 }}>Employer NSSF (10%, paid by the company on top): {fmtMoney(payslip.nssfCompany)}</p>
           <p style={{ fontSize: 11, color: '#9AAAB8', marginTop: 8 }}>Generated {fmtDateTime(payslip.generatedAt)} by {payslip.generatedBy}</p>
         </div>
@@ -3568,7 +3588,8 @@ const HrManager = () => {
           position: form.position, jobGradeCode: form.jobGradeCode,
           engagementType: form.engagementType || ENGAGEMENT_TYPES[0], contractType: form.contractType,
           hireDate: form.hireDate, contractStart: form.contractStart, contractEnd: form.contractEnd || null,
-          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
+          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber || '',
+          bankName: HFB_BANK_NAME, bankAccountName: form.bankAccountName || '',
           specialConditions: form.specialConditions || '',
           origin: form.origin, reportsTo: form.reportsTo,
           ...internFieldsFromForm(form),
@@ -3606,7 +3627,8 @@ const HrManager = () => {
           jobGradeCode: form.jobGradeCode, engagementType: form.engagementType || ENGAGEMENT_TYPES[0],
           contractType: form.contractType, hireDate: form.hireDate,
           contractStart: form.contractStart || form.hireDate, contractEnd: form.contractEnd || null,
-          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber,
+          placeOfWork: form.placeOfWork, bankAccountNumber: form.bankAccountNumber || '',
+          bankName: HFB_BANK_NAME, bankAccountName: form.bankAccountName || '',
           specialConditions: form.specialConditions || '',
           origin: form.origin, reportsTo: form.reportsTo,
           ...internFieldsFromForm(form),
@@ -3837,7 +3859,8 @@ const HrManager = () => {
         alert(`Payroll for ${payrollPeriod} has already been posted to the accounts. Do not add pay slips to a posted period — ask Finance to reverse the posting first.`);
         return;
       }
-      if (!window.confirm(`Generate ${toPay.length} pay slip(s) for ${payrollPeriod}?${doneIds.size ? `\n${doneIds.size} employee(s) already have a slip and will be left as they are.` : ''}`)) return;
+      const noBank = toPay.filter(e => !isValidBankAccount(e.bankAccountNumber)).map(employeeFullName);
+      if (!window.confirm(`Generate ${toPay.length} pay slip(s) for ${payrollPeriod}?${noBank.length ? `\n\n⚠ ${noBank.length} employee(s) have no valid HFB account on file and cannot be paid by bank transfer until it is added: ${noBank.join(', ')}.` : ''}${doneIds.size ? `\n${doneIds.size} employee(s) already have a slip and will be left as they are.` : ''}`)) return;
 
       const created = [];
       for (const emp of toPay) {
@@ -3847,6 +3870,8 @@ const HrManager = () => {
           period: payrollPeriod, grossPay: bd.base, allowances: bd.cashAllowances, taxableGross: bd.gross,
           taxAmount: bd.payeTax, otherDeductions: bd.nssfEmployee, netPay: bd.netSalary,
           nssfCompany: bd.nssfCompany,
+          bankName: HFB_BANK_NAME, bankAccountNumber: cleanBankAccount(emp.bankAccountNumber),
+          bankAccountName: (emp.bankAccountName || '').trim() || employeeFullName(emp),
           generatedAt: serverTimestamp(), generatedBy: auth.currentUser?.email || 'unknown',
         };
         await setDoc(doc(db, 'payslips', `${payrollPeriod}_${emp.id}`), slip);
@@ -4001,7 +4026,24 @@ const HrManager = () => {
     { label: 'NSSF (Employee 5%)', get: p => p.otherDeductions },
     { label: 'NSSF (Employer 10%)', get: p => p.nssfCompany },
     { label: 'Net Pay', get: p => p.netPay },
+    { label: 'Bank', get: p => p.bankName || HFB_BANK_NAME },
+    { label: 'Account Name', get: p => p.bankAccountName || p.employeeName },
+    { label: 'Account Number', get: p => p.bankAccountNumber || '' },
   ]));
+
+  // Bank payment schedule: net pay per employee to their HFB account, for the bank transfer / bulk upload.
+  const exportHfbScheduleCSV = () => {
+    const slips = payslips.filter(p => p.period === payrollPeriod);
+    if (!slips.length) { alert(`No pay slips for ${payrollPeriod} yet - run payroll first.`); return; }
+    const missing = slips.filter(p => !isValidBankAccount(p.bankAccountNumber)).map(p => p.employeeName);
+    if (missing.length && !window.confirm(`${missing.length} employee(s) have no HFB account on the slip and will be listed without one: ${missing.join(', ')}.\n\nDownload the schedule anyway?`)) return;
+    downloadCSV(`slirus_hfb_salary_payments_${payrollPeriod}.csv`, toCSV(slips, [
+      { label: 'Account Name', get: p => p.bankAccountName || p.employeeName },
+      { label: 'Account Number', get: p => p.bankAccountNumber || '' },
+      { label: 'Amount (UGX)', get: p => Math.round(Number(p.netPay) || 0) },
+      { label: 'Narration', get: p => `Salary ${payrollPeriod}` },
+    ]));
+  };
 
   // ── Render gates ────────────────────────────────────────────────────────
   if (authLoading || (user && !profileLoaded)) {
@@ -4295,6 +4337,7 @@ const HrManager = () => {
                 <input type="month" style={s.loginInput} value={payrollPeriod} onChange={e => setPayrollPeriod(e.target.value)} />
                 <button style={s.tab} onClick={exportPayslipsCSV}>⬇ Export CSV</button>
                 <button style={s.tab} onClick={exportPayrollSummaryPdf}>⬇ Payroll Summary PDF</button>
+                <button style={s.tab} onClick={exportHfbScheduleCSV}>🏦 HFB Payment Schedule</button>
                 {canWrite && (
                   <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#059669' }} onClick={runPayroll} disabled={runningPayroll}>
                     {runningPayroll ? 'Running…' : '⚙ Run Payroll'}
@@ -4310,7 +4353,7 @@ const HrManager = () => {
                 <div style={s.tableMsg}>No pay slips generated for {payrollPeriod} yet.</div>
               ) : (
                 <table style={s.table}>
-                  <thead><tr style={s.thead}><th style={s.th}>Employee</th><th style={s.th}>Grade</th><th style={s.th}>Gross</th><th style={s.th}>Allowances</th><th style={s.th}>PAYE</th><th style={s.th}>NSSF (Employee)</th><th style={s.th}>Net Pay</th><th style={s.th}></th></tr></thead>
+                  <thead><tr style={s.thead}><th style={s.th}>Employee</th><th style={s.th}>Grade</th><th style={s.th}>Gross</th><th style={s.th}>Allowances</th><th style={s.th}>PAYE</th><th style={s.th}>NSSF (Employee)</th><th style={s.th}>Net Pay</th><th style={s.th}>HFB Account</th><th style={s.th}></th></tr></thead>
                   <tbody>
                     {payslips.filter(p => p.period === payrollPeriod).map(p => (
                       <tr key={p.id} style={s.tr}>
@@ -4321,6 +4364,7 @@ const HrManager = () => {
                         <td style={s.td}>{p.taxAmount ? `-${fmtMoney(p.taxAmount)}` : '—'}</td>
                         <td style={s.td}>-{fmtMoney(p.otherDeductions)}</td>
                         <td style={{ ...s.td, fontWeight: 700, color: '#059669' }}>{fmtMoney(p.netPay)}</td>
+                        <td style={s.td}>{p.bankAccountNumber ? p.bankAccountNumber : <span style={{ color: '#B45309', fontSize: 12 }}>⚠ Not on file</span>}</td>
                         <td style={s.td}><button style={s.btnView} onClick={() => setPayslipTarget(p)}>View Slip</button></td>
                       </tr>
                     ))}
