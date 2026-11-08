@@ -196,6 +196,18 @@ const NSSF_COMPANY_RATE  = 0.10; // 10% of base salary, matched by the company (
 const HFB_BANK_NAME = 'Housing Finance Bank (HFB)';
 const cleanBankAccount = (v) => String(v || '').replace(/[\s-]+/g, '');
 const isValidBankAccount = (v) => /^\d{6,20}$/.test(cleanBankAccount(v));
+// A pay slip normally carries its own bank snapshot. Slips generated BEFORE bank details existed (or before the
+// employee's account was added) have none, so fall back to the employee's current HFB account for display,
+// exports and the payment schedule. "Sync bank details" below writes it onto the slip itself.
+const slipWithBank = (p, employees) => {
+  if (isValidBankAccount(p.bankAccountNumber)) return p;
+  const e = (employees || []).find(x => x.id === p.employeeId);
+  if (!e || !isValidBankAccount(e.bankAccountNumber)) return p;
+  return {
+    ...p, bankName: HFB_BANK_NAME, bankAccountNumber: cleanBankAccount(e.bankAccountNumber),
+    bankAccountName: (e.bankAccountName || '').trim() || p.employeeName,
+  };
+};
 
 // JOB_GRADES (the salary table) is imported from utils/appointmentLetter.js — shared with Admin.jsx.
 
@@ -990,7 +1002,8 @@ const EmployeeFormModal = ({ initial, prefill = null, onClose, onSave }) => {
     setSaving(true); setError('');
     const cleanedForm = {
       ...form, specialConditions: (form.specialConditions || '').trim() ? form.specialConditions : '',
-      bankAccountNumber: cleanBankAccount(form.bankAccountNumber), bankAccountName: (form.bankAccountName || '').trim(),
+      bankAccountNumber: cleanBankAccount(form.bankAccountNumber),
+      bankAccountName: (form.bankAccountName || '').trim() || `${form.firstName} ${form.lastName}`.trim(),
     };
     const outcome = await onSave(cleanedForm, photoDataUrl, isEdit, withFamily ? buildFamilyPayload(familyForm) : null, prefill?.approval || null);
     setSaving(false);
@@ -3558,6 +3571,12 @@ const HrManager = () => {
     catch (err) { alert('Could not build the letter PDF: ' + err.message); }
   }, [findPlacement]);
 
+  // This period's slips with the HFB account resolved (snapshot, else the employee's current account).
+  const periodSlips = useMemo(
+    () => payslips.filter(p => p.period === payrollPeriod).map(p => slipWithBank(p, employees)),
+    [payslips, employees, payrollPeriod]
+  );
+
   const logAudit = useCallback(async (action, target, details = '') => {
     try {
       await addDoc(collection(db, 'auditLogs'), {
@@ -4006,7 +4025,7 @@ const HrManager = () => {
 
   // Branded Payroll Summary (same financePdfs.js document Accounts prints), built from the period's slips.
   const exportPayrollSummaryPdf = () => {
-    const slips = payslips.filter(p => p.period === payrollPeriod);
+    const slips = periodSlips;
     if (!slips.length) { alert(`No pay slips for ${payrollPeriod} yet - run payroll first.`); return; }
     const sum = (f) => slips.reduce((t, p) => t + (Number(f(p)) || 0), 0);
     const totalGross = sum(p => p.grossPay), totalAllowances = sum(p => p.allowances), totalNSSFCompany = sum(p => p.nssfCompany);
@@ -4017,7 +4036,7 @@ const HrManager = () => {
     }, slips).catch(err => alert('Could not build the payroll summary PDF: ' + err.message));
   };
 
-  const exportPayslipsCSV = () => downloadCSV(`slirus_payroll_${payrollPeriod}.csv`, toCSV(payslips.filter(p => p.period === payrollPeriod), [
+  const exportPayslipsCSV = () => downloadCSV(`slirus_payroll_${payrollPeriod}.csv`, toCSV(periodSlips, [
     { label: 'Employee', get: p => p.employeeName },
     { label: 'Grade', get: p => p.jobGradeCode },
     { label: 'Gross Pay', get: p => p.grossPay },
@@ -4032,8 +4051,29 @@ const HrManager = () => {
   ]));
 
   // Bank payment schedule: net pay per employee to their HFB account, for the bank transfer / bulk upload.
+  // Writes the employee's HFB account onto this period's slips that don't have one yet.
+  // Allowed only while the period is not posted to the books (the slip is the record of what was paid).
+  const syncSlipBankDetails = async () => {
+    const todo = periodSlips.filter(p => {
+      const raw = payslips.find(x => x.id === p.id);
+      return raw && !isValidBankAccount(raw.bankAccountNumber) && isValidBankAccount(p.bankAccountNumber);
+    });
+    if (!todo.length) { alert(`Nothing to sync: every slip for ${payrollPeriod} that can have an HFB account already has one.`); return; }
+    try {
+      const disb = await getDoc(doc(db, 'payrollDisbursements', `payroll_${payrollPeriod}`));
+      if (disb.exists() && disb.data().postedToLedger) { alert(`Payroll for ${payrollPeriod} is already posted to the books, so its slips can't be changed. The schedule and slip views still show the employee's current HFB account.`); return; }
+      for (const p of todo) {
+        await setDoc(doc(db, 'payslips', p.id), { bankName: p.bankName, bankAccountNumber: p.bankAccountNumber, bankAccountName: p.bankAccountName }, { merge: true });
+      }
+      await logAudit('Synced payslip bank details', payrollPeriod, `${todo.length} slip(s) updated`);
+      alert(`HFB account added to ${todo.length} pay slip(s) for ${payrollPeriod}.`);
+    } catch (err) {
+      alert('Could not sync bank details: ' + err.message);
+    }
+  };
+
   const exportHfbScheduleCSV = () => {
-    const slips = payslips.filter(p => p.period === payrollPeriod);
+    const slips = periodSlips;
     if (!slips.length) { alert(`No pay slips for ${payrollPeriod} yet - run payroll first.`); return; }
     const missing = slips.filter(p => !isValidBankAccount(p.bankAccountNumber)).map(p => p.employeeName);
     if (missing.length && !window.confirm(`${missing.length} employee(s) have no HFB account on the slip and will be listed without one: ${missing.join(', ')}.\n\nDownload the schedule anyway?`)) return;
@@ -4092,7 +4132,7 @@ const HrManager = () => {
               <StatCard label="Total Employees" value={employees.length} accent="#7C3AED" sub={`${employees.filter(e => (e.status || 'active') === 'active').length} active`} />
               <StatCard label="Expiring Soon" value={expiringSoon.length} accent="#F59E0B" sub={`Within ${EXPIRING_SOON_WINDOW_DAYS} days`} />
               <StatCard label="Pending Leave" value={leaveCounts.pending} accent="#3B82F6" sub={`${leaveCounts.approved} approved this log`} />
-              <StatCard label="Pay Slips (this period)" value={payslips.filter(p => p.period === payrollPeriod).length} accent="#059669" sub={payrollPeriod} />
+              <StatCard label="Pay Slips (this period)" value={periodSlips.length} accent="#059669" sub={payrollPeriod} />
             </div>
 
             <h2 style={s.sectionHead}>Headcount by Job Grade</h2>
@@ -4338,6 +4378,7 @@ const HrManager = () => {
                 <button style={s.tab} onClick={exportPayslipsCSV}>⬇ Export CSV</button>
                 <button style={s.tab} onClick={exportPayrollSummaryPdf}>⬇ Payroll Summary PDF</button>
                 <button style={s.tab} onClick={exportHfbScheduleCSV}>🏦 HFB Payment Schedule</button>
+                {canWrite && <button style={s.tab} onClick={syncSlipBankDetails}>🔄 Sync bank details</button>}
                 {canWrite && (
                   <button style={{ ...s.loginBtn, width: 'auto', padding: '9px 16px', marginTop: 0, background: '#059669' }} onClick={runPayroll} disabled={runningPayroll}>
                     {runningPayroll ? 'Running…' : '⚙ Run Payroll'}
@@ -4349,13 +4390,13 @@ const HrManager = () => {
             <div style={s.tableWrap}>
               {loadingPayslips ? (
                 <div style={s.tableMsg}>Loading pay slips…</div>
-              ) : payslips.filter(p => p.period === payrollPeriod).length === 0 ? (
+              ) : periodSlips.length === 0 ? (
                 <div style={s.tableMsg}>No pay slips generated for {payrollPeriod} yet.</div>
               ) : (
                 <table style={s.table}>
                   <thead><tr style={s.thead}><th style={s.th}>Employee</th><th style={s.th}>Grade</th><th style={s.th}>Gross</th><th style={s.th}>Allowances</th><th style={s.th}>PAYE</th><th style={s.th}>NSSF (Employee)</th><th style={s.th}>Net Pay</th><th style={s.th}>HFB Account</th><th style={s.th}></th></tr></thead>
                   <tbody>
-                    {payslips.filter(p => p.period === payrollPeriod).map(p => (
+                    {periodSlips.map(p => (
                       <tr key={p.id} style={s.tr}>
                         <td style={s.td}>{p.employeeName}</td>
                         <td style={s.td}>{p.jobGradeCode}</td>

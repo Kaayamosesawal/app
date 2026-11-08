@@ -388,6 +388,16 @@ const computeCITForYear = (transactions, fixedAssets, targetStartYear, startMont
 // pay slip when payroll runs. Finance pays net salaries from the Bank account to these HFB accounts.
 const HFB_BANK_NAME = 'Housing Finance Bank (HFB)';
 const hasBankAccount = (v) => /^\d{6,20}$/.test(String(v || '').replace(/[\s-]+/g, ''));
+// Slips generated before bank details existed carry no account: fall back to the employee's current HFB account.
+const slipWithBank = (p, employees) => {
+  if (hasBankAccount(p.bankAccountNumber)) return p;
+  const e = (employees || []).find(x => x.id === p.employeeId);
+  if (!e || !hasBankAccount(e.bankAccountNumber)) return p;
+  return {
+    ...p, bankName: HFB_BANK_NAME, bankAccountNumber: String(e.bankAccountNumber).replace(/[\s-]+/g, ''),
+    bankAccountName: (e.bankAccountName || '').trim() || p.employeeName,
+  };
+};
 const runPdf = (fn) => fn().catch((err) => { console.error('PDF error:', err); alert('Could not build the PDF: ' + err.message); });
 const exportTablePDF = (title, rows, columns) => runPdf(() => downloadTablePdf(title, rows, columns));
 
@@ -2025,7 +2035,7 @@ const AccountsManager = () => {
 
   // Net salaries per employee to their HFB account (from the slips HR generated), for the bank transfer.
   const exportPayrollBankSchedule = (run) => {
-    const slips = payrollSlips.filter(p => p.period === run.period);
+    const slips = payrollSlips.filter(p => p.period === run.period).map(p => slipWithBank(p, employees));
     if (!slips.length) { alert(`No pay slips found for ${run.period}.`); return; }
     const missing = slips.filter(p => !hasBankAccount(p.bankAccountNumber)).map(p => p.employeeName);
     if (missing.length && !window.confirm(`${missing.length} employee(s) have no HFB account on their slip: ${missing.join(', ')}.\n\nAsk HR to add the account to the employee record. Download the schedule anyway?`)) return;
@@ -3052,7 +3062,7 @@ const AccountsManager = () => {
             ['NSSF payable (5% + 10%)', fmtMoney((Number(payrollTarget.run.totalNSSFEmployee) || 0) + (Number(payrollTarget.run.totalNSSFCompany) || 0))],
             ['Net salaries paid from bank', fmtMoney(payrollTarget.run.totalNetPay)],
             ['Paid into', (() => {
-              const slips = payrollSlips.filter(p => p.period === payrollTarget.run.period);
+              const slips = payrollSlips.filter(p => p.period === payrollTarget.run.period).map(p => slipWithBank(p, employees));
               const missing = slips.filter(p => !hasBankAccount(p.bankAccountNumber)).length;
               return `${HFB_BANK_NAME} · ${slips.length - missing} of ${slips.length} accounts on file${missing ? ` (${missing} missing)` : ''}`;
             })()],
