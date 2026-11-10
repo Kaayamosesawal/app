@@ -43,7 +43,7 @@ function App() {
             <Route path="/secretary-manager" element={<SecretaryManager/>} />
             <Route path="/worker-log" element={<WorkerLog />} />
             <Route path="/portals" element={<Portals />} />
-            <Route path="/posinventory" element={<PosInventory />} />
+            <Route path="/pos-inventory" element={<PosInventory />} />
             
           </Routes>
         </main>
