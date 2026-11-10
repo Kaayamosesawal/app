@@ -17,7 +17,6 @@ import SalesManager from './pages/SalesManager';
 import SecretaryManager from './pages/SecretaryManager';
 import WorkerLog from './pages/WorkerLog';
 import Portals from './pages/Portals';
-import PosInventory from './pages/PosInventory'
 
 function App() {
   return (
@@ -43,7 +42,6 @@ function App() {
             <Route path="/secretary-manager" element={<SecretaryManager/>} />
             <Route path="/worker-log" element={<WorkerLog />} />
             <Route path="/portals" element={<Portals />} />
-            <Route path="/pos-inventory" element={<PosInventory />} />
             
           </Routes>
         </main>
